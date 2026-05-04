@@ -1,0 +1,19 @@
+# 后端 Python 环境与缓存
+venv/
+__pycache__/
+*.pyc
+
+# 前端 Vue 依赖与打包产物
+node_modules/
+dist/
+
+# 本地数据库文件 (如果你用了 sqlite)
+*.db
+*.sqlite3
+
+# 环境变量机密文件
+.env
+
+# 编辑器配置 (VS Code 等)
+.vscode/
+.idea/

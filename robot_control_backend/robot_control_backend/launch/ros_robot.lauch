@@ -1,0 +1,63 @@
+<launch>
+  <!-- 1. 反馈节点：数据解析与单位转换 -->
+  <node
+    name="feedback_node"
+    pkg="robot_control_backend"
+    type="feedback_node.py"
+    output="screen"
+  />
+
+  <!-- 2. STM32 串口桥接节点：下位机通信 -->
+  <node
+    name="hardware_node"
+    pkg="robot_control_backend"
+    type="hardware_node.py"
+    output="screen"
+  />
+
+  <!-- 3. web桥接节点：前端通信 -->
+  <node
+    name="web_data_node"
+    pkg="robot_control_backend"
+    type="web_data_node.py"
+    output="screen"
+  />
+
+  <!-- 4. 逆运动学节点：坐标解算为各轴指令 -->
+  <node
+    name="ik_calculation_node"
+    pkg="robot_control_backend"
+    type="kinematics_node.py"
+    output="screen"
+  />
+
+  <!-- 5. 三轴控制节点：仅指令触发下发，无循环刷屏 -->
+  <node
+    name="rotation_node"
+    pkg="robot_control_backend"
+    type="rotation_node.py"
+    output="screen"
+  />
+  <node
+    name="swing_node"
+    pkg="robot_control_backend"
+    type="swing_node.py"
+    output="screen"
+  />
+  <node
+    name="telescopic_node"
+    pkg="robot_control_backend"
+    type="telescopic_node.py"
+    output="screen"
+  />
+
+  <!-- 6. 压力传感器控制节点：发送两次开启指令 -->
+  <node
+    name="sensor_control_node"
+    pkg="robot_control_backend"
+    type="sensor_control_node.py"
+    output="screen"
+  />
+
+
+</launch>
