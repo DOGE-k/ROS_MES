@@ -62,14 +62,14 @@ import { ref, computed, watch } from "vue";
 import { ElMessage } from "element-plus";
 import request from "@/utils/request";
 import { useRouter } from "vue-router";
-import { isNumber } from "element-plus/es/utils/types.mjs";
+
 
 const router = useRouter();
 
 // 矩阵数据 (8x8)
 const matrixSize = 8;
 const matrix = ref<any[]>([]);
-const selectedCell = ref({ x: 1, y: 1 });
+
 
 // 初始化矩阵
 for (let y = 1; y <= matrixSize; y++) {
@@ -80,23 +80,28 @@ for (let y = 1; y <= matrixSize; y++) {
   matrix.value.push(row);
 }
 
-const xyToModuleId = (x: number, y: number): any => {
-  const xBin = Number(x);
-  const yBin = Number(y);
-  if (xBin && yBin && xBin >= 1 && xBin <= 8 && yBin >= 1 && yBin <= 8) {
-    return xBin * 16 + yBin;
+// 1. 输入框绑定值
+const inputX = ref(1);
+const inputY = ref(1);
+
+// 2. 当前选中的格子
+const selectedCell = ref({ x: 1, y: 1 });
+
+// 3. 根据 x/y 计算 module_id
+const xyToModuleId = (x: number, y: number): number | undefined => {
+  const xVal = Number(x);
+  const yVal = Number(y);
+
+  if (xVal >= 1 && xVal <= 8 && yVal >= 1 && yVal <= 8) {
+    return xVal * 16 + yVal;
   }
+
   return undefined;
 };
 
 const currentModuleId = computed(() =>
   xyToModuleId(inputX.value, inputY.value)
 );
-
-// ========== 替换刚才的 computed，使用更稳定的输入监听逻辑 ==========
-// 1. 定义独立的输入框绑定值，不会再随便弹回去了
-const inputX = ref(1);
-const inputY = ref(1);
 
 // 2. 监听下方矩阵点击：一旦格子变化，更新上方输入框
 watch(
@@ -108,61 +113,96 @@ watch(
   { deep: true, immediate: true }
 );
 
-// 3. 监听 X 输入框的事件
+
+//X/Y 输入函数
 const handleXChange = (val: number) => {
-  console.log("X 输入事件触发，当前值:", val);
-  selectedCell.value = { x: val, y: selectedCell.value.y };
-  if (val < 1 || val > 8) {
-    ElMessage.warning("请输入范围[1-8]内的值");
+  const x = Number(val);
+
+  if (x < 1 || x > 8 || Number.isNaN(x)) {
+    ElMessage.warning("请输入范围[1-8]内的 X 坐标");
+    return;
   }
+
+  selectedCell.value = {
+    x,
+    y: selectedCell.value.y,
+  };
 };
 
-// 4. 监听 Y 输入框的事件
 const handleYChange = (val: number) => {
-  selectedCell.value = { x: val, y: selectedCell.value.y };
-  if (val < 1 || val > 8) {
-    ElMessage.warning("请输入范围[1-8]内的值");
+  const y = Number(val);
+
+  if (y < 1 || y > 8 || Number.isNaN(y)) {
+    ElMessage.warning("请输入范围[1-8]内的 Y 坐标");
+    return;
   }
+
+  selectedCell.value = {
+    x: selectedCell.value.x,
+    y,
+  };
 };
+
 
 // 点击矩阵格子（【修复】赋值为一个新对象，防止后续操作污染矩阵原数据）
 const handleCellClick = (cell: any) => {
   selectedCell.value = { x: cell.x, y: cell.y };
 };
 // ========== 锁定并下发：跳转到微调页面 ==========
-const handleLockAndJump = () => {
-  const module_id = currentModuleId.value;
+const handleLockAndJump = async () => {
+  const x = Number(selectedCell.value.x);
+  const y = Number(selectedCell.value.y);
+  const module_id = xyToModuleId(x, y);
+
+  if (!x || !y || x < 1 || x > 8 || y < 1 || y > 8) {
+    ElMessage.warning("请先选择 1-8 范围内的有效坐标");
+    return;
+  }
+
   if (module_id === undefined || module_id === null) {
     ElMessage.warning("未能获取到有效的模块编号");
     return;
   }
-  request
-    .post("/module", {
-      params: {
-        module_id,
-        device_id: 0,
-        position: 0
-      },
-    })
-    .then((res: any) => {
-      console.log(res)
-      if (res && res.code === 200) {
-        ElMessage.success(`模块 ${module_id} 已锁定，正在跳转微调页面...`);
-        // 携带计算好的 module_id 跳转到微调页面
-        router.push({ name: 'FineTuningPage' ,
-          query: {
-            module_id
-          },
-        })
-      } else {
-        ElMessage.error(res?.msg || "模块锁定失败，请重试");
-      }
-    })
-    .catch((res: any) => {
-      console.error("模块锁定异常:", res);
-      ElMessage.error(res?.message || "请求失败，请检查后端服务");
-      return;
-    });
+
+  const payload = {
+    x,
+    y,
+    module_id,
+    device_id: 0,
+    position: 0,
+  };
+
+  console.log("模块下发提交数据：", payload);
+
+  try {
+    const res: any = await request.post("/module/", payload);
+
+    console.log("模块下发成功：", res);
+
+    if (res && res.code === 200) {
+      ElMessage.success(`模块 ${module_id} 已锁定，正在跳转微调页面...`);
+
+      router.push({
+        name: "FineTuningPage",
+        query: {
+          module_id,
+          x,
+          y,
+        },
+      });
+    } else {
+      ElMessage.error(res?.message || res?.msg || "模块锁定失败，请重试");
+    }
+  } catch (err: any) {
+    console.error("模块锁定异常:", err.response?.data || err);
+
+    ElMessage.error(
+      err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        "请求失败，请检查后端服务"
+    );
+  }
 };
 </script>
 

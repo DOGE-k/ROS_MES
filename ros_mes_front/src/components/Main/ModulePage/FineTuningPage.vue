@@ -204,90 +204,97 @@ const armList = reactive({
 });
 
 const confirmInitConfig = () => {
-  if (initConfig.deviceId === null) {
+  if (!initConfig.deviceId) {
     ElMessage.warning("必须选择一个设备编号才能继续");
     return;
   }
+
   coordinateDisable.value = true;
 
-  // 在这里你可以直接调用后端接口下发 XYZ 坐标
+  const payload = {
+    device_id: Number(initConfig.deviceId),
+    module_id: Number(moduleId.value),
+    x: Number(initConfig.x),
+    y: Number(initConfig.y),
+    z: Number(initConfig.z),
+  };
+
+  console.log("坐标下发提交数据：", payload);
+
   request
-    .post("/coordination", {
-      params: {
-        ...initConfig,
-      },
-    })
+    .post("/coordination/", payload)
     .then((res: any) => {
-      console.log(res.data)
+      console.log("坐标下发返回：", res);
+
       if (res && res.code === 200) {
         ElMessage.success("初始参数下发成功！");
         initDialogVisible.value = false;
         armList.id = initConfig.deviceId;
-        for (var i of res.data) {
-          var value = i - armList.id - 1;
-          console.log(i)
-          armList.device[value].deviceId = i.device_id;
-          armList.device[value].current = i.position;
-          armList.device[value].initial = i.position;
-        }
+
         loading.value = true;
         coordinateDisable.value = false;
       } else {
-        ElMessage.error(res?.msg || "初始参数下发失败");
+        ElMessage.error(res?.message || res?.msg || "初始参数下发失败");
+        coordinateDisable.value = false;
       }
+    })
+    .catch((err: any) => {
+      console.error("坐标下发失败：", err.response?.data || err);
+      ElMessage.error(
+        err.response?.data?.detail ||
+          err.response?.data?.message ||
+          "坐标下发失败"
+      );
+      coordinateDisable.value = false;
     });
 };
 
 // ========== 3. 单个机械臂微调（核心接口） ==========
 const sendSingleAdjust = async (value: number) => {
-  console.log("ddddd",armList.device[value].adjust)
+  console.log("ddddd", armList.device[value].adjust);
   loading.value = false;
-  const adjustid = initConfig.deviceId + value + 1;
+
+  const adjustid = Number(initConfig.deviceId) + value + 1;
+
   try {
-    const res = await request.post("/finetuning", {
-      params: {
-        module_id: moduleId.value,
-        device_id: adjustid,
-        position: armList.device[value].adjust,
-      },
+    const res: any = await request.post("/finetuning/", {
+      module_id: moduleId.value,
+      device_id: adjustid,
+      position: armList.device[value].adjust,
     });
 
     if (res && res.code === 200) {
       ElMessage.success(`机械臂 ${armList.id} 微调成功`);
-      for (var i of res.data) {
-        if (i.device_id == adjustid) {
-          armList.device[value].current = i.position;
-        } else {
-          armList.device[3].current = i.position;
-          loading.value = true;
+
+      if (Array.isArray(res.data)) {
+        for (const i of res.data) {
+          if (i.device_id == adjustid) {
+            armList.device[value].current = i.position;
+          } else {
+            armList.device[3].current = i.position;
+            loading.value = true;
+          }
         }
       }
+
       armList.device[value].adjust = 0;
     } else {
-      ElMessage.error(res?.msg || "微调失败");
+      ElMessage.error(res?.message || res?.msg || "微调失败");
     }
   } catch (err: any) {
-    ElMessage.error(err?.message || "请求失败，请检查后端服务");
+    console.error("微调失败：", err.response?.data || err);
+    ElMessage.error(
+      err.response?.data?.detail ||
+        err.response?.data?.message ||
+        "请求失败，请检查后端服务"
+    );
   }
 };
 
 const handleSaveConfig = async () => {
-  request.post("/finetuninghistory", {
-    params: {
-      moduleId,
-      deviceId: initConfig.deviceId,
-      baseRotateInit: armList.device[0].initial,
-      baseRotateAdjust: armList.device[0].current,
-      swingInit: armList.device[1].initial,
-      swingAdjust: armList.device[1].current,
-      telescopicInit: armList.device[2].initial,
-      telescopicAdjust: armList.device[2].current,
-      pressureSensorInit: armList.device[3].initial,
-      pressureSensorAdjust: armList.device[3].current,
-      createTime: new Date().getDate(),
-    },
-  });
+  ElMessage.warning("保存配置接口后端还没有实现");
 };
+
 // 返回模块管理页面
 const goBack = () => {
   router.push("/moduleManagement");
@@ -306,19 +313,23 @@ onMounted(() => {
   }
 
   request
-    .get("/hardware/selectId")
-    .then((res: any) => {
-      if (res.data.length == 0) {
-        ElMessage.warning("未获取到设备编号列表，请先添加机械臂信息");
-        router.push("/HardWorkPage");
-        return;
-      }
-      armIdList.value = res.data; // 假设后端返回的是一个设备编号数组
-      initConfig.deviceId = armIdList.value[0]; // 默认选中第一个设备编号
-    })
-    .catch((err: any) => {
-      ElMessage.error("请求设备编号列表失败");
-    });
+  .get("/hardware/")
+  .then((res: any) => {
+    const list = Array.isArray(res) ? res : res.data || [];
+
+    if (list.length === 0) {
+      ElMessage.warning("未获取到设备编号列表，请先添加机械臂信息");
+      router.push("/HardWorkPage");
+      return;
+    }
+
+    armIdList.value = list.map((item: any) => Number(item.id));
+    initConfig.deviceId = armIdList.value[0];
+  })
+  .catch((err: any) => {
+    console.error("请求设备编号列表失败：", err.response?.data || err);
+    ElMessage.error("请求设备编号列表失败");
+  });
 });
 </script>
 
