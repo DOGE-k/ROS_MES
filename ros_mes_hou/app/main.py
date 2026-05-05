@@ -39,8 +39,8 @@ if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
 
 
-app.include_router(login.router, tags=["认证模块"]) # 登录接口通常不加前缀
+app.include_router(login.router, prefix="/api", tags=["认证模块"]) 
 app.include_router(hardware.router, prefix="/api/hardware", tags=["硬件管理模块"])
 app.include_router(control.router, prefix="/api/control", tags=["设备底层控制模块"])
 app.include_router(finetuning.router, prefix="/api/finetuning", tags=["微调记录模块"])
-app.include_router(ws_stream.router, tags=["实时数据流推送"])
+app.include_router(ws_stream.router, prefix="/api/ws", tags=["实时数据流推送"])

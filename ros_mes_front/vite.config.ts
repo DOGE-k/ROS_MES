@@ -19,9 +19,9 @@ export default defineConfig({
     proxy: {
       // 所有 /api 开头的请求都会被代理
       '/api': {
-        target: 'http://localhost:8091', // 👈 你的后端真实地址
-        changeOrigin: true,             // 开启跨域
-        rewrite: (path) => path.replace(/^\/api/, '') // 重写路径，去掉 /api
+        target: 'http://127.0.0.1:8000', // 👈 你的后端真实地址
+        changeOrigin: true               // 开启跨域
+        
       }
     }
   }
