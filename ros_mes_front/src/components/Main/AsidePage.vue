@@ -77,7 +77,7 @@ import { computed, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import request from '@/utils/request';
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
-import { ro } from 'element-plus/es/locale/index.mjs';
+
 const router = useRouter();
 const route = useRoute();
 const layoutStore = useLayoutSettingStore();
@@ -118,16 +118,28 @@ const cancelLongPress = () => {
 };
 
 const triggerEmergency = async () => {
-  console.log('[模拟] 急停指令已触发');
-  ElMessage.warning('急停指令已触发，所有机械臂停止运动');
-  isEmergencyActive.value = true;
-  cancelLongPress();
-  setTimeout(() => {
-    if (isEmergencyActive.value) {
-      isEmergencyActive.value = false;
-      ElMessage.info('系统已恢复，请谨慎操作');
-    }
-  }, 5000);
+  try {
+    await request.post("/control/emergency_stop");
+
+    ElMessage.warning("急停指令已下发，所有机械臂停止运动");
+    isEmergencyActive.value = true;
+
+    setTimeout(() => {
+      if (isEmergencyActive.value) {
+        isEmergencyActive.value = false;
+        ElMessage.info("系统已恢复，请谨慎操作");
+      }
+    }, 5000);
+  } catch (error) {
+    const errMsg =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      "急停失败，请检查后端服务或 ROS 控制节点";
+
+    ElMessage.error(errMsg);
+  } finally {
+    cancelLongPress();
+  }
 };
 
 const resetEmergency = () => {

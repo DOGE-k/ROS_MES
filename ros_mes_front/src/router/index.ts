@@ -1,11 +1,25 @@
-import { createRouter, createWebHistory } from 'vue-router'
-import routes from './routes'
-import {useUserStore} from "../stores/user";
+import { createRouter, createWebHistory } from "vue-router";
+import routes from "./routes";
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 });
 
+const whiteList = ["/login", "/register"];
 
-export default router
+router.beforeEach((to) => {
+  const token = localStorage.getItem("token");
+
+  if (whiteList.includes(to.path)) {
+    return true;
+  }
+
+  if (!token) {
+    return "/login";
+  }
+
+  return true;
+});
+
+export default router;

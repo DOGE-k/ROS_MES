@@ -161,37 +161,41 @@ const formRules = reactive({
 
 // 6. 登录按钮点击事件
 const handleLogin = async () => {
-  await request
-    .post("/login", {
+  if (!loginForm.account || !loginForm.password) {
+    ElMessage.error("请输入账号和密码");
+    return;
+  }
+
+  loading.value = true;
+
+  try {
+    const response: any = await request.post("/login", {
       username: loginForm.account,
       password: loginForm.password,
-    })
-    .then((response: any) => {
-      if (response.code !== 200) {
-        loading.value = false;
-        ElMessage.error(response.msg);
-        return;
-      }
-      ElMessage.success("登录成功！即将跳转大屏...");
-
-      user.setUserInfo(response.data);
-      localStorage.setItem(
-        "token",
-        response.data.token + String(response.data.updateToken)
-      );
-
-      router.push("/");
-      router.replace("/");
-    })
-    .catch((error: any) => {
-      loading.value = false;
-      console.error("登录请求失败，完整错误：", error);
-      const errMsg =
-        error.response?.data?.message ||
-        error.message ||
-        "登录请求失败，请稍后再试";
-      ElMessage.error(errMsg);
     });
+
+    console.log("登录返回：", response);
+
+    if (response.code !== 200) {
+      ElMessage.error(response.message || "登录失败");
+      return;
+    }
+
+    user.setUserInfo(response.data);
+
+    ElMessage.success("登录成功");
+    router.replace("/");
+  } catch (error: any) {
+    const errMsg =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message ||
+      "登录请求失败，请稍后再试";
+
+    ElMessage.error(errMsg);
+  } finally {
+    loading.value = false;
+  }
 };
 </script>
 
