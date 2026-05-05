@@ -126,13 +126,23 @@ import { de } from "element-plus/es/locale/index.mjs";
 
 // ---------- 类型定义 ----------
 interface Hardware {
-  deviceId: number;
-  deviceName: string;
-  type: number; // 1=机械臂, 2=压力传感器，3=陀螺仪
+  hardwareId: string;
+  name: string;
+  type: string;
   spec: string;
-  status: number; // 1=正常, 0=故障
-  updateTime: string;
+  status: "running" | "idle" | "fault" | "maintenance";
+  lastUseTime: string;
   createTime: string;
+}
+
+interface ApiHardware {
+  id: number;
+  name: string;
+  type?: string;
+  status?: string;
+  ip_address?: string;
+  description?: string;
+  updated_at?: string;
 }
 
 // 表格数据
@@ -186,15 +196,37 @@ const addFormRules: FormRules = {
   spec: [{ required: false, message: "请输入规格", trigger: "blur" }],
 };
 
+//状态转换函数
+const mapBackendStatus = (status?: string): Hardware["status"] => {
+  if (status === "online" || status === "running") return "running";
+  if (status === "offline" || status === "idle") return "idle";
+  if (status === "error" || status === "fault") return "fault";
+  if (status === "maintenance") return "maintenance";
+
+  return "idle";
+};
+
 // 全量查询
 const loadFromApi = () => {
   request
-    .get("/hardware")
+    .get("/hardware/")
     .then((res: any) => {
-      console.log("获取硬件列表成功，数据：", res.data);
-      hardwares.value = res.data;
+      const list = Array.isArray(res) ? res : res.data || [];
+
+      hardwares.value = list.map((item: any) => ({
+        deviceId: item.id,
+        name: item.name,
+        type: item.type,
+        spec: item.description,
+        status: item.status,
+        lastUseTime: item.updated_at || "",
+        createdAt: "",
+      }));
+
+      console.log("获取硬件列表成功，数据：", hardwares.value);
     })
     .catch((err: any) => {
+      console.error("获取硬件列表失败：", err);
       ElMessage.error("获取硬件列表失败");
     });
 };
@@ -220,27 +252,31 @@ const searchFromApi = () => {
 
 // 新增硬件
 const addToApi = (data: Hardware) => {
+  const payload = {
+    name: data.name,
+    type: data.type,
+    status: data.status || "idle",
+    ip_address: "",
+    description: data.spec || "",
+  };
+
   request
-    .post("/hardware", data)
+    .post("/hardware/", payload)
     .then(() => {
       ElMessage.success("添加成功");
       addDialogVisible.value = false;
-      loadFromApi(); // 刷新列表
+      loadFromApi();
     })
     .catch((err: any) => {
-      console.log(err)
-      if (err.response?.status === 400) {
-        ElMessage.error("硬件编号已存在");
-      } else {
-        ElMessage.error("添加失败");
-      }
+      console.error("添加硬件失败：", err.response?.data || err);
+      ElMessage.error("添加失败");
     });
 };
 
 // 删除硬件
 const deleteFromApi = (deviceId: number) => {
   request
-    .delete("/hardware", { params: { deviceId } })
+    .delete("/hardware/", { params: { deviceId } })
     .then(() => {
       ElMessage.success("删除成功");
       loadFromApi();

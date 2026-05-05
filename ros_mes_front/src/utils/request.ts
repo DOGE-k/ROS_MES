@@ -34,7 +34,7 @@ service.interceptors.request.use(
         router.replace("/login");
         return Promise.reject(new Error("请先登录"));
       }
-
+      console.log("当前请求：", config.url, "当前 token：", token);
       config.headers["Authorization"] = `Bearer ${token}`;
     }
 
