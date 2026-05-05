@@ -3,10 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_current_user
 from app.db import models
 from app.services import ros_control
+from app.schemas.hardware import HardwareFeedback, EmergencyStopResponse
 
 router = APIRouter()
 
-@router.get("/hardware/realtime")
+@router.get("/hardware/realtime", response_model=HardwareFeedback)
 async def get_realtime_hardware_status(
     current_user: models.User = Depends(get_current_user)
 ):
@@ -18,7 +19,7 @@ async def get_realtime_hardware_status(
          raise HTTPException(status_code=500, detail=status_data["error"])
     return status_data
 
-@router.post("/emergency_stop")
+@router.post("/emergency_stop", response_model=EmergencyStopResponse)
 def activate_emergency_stop(
     current_user: models.User = Depends(get_current_user)
 ):
