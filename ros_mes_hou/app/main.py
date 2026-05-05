@@ -8,7 +8,7 @@ import uvicorn
 from app.db.database import engine, Base
 import app.db.models  # 必须引入，这样 SQLAlchemy 才能发现模型
 from app.api.endpoints import hardware
-from app.api.endpoints import login, hardware, control, finetuning, ws_stream
+from app.api.endpoints import login, hardware, control, finetuning, ws_stream, register
 
 
 # 自动创建数据库表（如果表不存在）
@@ -34,12 +34,15 @@ app.add_middleware(
 def read_root():
     return {"status": "success", "message": "ros_mes_hou FastAPI 启动成功！"}
 
+
+
 if __name__ == "__main__":
     # 启动应用，reload=True 表示修改代码后自动重启
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 
 
 app.include_router(login.router, prefix="/api", tags=["认证模块"]) 
+app.include_router(register.router, prefix="/api", tags=["注册模块"])
 app.include_router(hardware.router, prefix="/api/hardware", tags=["硬件管理模块"])
 app.include_router(control.router, prefix="/api/control", tags=["设备底层控制模块"])
 app.include_router(finetuning.router, prefix="/api/finetuning", tags=["微调记录模块"])

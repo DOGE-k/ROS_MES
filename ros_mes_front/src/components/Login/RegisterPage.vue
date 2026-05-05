@@ -64,6 +64,7 @@ import { ref, reactive } from "vue";
 import { User, Lock } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { useRouter } from "vue-router";
+import request from "../../utils/request";
 
 const router = useRouter();
 const loading = ref(false);
@@ -99,15 +100,25 @@ const handleRegister = async () => {
   if (!registerFormRef.value) return;
   
   // @ts-ignore
-  await registerFormRef.value.validate((valid) => {
+  await registerFormRef.value.validate(async (valid) => {
     if (valid) {
       loading.value = true;
-      // 这里编写你的注册接口请求逻辑
-      setTimeout(() => {
-        ElMessage.success("注册成功！");
-        loading.value = false;
-        router.push("/login");
-      }, 1000);
+      try {
+                // 2. 【核心修改】真正向后端发起请求
+                // 注意：这里发送的字段名要和后端定义的 Schema 一致（通常是 username 和 password）
+                const res = await request.post("/register", {
+                    username: registerForm.account,
+                    password: registerForm.password
+                });
+
+                ElMessage.success("注册成功，请登录！");
+                router.push("/login");
+            } catch (error) {
+                // 如果后端返回错误（比如用户名已存在），这里会自动处理
+                console.error("注册失败：", error);
+            } finally {
+                loading.value = false;
+            }
     }
   });
 };

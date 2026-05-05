@@ -162,8 +162,8 @@ const formRules = reactive({
 // 6. 登录按钮点击事件
 const handleLogin = async () => {
   await request
-    .post("/user", {
-      account: loginForm.account,
+    .post("/login", {
+      username: loginForm.account,
       password: loginForm.password,
     })
     .then((response: any) => {
