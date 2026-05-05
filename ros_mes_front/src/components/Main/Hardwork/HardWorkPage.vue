@@ -120,29 +120,30 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from "vue";
-import { ElMessage, ElMessageBox, FormInstance, FormRules } from "element-plus";
-import request from "@/utils/request";
-import { de } from "element-plus/es/locale/index.mjs";
+import type { FormInstance, FormRules } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
+import request from "../../../utils/request";
 
-// ---------- 类型定义 ----------
+// ---------- 前端页面使用的类型 ----------
 interface Hardware {
-  hardwareId: string;
-  name: string;
-  type: string;
+  deviceId: string;
+  deviceName: string;
+  type: number;
   spec: string;
-  status: "running" | "idle" | "fault" | "maintenance";
-  lastUseTime: string;
+  status: number; // 1 正常，0 故障
+  updateTime: string;
   createTime: string;
 }
 
+// ---------- 后端返回的数据类型 ----------
 interface ApiHardware {
   id: number;
   name: string;
-  type?: string;
-  status?: string;
-  ip_address?: string;
-  description?: string;
-  updated_at?: string;
+  type?: string | null;
+  status?: string | null;
+  ip_address?: string | null;
+  description?: string | null;
+  updated_at?: string | null;
 }
 
 // 表格数据
@@ -150,23 +151,47 @@ const hardwares = ref<Hardware[]>([]);
 
 // 搜索表单
 const searchForm = reactive({
-  deviceId: 0,
+  deviceId: "",
   deviceName: "",
   type: null as number | null,
   spec: "",
 });
 
-const typeMap = {
+const typeMap: Record<number, string> = {
   1: "机械臂",
   2: "压力传感器",
-  3: "陀螺仪", // 新增的第3个值
+  3: "陀螺仪",
+};
+
+const typeNameToValue = (type?: string | null): number => {
+  if (type === "机械臂" || type === "1" || type === "robot") return 1;
+  if (type === "压力传感器" || type === "2" || type === "pressure_sensor") return 2;
+  if (type === "陀螺仪" || type === "3" || type === "gyroscope") return 3;
+  return 1;
+};
+
+const statusToValue = (status?: string | null): number => {
+  if (status === "normal" || status === "running" || status === "online" || status === "idle") {
+    return 1;
+  }
+
+  if (status === "fault" || status === "error" || status === "offline") {
+    return 0;
+  }
+
+  return 1;
+};
+
+const statusValueToBackend = (status: number): string => {
+  return status === 1 ? "normal" : "fault";
 };
 
 // 新增弹窗相关
 const addDialogVisible = ref(false);
 const addFormRef = ref<FormInstance>();
-const addForm = reactive<Hardware>({
-  deviceId: 0,
+
+const getEmptyAddForm = (): Hardware => ({
+  deviceId: "",
   deviceName: "",
   type: 1,
   spec: "",
@@ -175,13 +200,23 @@ const addForm = reactive<Hardware>({
   createTime: "",
 });
 
-// 新增表单校验规则（包含 deviceId 唯一性校验）
+const addForm = reactive<Hardware>(getEmptyAddForm());
+
+const resetAddForm = () => {
+  Object.assign(addForm, getEmptyAddForm());
+  addFormRef.value?.clearValidate();
+};
+
+// 新增表单校验规则
 const addFormRules: FormRules = {
   deviceId: [
     { required: true, message: "请输入硬件编号", trigger: "blur" },
     {
-      validator: (rule, value, callback) => {
-        const exists = hardwares.value.some((item) => item.deviceId === value);
+      validator: (_rule, value, callback) => {
+        const exists = hardwares.value.some(
+          (item) => item.deviceId === String(value)
+        );
+
         if (exists) {
           callback(new Error("硬件编号已存在"));
         } else {
@@ -191,19 +226,12 @@ const addFormRules: FormRules = {
       trigger: "blur",
     },
   ],
-  deviceName: [{ required: true, message: "请输入硬件名称", trigger: "blur" }],
-  type: [{ required: true, message: "请选择硬件类型", trigger: "change" }],
-  spec: [{ required: false, message: "请输入规格", trigger: "blur" }],
-};
-
-//状态转换函数
-const mapBackendStatus = (status?: string): Hardware["status"] => {
-  if (status === "online" || status === "running") return "running";
-  if (status === "offline" || status === "idle") return "idle";
-  if (status === "error" || status === "fault") return "fault";
-  if (status === "maintenance") return "maintenance";
-
-  return "idle";
+  deviceName: [
+    { required: true, message: "请输入硬件名称", trigger: "blur" },
+  ],
+  type: [
+    { required: true, message: "请选择硬件类型", trigger: "change" },
+  ],
 };
 
 // 全量查询
@@ -211,58 +239,73 @@ const loadFromApi = () => {
   request
     .get("/hardware/")
     .then((res: any) => {
-      const list = Array.isArray(res) ? res : res.data || [];
+      const list: ApiHardware[] = Array.isArray(res) ? res : res.data || [];
 
-      hardwares.value = list.map((item: any) => ({
-        deviceId: item.id,
-        name: item.name,
-        type: item.type,
-        spec: item.description,
-        status: item.status,
-        lastUseTime: item.updated_at || "",
-        createdAt: "",
+      hardwares.value = list.map((item) => ({
+        deviceId: String(item.id),
+        deviceName: item.name || "",
+        type: typeNameToValue(item.type),
+        spec: item.description || "",
+        status: statusToValue(item.status),
+        updateTime: item.updated_at || "",
+        createTime: item.updated_at || "",
       }));
 
       console.log("获取硬件列表成功，数据：", hardwares.value);
     })
     .catch((err: any) => {
-      console.error("获取硬件列表失败：", err);
+      console.error("获取硬件列表失败：", err.response?.data || err);
       ElMessage.error("获取硬件列表失败");
     });
 };
 
-// 模糊搜索
-const searchFromApi = () => {
-  request
-    .get("/hardware/select", {
-      params: {
-        deviceId: searchForm.deviceId || undefined,
-        deviceName: searchForm.deviceName || undefined,
-        type: searchForm.type ?? undefined,
-        spec: searchForm.spec || undefined,
-      },
-    })
-    .then((res: any) => {
-      hardwares.value = res.data;
-    })
-    .catch((err: any) => {
-      ElMessage.error("搜索失败");
+// 本地搜索：你的后端目前没有 /hardware/select，所以这里先在前端过滤
+const handleSearch = () => {
+  loadFromApi();
+
+  setTimeout(() => {
+    hardwares.value = hardwares.value.filter((item) => {
+      const matchDeviceId =
+        !searchForm.deviceId ||
+        item.deviceId.includes(String(searchForm.deviceId));
+
+      const matchDeviceName =
+        !searchForm.deviceName ||
+        item.deviceName.includes(searchForm.deviceName);
+
+      const matchType =
+        searchForm.type === null || item.type === searchForm.type;
+
+      const matchSpec =
+        !searchForm.spec || item.spec.includes(searchForm.spec);
+
+      return matchDeviceId && matchDeviceName && matchType && matchSpec;
     });
+  }, 100);
+};
+
+// 打开新增弹窗
+const openAddDialog = () => {
+  resetAddForm();
+  addDialogVisible.value = true;
 };
 
 // 新增硬件
 const addToApi = (data: Hardware) => {
   const payload = {
-    name: data.name,
-    type: data.type,
-    status: data.status || "idle",
+    name: data.deviceName.trim(),
+    type: typeMap[data.type] || String(data.type),
+    status: statusValueToBackend(data.status),
     ip_address: "",
     description: data.spec || "",
   };
 
+  console.log("新增硬件提交数据：", payload);
+
   request
     .post("/hardware/", payload)
-    .then(() => {
+    .then((res: any) => {
+      console.log("新增硬件成功：", res);
       ElMessage.success("添加成功");
       addDialogVisible.value = false;
       loadFromApi();
@@ -273,35 +316,33 @@ const addToApi = (data: Hardware) => {
     });
 };
 
+const submitAdd = async () => {
+  try {
+    await addFormRef.value?.validate();
+
+    if (!addForm.deviceName.trim()) {
+      ElMessage.error("请输入硬件名称");
+      return;
+    }
+
+    addToApi({ ...addForm });
+  } catch {
+    ElMessage.error("请完善表单信息");
+  }
+};
+
 // 删除硬件
-const deleteFromApi = (deviceId: number) => {
+const deleteFromApi = (deviceId: string) => {
   request
-    .delete("/hardware/", { params: { deviceId } })
+    .delete(`/hardware/${deviceId}`)
     .then(() => {
       ElMessage.success("删除成功");
       loadFromApi();
     })
     .catch((err: any) => {
+      console.error("删除硬件失败：", err.response?.data || err);
       ElMessage.error("删除失败");
     });
-};
-
-const handleSearch = () => {
-  searchFromApi();
-};
-
-const openAddDialog = () => {
-  addDialogVisible.value = true;
-};
-
-const submitAdd = async () => {
-  await addFormRef.value?.validate();
-  const now = new Date();
-  const newHardware: Hardware = {
-    ...addForm
-  };
-  addToApi(newHardware);
-  addDialogVisible.value = false;
 };
 
 const deleteRow = async (row: Hardware) => {
