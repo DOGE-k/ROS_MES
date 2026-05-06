@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+
+from app.api.deps import get_current_user
+from app.db import models
+from app.services.ros_dispatcher import RosDispatchError, ros_dispatcher
 
 router = APIRouter()
 
 
 @router.post("/")
-def lock_and_dispatch_module(payload: dict = Body(...)):
-    print("收到模块下发数据：", payload)
-
+def lock_and_dispatch_module(
+    payload: dict = Body(...),
+    current_user: models.User = Depends(get_current_user),
+):
     x = (
         payload.get("x")
         or payload.get("X")
@@ -14,7 +19,6 @@ def lock_and_dispatch_module(payload: dict = Body(...)):
         or payload.get("moduleX")
         or payload.get("col")
     )
-
     y = (
         payload.get("y")
         or payload.get("Y")
@@ -34,19 +38,27 @@ def lock_and_dispatch_module(payload: dict = Body(...)):
     try:
         x = int(x)
         y = int(y)
-    except ValueError:
+    except (TypeError, ValueError):
         raise HTTPException(status_code=422, detail="x 和 y 必须是数字")
 
     if not (1 <= x <= 8 and 1 <= y <= 8):
         raise HTTPException(status_code=400, detail="坐标范围必须是 1 到 8")
 
-    print(f"模块锁定并下发：X={x}, Y={y}")
+    dispatch_payload = {
+        "x": x,
+        "y": y,
+        "operator": current_user.username,
+        "raw": payload,
+    }
+
+    try:
+        dispatch_result = ros_dispatcher.dispatch("module_lock", dispatch_payload)
+    except RosDispatchError as exc:
+        raise HTTPException(status_code=502, detail=f"ROS 下发失败：{exc}") from exc
 
     return {
         "code": 200,
         "message": "模块锁定并下发成功",
-        "data": {
-            "x": x,
-            "y": y
-        }
+        "data": {"x": x, "y": y},
+        "dispatch": dispatch_result,
     }

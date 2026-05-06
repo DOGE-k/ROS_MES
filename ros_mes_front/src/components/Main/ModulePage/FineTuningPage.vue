@@ -59,7 +59,7 @@
                   :min="-360"
                   :max="360"
                   placeholder="顺时针为正"
-                  @change="sendSingleAdjust(0)"
+                  @change="sendSingleAdjust(1)"
                 />
               </div>
 
@@ -80,11 +80,11 @@
                   >{{ armList.device[2].label }}(mm)</span
                 >
                 <el-input-number
-                  v-model="armList.device[0].adjust"
+                  v-model="armList.device[2].adjust"
                   :min="-360"
                   :max="360"
                   placeholder="顺时针为正"
-                  @change="sendSingleAdjust(0)"
+                  @change="sendSingleAdjust(2)"
                 />
               </div>
 
@@ -140,7 +140,7 @@
             :step="10"
             controls-position="right"
             style="width: 100%"
-            :disable="coordinateDisable"
+            :disabled="coordinateDisable"
           />
         </el-form-item>
         <el-form-item label="Y 坐标" required>
@@ -170,11 +170,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from "vue";
+import { ref, reactive, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import request from "@/utils/request";
-import { init } from "echarts/types/src/echarts.all.js";
+ 
 
 const router = useRouter();
 const coordinateDisable = ref(false)
@@ -277,7 +277,7 @@ const sendSingleAdjust = async (value: number) => {
         }
       }
 
-      armList.device[value].adjust = 0;
+      armList.device[value].adjust = Number(armList.device[value].current || 0);
     } else {
       ElMessage.error(res?.message || res?.msg || "微调失败");
     }
@@ -292,7 +292,41 @@ const sendSingleAdjust = async (value: number) => {
 };
 
 const handleSaveConfig = async () => {
-  ElMessage.warning("保存配置接口后端还没有实现");
+  if (!initConfig.deviceId) {
+    ElMessage.warning("请先选择设备并完成初始坐标下发");
+    return;
+  }
+
+  try {
+    const payload = {
+      module_id: Number(moduleId.value),
+      device_id: Number(initConfig.deviceId),
+      x: Number(initConfig.x),
+      y: Number(initConfig.y),
+      z: Number(initConfig.z),
+      devices: armList.device.map((item: any, index: number) => ({
+        device_id: index === 3 ? -1 : Number(initConfig.deviceId) + index + 1,
+        label: item.label || "压力传感器",
+        initial: Number(item.initial || 0),
+        adjust: Number(item.adjust || 0),
+        current: Number(item.current || 0),
+      })),
+    };
+
+    const res: any = await request.post("/finetuning/config", payload);
+    if (res && res.code === 200) {
+      ElMessage.success("配置保存成功");
+    } else {
+      ElMessage.error(res?.message || res?.msg || "配置保存失败");
+    }
+  } catch (err: any) {
+    console.error("配置保存失败：", err.response?.data || err);
+    ElMessage.error(
+      err.response?.data?.detail ||
+        err.response?.data?.message ||
+        "配置保存失败，请检查后端服务"
+    );
+  }
 };
 
 // 返回模块管理页面
