@@ -174,7 +174,11 @@ import { ref, reactive, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import request from "@/utils/request";
- 
+import {
+  sendCoordination,
+  sendFineTuning,
+  saveFineTuningConfig,
+} from "@/api/rosApi";
 
 const router = useRouter();
 const coordinateDisable = ref(false)
@@ -203,7 +207,7 @@ const armList = reactive({
   ],
 });
 
-const confirmInitConfig = () => {
+const confirmInitConfig = async () => {
   if (!initConfig.deviceId) {
     ElMessage.warning("必须选择一个设备编号才能继续");
     return;
@@ -221,32 +225,30 @@ const confirmInitConfig = () => {
 
   console.log("坐标下发提交数据：", payload);
 
-  request
-    .post("/coordination/", payload)
-    .then((res: any) => {
-      console.log("坐标下发返回：", res);
+  try {
+  const res: any = await sendCoordination(payload);
 
-      if (res && res.code === 200) {
-        ElMessage.success("初始参数下发成功！");
-        initDialogVisible.value = false;
-        armList.id = initConfig.deviceId;
+  console.log("坐标下发返回：", res);
 
-        loading.value = true;
-        coordinateDisable.value = false;
-      } else {
-        ElMessage.error(res?.message || res?.msg || "初始参数下发失败");
-        coordinateDisable.value = false;
-      }
-    })
-    .catch((err: any) => {
-      console.error("坐标下发失败：", err.response?.data || err);
-      ElMessage.error(
-        err.response?.data?.detail ||
-          err.response?.data?.message ||
-          "坐标下发失败"
-      );
-      coordinateDisable.value = false;
-    });
+  if (res && res.code === 200) {
+    ElMessage.success("初始参数下发成功！");
+    initDialogVisible.value = false;
+    armList.id = initConfig.deviceId;
+
+    loading.value = true;
+    coordinateDisable.value = false;
+  } else {
+    ElMessage.error(res?.message || res?.msg || "初始参数下发失败");
+    coordinateDisable.value = false;
+  }
+} catch (err: any) {
+  console.error("初始参数下发失败：", err.response?.data || err);
+  ElMessage.error(
+    err.response?.data?.detail ||
+      err.response?.data?.message ||
+      "初始参数下发失败，请检查后端服务"
+  );
+}
 };
 
 // ========== 3. 单个机械臂微调（核心接口） ==========
@@ -257,8 +259,8 @@ const sendSingleAdjust = async (value: number) => {
   const adjustid = Number(initConfig.deviceId) + value + 1;
 
   try {
-    const res: any = await request.post("/finetuning/", {
-      module_id: moduleId.value,
+    const res: any = await sendFineTuning({
+      module_id: Number(moduleId.value),
       device_id: adjustid,
       position: armList.device[value].adjust,
     });
@@ -313,7 +315,7 @@ const handleSaveConfig = async () => {
       })),
     };
 
-    const res: any = await request.post("/finetuning/config", payload);
+    const res: any = await saveFineTuningConfig(payload);
     if (res && res.code === 200) {
       ElMessage.success("配置保存成功");
     } else {

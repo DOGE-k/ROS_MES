@@ -12,6 +12,7 @@ export const useUserStore = defineStore("user", () => {
   const token = ref(localStorage.getItem("token") || "");
   const updateTime = ref(localStorage.getItem("updateTime") || "");
 
+  //登录成功后保存用户信息
   const setUserInfo = (data: UserInfo) => {
     account.value = data.account;
     token.value = data.token;
@@ -22,6 +23,7 @@ export const useUserStore = defineStore("user", () => {
     localStorage.setItem("updateTime", data.updateTime);
   };
 
+  //退出或者token失效时清除用户信息
   const clearUser = () => {
     account.value = "";
     token.value = "";
@@ -32,6 +34,7 @@ export const useUserStore = defineStore("user", () => {
     localStorage.removeItem("updateTime");
   };
 
+  //判断当前是否有token
   const isLogin = () => {
     return Boolean(token.value || localStorage.getItem("token"));
   };

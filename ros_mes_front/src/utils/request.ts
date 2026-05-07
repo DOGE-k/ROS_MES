@@ -11,7 +11,16 @@ const service = axios.create({
   },
 });
 
-const whiteList = ["/login", "/register"];
+const whiteList = [
+  "/login",
+  "/register",
+  "/send_ros",
+  "/get_ros_status",
+  "/hardware",
+  "/module",
+  "/coordination",
+  "/finetuning",
+];
 
 service.interceptors.request.use(
   (config) => {
@@ -34,7 +43,7 @@ service.interceptors.request.use(
         router.replace("/login");
         return Promise.reject(new Error("请先登录"));
       }
-      console.log("当前请求：", config.url, "当前 token：", token);
+
       config.headers["Authorization"] = `Bearer ${token}`;
     }
 
@@ -54,11 +63,12 @@ service.interceptors.response.use(
       localStorage.removeItem("token");
       localStorage.removeItem("account");
       localStorage.removeItem("updateTime");
-
       ElMessage.error("登录已过期，请重新登录");
       router.replace("/login");
     } else if (detail || message) {
       ElMessage.error(detail || message);
+    } else {
+      ElMessage.error("请求失败，请检查 API 服务是否启动");
     }
 
     return Promise.reject(error);
