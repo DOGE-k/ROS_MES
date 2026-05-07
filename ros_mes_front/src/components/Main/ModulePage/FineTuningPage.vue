@@ -121,19 +121,19 @@
     >
       <el-form label-width="100px">
         <el-form-item label="设备编号" required>
-          <el-select
-            v-model="initConfig.deviceId"
-            placeholder="请选择机械臂"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="item in armIdList"
-              :key="item"
-              :label="item"
-              :value="item"
-            />
-          </el-select>
-        </el-form-item>
+        <el-select
+          v-model="initConfig.deviceId"
+          placeholder="请选择机械臂"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="item in armIdList"
+            :key="item"
+            :label="item"
+            :value="item"
+          />
+        </el-select>
+      </el-form-item>
         <el-form-item label="X 坐标" required>
           <el-input-number
             v-model="initConfig.x"
@@ -173,8 +173,8 @@
 import { ref, reactive, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import request from "@/utils/request";
 import {
+  getHardwareList,
   sendCoordination,
   sendFineTuning,
   saveFineTuningConfig,
@@ -186,7 +186,7 @@ const coordinateDisable = ref(false)
 // ========== 新增：初始化强制弹窗逻辑 ==========
 const initDialogVisible = ref(true); // 默认 true，页面一进来就弹
 const initConfig = reactive({
-  deviceId: 0, // 可选设备编号列表
+  deviceId: 0,
   x: 0,
   y: 0,
   z: 0,
@@ -208,7 +208,11 @@ const armList = reactive({
 });
 
 const confirmInitConfig = async () => {
-  if (!initConfig.deviceId) {
+  if (
+    initConfig.deviceId === null ||
+    initConfig.deviceId === undefined ||
+    initConfig.deviceId === ""
+  ) {
     ElMessage.warning("必须选择一个设备编号才能继续");
     return;
   }
@@ -253,7 +257,9 @@ const confirmInitConfig = async () => {
 
 // ========== 3. 单个机械臂微调（核心接口） ==========
 const sendSingleAdjust = async (value: number) => {
-  console.log("ddddd", armList.device[value].adjust);
+  const adjustValue = Number(armList.device[value].adjust);
+
+  console.log("微调值：", adjustValue);
   loading.value = false;
 
   const adjustid = Number(initConfig.deviceId) + value + 1;
@@ -262,24 +268,38 @@ const sendSingleAdjust = async (value: number) => {
     const res: any = await sendFineTuning({
       module_id: Number(moduleId.value),
       device_id: adjustid,
-      position: armList.device[value].adjust,
+      position: adjustValue,
     });
+
+    console.log("微调返回：", res);
 
     if (res && res.code === 200) {
       ElMessage.success(`机械臂 ${armList.id} 微调成功`);
 
+      // 情况 1：后端返回数组，例如多个设备当前位置
       if (Array.isArray(res.data)) {
         for (const i of res.data) {
-          if (i.device_id == adjustid) {
-            armList.device[value].current = i.position;
+          if (Number(i.device_id) === adjustid) {
+            armList.device[value].current = Number(i.position);
           } else {
-            armList.device[3].current = i.position;
+            armList.device[3].current = Number(i.position);
             loading.value = true;
           }
         }
       }
 
-      armList.device[value].adjust = Number(armList.device[value].current || 0);
+      // 情况 2：mock 或后端返回对象，例如 { position: 1 }
+      else if (res.data && res.data.position !== undefined) {
+        armList.device[value].current = Number(res.data.position);
+      }
+
+      // 情况 3：mock 没有返回当前位置，就直接用当前输入值作为当前位置
+      else {
+        armList.device[value].current = adjustValue;
+      }
+
+      // 不再强制回到 0，而是同步到最新值
+      armList.device[value].adjust = Number(armList.device[value].current);
     } else {
       ElMessage.error(res?.message || res?.msg || "微调失败");
     }
@@ -294,7 +314,11 @@ const sendSingleAdjust = async (value: number) => {
 };
 
 const handleSaveConfig = async () => {
-  if (!initConfig.deviceId) {
+  if (
+    initConfig.deviceId === null ||
+    initConfig.deviceId === undefined ||
+    initConfig.deviceId === ""
+  ) {
     ElMessage.warning("请先选择设备并完成初始坐标下发");
     return;
   }
@@ -337,7 +361,7 @@ const goBack = () => {
 };
 
 // ========== 6. 页面初始化 ==========
-onMounted(() => {
+onMounted(async () => {
   const qModuleId = route.query.module_id;
 
   if (qModuleId) {
@@ -348,10 +372,16 @@ onMounted(() => {
     return;
   }
 
-  request
-  .get("/hardware/")
-  .then((res: any) => {
-    const list = Array.isArray(res) ? res : res.data || [];
+  try {
+    const res: any = await getHardwareList();
+
+    console.log("微调页获取设备列表返回：", res);
+
+    const list = Array.isArray(res)
+      ? res
+      : Array.isArray(res.data)
+        ? res.data
+        : [];
 
     if (list.length === 0) {
       ElMessage.warning("未获取到设备编号列表，请先添加机械臂信息");
@@ -359,13 +389,26 @@ onMounted(() => {
       return;
     }
 
-    armIdList.value = list.map((item: any) => Number(item.id));
+    armIdList.value = list
+      .map((item: any) =>
+        Number(item.device_id ?? item.hardware_id ?? item.id)
+      )
+      .filter((id: number) => !Number.isNaN(id));
+
+    if (armIdList.value.length === 0) {
+      ElMessage.warning("设备列表中没有可用的设备编号");
+      router.push("/HardWorkPage");
+      return;
+    }
+
     initConfig.deviceId = armIdList.value[0];
-  })
-  .catch((err: any) => {
+    armList.id = initConfig.deviceId;
+
+    console.log("微调页设备编号列表：", armIdList.value);
+  } catch (err: any) {
     console.error("请求设备编号列表失败：", err.response?.data || err);
     ElMessage.error("请求设备编号列表失败");
-  });
+  }
 });
 </script>
 
