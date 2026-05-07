@@ -6,7 +6,7 @@ import ModuleManagement from "../components/Main/ModulePage/ModuleManagement.vue
 import RegisterPage from "../components/Login/RegisterPage.vue";
 import UserManagement from "../components/Main/UserManage/UserManagement.vue";
 import Profile from '../components/Main/UserManage/Profile.vue'
-
+import RosTestPage from "../components/Main/RosTestPage.vue";
 const routes = [
   {
     path: '/login',
@@ -63,7 +63,14 @@ const routes = [
         path: '/Profile',
         name: 'Profile',
         component: Profile,
-        meta: { activeMenu: '/Profile' }
+      },
+      {
+        path: "/RosTestPage",
+        name: "RosTestPage",
+        component: RosTestPage,
+        meta: {
+          activeMenu: "/RosTestPage",
+        },
       },
     ]
   }

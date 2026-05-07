@@ -6,9 +6,23 @@ const router = createRouter({
   routes,
 });
 
-const whiteList = ["/login", "/register"];
+// 开发阶段：mock 模式下不检查登录
+const isMock = import.meta.env.VITE_USE_MOCK === "true";
+
+const whiteList = [
+  "/login",
+  "/register",
+  "/RosTestPage",
+  "/HardWorkPage",
+  "/ModuleManagement",
+  "/FineTuningPage",
+];
 
 router.beforeEach((to) => {
+  if (isMock) {
+    return true;
+  }
+
   const token = localStorage.getItem("token");
 
   if (whiteList.includes(to.path)) {

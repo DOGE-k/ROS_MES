@@ -60,8 +60,8 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { ElMessage } from "element-plus";
-import request from "@/utils/request";
 import { useRouter } from "vue-router";
+import { createModule } from "@/api/rosApi";
 
 
 const router = useRouter();
@@ -175,7 +175,7 @@ const handleLockAndJump = async () => {
   console.log("模块下发提交数据：", payload);
 
   try {
-    const res: any = await request.post("/module/", payload);
+    const res: any = await createModule(payload);
 
     console.log("模块下发成功：", res);
 

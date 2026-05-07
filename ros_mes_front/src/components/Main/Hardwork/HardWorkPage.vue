@@ -122,7 +122,11 @@
 import { ref, reactive, onMounted } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage, ElMessageBox } from "element-plus";
-import request from "../../../utils/request";
+import {
+  getHardwareList,
+  createHardware,
+  deleteHardware,
+} from "@/api/rosApi";
 
 // ---------- 前端页面使用的类型 ----------
 interface Hardware {
@@ -137,13 +141,19 @@ interface Hardware {
 
 // ---------- 后端返回的数据类型 ----------
 interface ApiHardware {
-  id: number;
-  name: string;
-  type?: string | null;
-  status?: string | null;
-  ip_address?: string | null;
+  id?: number | string;
+  device_id?: number | string;
+  hardware_id?: number | string;
+  name?: string;
+  hardware_name?: string;
+  type?: string | number | null;
+  hardware_type?: string | number | null;
+  status?: string | number | null;
   description?: string | null;
+  specification?: string | null;
   updated_at?: string | null;
+  last_used_time?: string | null;
+  create_time?: string | null;
 }
 
 // 表格数据
@@ -234,54 +244,65 @@ const addFormRules: FormRules = {
   ],
 };
 
+
+const normalizeHardware = (item: ApiHardware): Hardware => {
+  return {
+    deviceId: String(item.device_id ?? item.hardware_id ?? item.id ?? ""),
+    deviceName: String(item.hardware_name ?? item.name ?? ""),
+    type: typeNameToValue(item.hardware_type ?? item.type),
+    spec: String(item.specification ?? item.description ?? ""),
+    status: statusToValue(item.status),
+    updateTime: String(item.updated_at ?? item.last_used_time ?? ""),
+    createTime: String(item.create_time ?? item.updated_at ?? ""),
+  };
+};
+
 // 全量查询
-const loadFromApi = () => {
-  request
-    .get("/hardware/")
-    .then((res: any) => {
-      const list: ApiHardware[] = Array.isArray(res) ? res : res.data || [];
+const loadFromApi = async () => {
+  try {
+    const res: any = await getHardwareList();
 
-      hardwares.value = list.map((item) => ({
-        deviceId: String(item.id),
-        deviceName: item.name || "",
-        type: typeNameToValue(item.type),
-        spec: item.description || "",
-        status: statusToValue(item.status),
-        updateTime: item.updated_at || "",
-        createTime: item.updated_at || "",
-      }));
+    const list: ApiHardware[] = Array.isArray(res)
+      ? res
+      : Array.isArray(res.data)
+        ? res.data
+        : [];
 
-      console.log("获取硬件列表成功，数据：", hardwares.value);
-    })
-    .catch((err: any) => {
-      console.error("获取硬件列表失败：", err.response?.data || err);
-      ElMessage.error("获取硬件列表失败");
-    });
+    const tableList = list.map(normalizeHardware);
+
+    hardwares.value = tableList;
+
+    console.log("获取硬件列表成功，数据：", hardwares.value);
+
+    return tableList;
+  } catch (err: any) {
+    console.error("获取硬件列表失败：", err.response?.data || err);
+    ElMessage.error("获取硬件列表失败");
+    return [];
+  }
 };
 
 // 本地搜索：你的后端目前没有 /hardware/select，所以这里先在前端过滤
-const handleSearch = () => {
-  loadFromApi();
+const handleSearch = async () => {
+  const list = await loadFromApi();
 
-  setTimeout(() => {
-    hardwares.value = hardwares.value.filter((item) => {
-      const matchDeviceId =
-        !searchForm.deviceId ||
-        item.deviceId.includes(String(searchForm.deviceId));
+  hardwares.value = list.filter((item) => {
+    const matchDeviceId =
+      !searchForm.deviceId ||
+      item.deviceId.includes(String(searchForm.deviceId));
 
-      const matchDeviceName =
-        !searchForm.deviceName ||
-        item.deviceName.includes(searchForm.deviceName);
+    const matchDeviceName =
+      !searchForm.deviceName ||
+      item.deviceName.includes(searchForm.deviceName);
 
-      const matchType =
-        searchForm.type === null || item.type === searchForm.type;
+    const matchType =
+      searchForm.type === null || item.type === searchForm.type;
 
-      const matchSpec =
-        !searchForm.spec || item.spec.includes(searchForm.spec);
+    const matchSpec =
+      !searchForm.spec || item.spec.includes(searchForm.spec);
 
-      return matchDeviceId && matchDeviceName && matchType && matchSpec;
-    });
-  }, 100);
+    return matchDeviceId && matchDeviceName && matchType && matchSpec;
+  });
 };
 
 // 打开新增弹窗
@@ -291,29 +312,45 @@ const openAddDialog = () => {
 };
 
 // 新增硬件
-const addToApi = (data: Hardware) => {
+const addToApi = async (data: Hardware) => {
+  const deviceId = Number(data.deviceId);
+
+  if (Number.isNaN(deviceId)) {
+    ElMessage.error("硬件编号必须是数字");
+    return;
+  }
+
   const payload = {
+    device_id: deviceId,
+    hardware_id: deviceId,
     name: data.deviceName.trim(),
+    hardware_name: data.deviceName.trim(),
     type: typeMap[data.type] || String(data.type),
+    hardware_type: typeMap[data.type] || String(data.type),
     status: statusValueToBackend(data.status),
     ip_address: "",
     description: data.spec || "",
+    specification: data.spec || "",
   };
 
   console.log("新增硬件提交数据：", payload);
 
-  request
-    .post("/hardware/", payload)
-    .then((res: any) => {
-      console.log("新增硬件成功：", res);
+  try {
+    const res: any = await createHardware(payload);
+
+    console.log("新增硬件成功：", res);
+
+    if (res && res.code === 200) {
       ElMessage.success("添加成功");
       addDialogVisible.value = false;
-      loadFromApi();
-    })
-    .catch((err: any) => {
-      console.error("添加硬件失败：", err.response?.data || err);
-      ElMessage.error("添加失败");
-    });
+      await loadFromApi();
+    } else {
+      ElMessage.error(res?.message || res?.msg || "添加失败");
+    }
+  } catch (err: any) {
+    console.error("添加硬件失败：", err.response?.data || err);
+    ElMessage.error("添加失败");
+  }
 };
 
 const submitAdd = async () => {
@@ -332,17 +369,18 @@ const submitAdd = async () => {
 };
 
 // 删除硬件
-const deleteFromApi = (deviceId: string) => {
-  request
-    .delete(`/hardware/${deviceId}`)
-    .then(() => {
-      ElMessage.success("删除成功");
-      loadFromApi();
-    })
-    .catch((err: any) => {
-      console.error("删除硬件失败：", err.response?.data || err);
-      ElMessage.error("删除失败");
-    });
+const deleteFromApi = async (deviceId: string) => {
+  try {
+    const res: any = await deleteHardware(deviceId);
+
+    console.log("删除硬件返回：", res);
+
+    ElMessage.success("删除成功");
+    await loadFromApi();
+  } catch (err: any) {
+    console.error("删除硬件失败：", err.response?.data || err);
+    ElMessage.error("删除失败");
+  }
 };
 
 const deleteRow = async (row: Hardware) => {
