@@ -29,6 +29,8 @@ service.interceptors.request.use(
     if (url.includes("/login")) {
       config.data = qs.stringify(config.data);
       config.headers["Content-Type"] = "application/x-www-form-urlencoded";
+    } else if (config.data instanceof FormData) {
+      config.headers["Content-Type"] = "multipart/form-data";
     } else {
       config.headers["Content-Type"] = "application/json;charset=utf-8";
     }

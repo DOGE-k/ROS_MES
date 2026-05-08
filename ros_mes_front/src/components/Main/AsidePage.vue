@@ -24,6 +24,10 @@
         <el-icon><document /></el-icon>
         <span>模块管理</span>
       </el-menu-item>
+      <el-menu-item index="/DrawingManage">
+        <el-icon><PictureFilled /></el-icon>
+        <span>图纸管理</span>
+      </el-menu-item>
       <el-menu-item index="/UserManagement">
         <el-icon><User /></el-icon>
         <span>用户管理</span>
@@ -70,7 +74,8 @@ import {
   Document,
   Menu as IconMenu,
   User,
-  Setting
+  Setting,
+  PictureFilled,
 } from '@element-plus/icons-vue';
 import { useRouter, useRoute } from 'vue-router';
 import { computed, ref } from 'vue';

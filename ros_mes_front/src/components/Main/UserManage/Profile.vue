@@ -4,22 +4,23 @@
       
       <el-col :span="8">
         <el-card shadow="never" class="profile-card">
-          <div class="avatar-section">
+          <div v-loading="loading" class="avatar-section">
             <el-upload
               class="avatar-uploader"
-              action="#" 
+              action="#"
               :show-file-list="false"
               :auto-upload="false"
-              accept="image/*"  :on-change="handleAvatarChange" >
-              <el-avatar :size="120" :src="previewAvatar || userInfo.avatar" class="user-avatar" />
+              accept=".png,.jpg,.jpeg,.gif,.webp"
+              :on-change="handleAvatarChange">
+              <el-avatar :size="120" :src="displayAvatar" class="user-avatar" />
               <div class="avatar-mask">
                 <el-icon><Plus /></el-icon>
                 <span>更换头像</span>
               </div>
             </el-upload>
-            <h2 class="user-name">{{ userInfo.username }}</h2>
+            <h2 class="user-name">{{ userInfo.username || '未设置' }}</h2>
             <el-tag :type="userInfo.role === 'admin' ? 'danger' : 'info'">
-              {{ userInfo.role === 'admin' ? '系统管理员' : '一线操作员' }}
+              {{ userInfo.role === 'admin' ? '系统管理员' : userInfo.role === 'operator' ? '一线操作员' : userInfo.role }}
             </el-tag>
           </div>
           
@@ -28,11 +29,11 @@
           <div class="user-bio">
             <div class="bio-item">
               <el-icon><Postcard /></el-icon>
-              <span>工号：{{ userInfo.account }}</span>
+              <span>账号：{{ userInfo.account }}</span>
             </div>
             <div class="bio-item">
               <el-icon><Clock /></el-icon>
-              <span>入职时间：2026-03-15</span>
+              <span>注册时间：{{ formatDate(userInfo.createdAt) }}</span>
             </div>
           </div>
         </el-card>
@@ -54,7 +55,7 @@
                   <el-input v-model="userInfo.email" placeholder="请输入常用邮箱" />
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="primary" @click="saveBasicInfo">保存基本信息</el-button>
+                  <el-button type="primary" :loading="saving" @click="saveBasicInfo">保存基本信息</el-button>
                 </el-form-item>
               </el-form>
             </el-tab-pane>
@@ -71,7 +72,7 @@
                   <el-input v-model="securityForm.confirmPassword" type="password" show-password />
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="danger" @click="updatePassword">修改登录密码</el-button>
+                  <el-button type="danger" :loading="changingPassword" @click="updatePassword">修改登录密码</el-button>
                 </el-form-item>
               </el-form>
             </el-tab-pane>
@@ -84,62 +85,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { Plus, Postcard, Clock } from '@element-plus/icons-vue'
-import { ElMessage, genFileId } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import type { UploadProps } from 'element-plus'
+import request from '@/utils/request'
 
 const activeTab = ref('info')
+const loading = ref(true)
+const saving = ref(false)
+const changingPassword = ref(false)
+const previewUrl = ref('')
+const avatarFile = ref<File | null>(null)
 
-// 【新增核心变量】用来存放实时预览的 Base64 图片字符串，初始为空
-const previewAvatar = ref('')
-
-// 模拟当前登录用户数据 (保持不动)
 const userInfo = reactive({
-  account: 'KE_2026',
-  username: '管理员',
-  role: 'admin',
-  phone: '138-xxxx-xxxx',
-  email: 'xxxx@university.edu',
-  avatar: 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+  id: 0,
+  account: '',
+  username: '',
+  role: '',
+  email: '',
+  phone: '',
+  avatar: '',
+  createdAt: ''
 })
-
-// --- 【新增核心逻辑】文件状态改变时的钩子（选择文件后触发） ---
-// 使用了 Element Plus 的 UploadProps['onChange'] 类型，防止 TS 报错
-const handleAvatarChange: UploadProps['onChange'] = (uploadFile) => {
-  console.log('文件已选择，准备生成预览:', uploadFile)
-
-  // 1. 安全校验 (虽然 accept="image/*" 限制了，但 JS 再校验一次更稳)
-  if (!uploadFile.raw?.type.startsWith('image/')) {
-    ElMessage.error('上传文件必须是图片格式!')
-    return // 停止执行
-  }
-  
-  // 校验文件大小 (示例：不超过 2MB，MES 系统中头像不宜过大)
-  if (uploadFile.raw.size / 1024 / 1024 > 2) {
-    ElMessage.error('头像图片大小不能超过 2MB!')
-    return // 停止执行
-  }
-
-  // 2. --- 纯前端预览魔法：FileReader ---
-  // 既然后端还没好，我们就把图片读成 Base64 字符串直接塞给 <el-avatar>
-  const reader = new FileReader()
-  
-  // 必须将 raw file 转换为 Blob 才能读取
-  reader.readAsDataURL(uploadFile.raw as Blob)
-  
-  reader.onload = (e) => {
-    // 读取成功后，将生成的 Base64 赋值给预览变量
-    // 这个变量一变，template 里的 :src 就会瞬间响应
-    previewAvatar.value = e.target?.result as string
-    console.log('Base64 生成成功，预览已更新')
-    ElMessage.success('头像预览已更新，记得保存修改哦')
-  }
-  
-  reader.onerror = () => {
-    ElMessage.error('图片读取失败，请重试')
-  }
-}
 
 const securityForm = reactive({
   oldPassword: '',
@@ -147,21 +115,120 @@ const securityForm = reactive({
   confirmPassword: ''
 })
 
-// 修改这两个函数，在保存时同步预览图（可选，为了逻辑更闭环）
-const saveBasicInfo = () => {
-  // 如果有预览图，则在保存时更新回 userInfo
-  if(previewAvatar.value) {
-    userInfo.avatar = previewAvatar.value
+const displayAvatar = computed(() => {
+  if (previewUrl.value) return previewUrl.value
+  return userInfo.avatar || ''
+})
+
+onMounted(async () => {
+  try {
+    const res: any = await request.get('/user/me')
+    if (res.code === 200) {
+      const data = res.data
+      userInfo.id = data.id
+      userInfo.account = data.account
+      userInfo.username = data.username
+      userInfo.role = data.role
+      userInfo.email = data.email || ''
+      userInfo.phone = data.phone || ''
+      userInfo.avatar = data.avatar || ''
+      userInfo.createdAt = data.createdAt || ''
+    }
+  } catch {
+  } finally {
+    loading.value = false
   }
-  ElMessage.success('个人资料及头像已全站同步更新')
+})
+
+onUnmounted(() => {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+  }
+})
+
+const handleAvatarChange: UploadProps['onChange'] = (uploadFile) => {
+  if (!uploadFile.raw) return
+
+  if (!uploadFile.raw.type.startsWith('image/')) {
+    ElMessage.error('上传文件必须是图片格式!')
+    return
+  }
+  if (uploadFile.raw.size / 1024 / 1024 > 2) {
+    ElMessage.error('头像图片大小不能超过 2MB!')
+    return
+  }
+
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+  }
+
+  avatarFile.value = uploadFile.raw
+  previewUrl.value = URL.createObjectURL(uploadFile.raw)
 }
 
-const updatePassword = () => {
+const saveBasicInfo = async () => {
+  saving.value = true
+  try {
+    if (avatarFile.value) {
+      const fd = new FormData()
+      fd.append('file', avatarFile.value)
+      const uploadRes: any = await request.post('/user/avatar', fd)
+      if (uploadRes.code === 200) {
+        userInfo.avatar = uploadRes.data.avatar
+        avatarFile.value = null
+        URL.revokeObjectURL(previewUrl.value)
+        previewUrl.value = ''
+      }
+    }
+
+    const res: any = await request.put('/user/profile/me', {
+      username: userInfo.username,
+      email: userInfo.email,
+      phone: userInfo.phone
+    })
+    if (res.code === 200) {
+      ElMessage.success('个人资料已保存')
+    }
+  } catch {
+  } finally {
+    saving.value = false
+  }
+}
+
+const updatePassword = async () => {
+  if (!securityForm.oldPassword) {
+    ElMessage.error('请输入当前密码')
+    return
+  }
   if (securityForm.newPassword !== securityForm.confirmPassword) {
     ElMessage.error('两次输入的密码不一致')
     return
   }
-  ElMessage.success('密码修改成功，请牢记新密码')
+  if (securityForm.newPassword.length < 6) {
+    ElMessage.error('新密码至少需要 6 位')
+    return
+  }
+  changingPassword.value = true
+  try {
+    const res: any = await request.post('/user/password', {
+      old_password: securityForm.oldPassword,
+      new_password: securityForm.newPassword
+    })
+    if (res.code === 200) {
+      ElMessage.success('密码修改成功，请牢记新密码')
+      securityForm.oldPassword = ''
+      securityForm.newPassword = ''
+      securityForm.confirmPassword = ''
+    }
+  } catch {
+  } finally {
+    changingPassword.value = false
+  }
+}
+
+function formatDate(dateStr: string): string {
+  if (!dateStr) return '未知'
+  return dateStr.substring(0, 10)
 }
 </script>
 

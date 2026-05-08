@@ -1,6 +1,5 @@
 <template>
   <div class="user-manage-container">
-    
     <el-row :gutter="20" class="dashboard-row">
       <el-col :span="6">
         <el-card shadow="hover" class="data-card border-blue">
@@ -38,31 +37,29 @@
       <el-col :span="6">
         <el-card shadow="hover" class="data-card border-orange">
           <div class="card-header">
-            <span class="card-title">在线用户</span>
+            <span class="card-title">用户总数</span>
             <el-icon class="card-icon" color="#e6a23c"><User /></el-icon>
           </div>
-          <div class="card-value warning-text">{{ onlineUserCount }}</div>
-          <div class="card-desc">当前状态正常的用户总数</div>
+          <div class="card-value warning-text">{{ tableData.length }}</div>
+          <div class="card-desc">系统注册用户总数</div>
         </el-card>
       </el-col>
     </el-row>
 
     <el-card shadow="never" class="main-card">
-      
       <div class="toolbar">
-        <el-input 
-          v-model="searchKeyword" 
-          placeholder="请输入账号/姓名" 
-          clearable 
+        <el-input
+          v-model="searchKeyword"
+          placeholder="请输入账号/用户名"
+          clearable
           class="search-input"
+          @keyup.enter="handleQuery"
         />
-        
-        <el-select v-model="searchRole" placeholder="全部角色" class="search-select">
+        <el-select v-model="searchRole" placeholder="全部角色" class="search-select" @change="handleQuery">
           <el-option label="全部角色" value="" />
           <el-option label="管理员" value="admin" />
           <el-option label="操作员" value="operator" />
         </el-select>
-        
         <el-button type="primary" class="toolbar-btn query-btn" @click="handleQuery">查询</el-button>
 
         <el-divider direction="vertical" class="toolbar-divider" />
@@ -72,18 +69,19 @@
         <el-button plain class="toolbar-btn" @click="handleExport">导出报表</el-button>
       </div>
 
-      <el-table 
-        :data="displayData" 
-        border 
-        stripe 
-        style="width: 100%" 
+      <el-table
+        :data="tableData"
+        border
+        stripe
+        v-loading="loading"
+        style="width: 100%"
         class="user-table"
         :header-cell-style="{ backgroundColor: '#fafafa', color: '#333', fontWeight: 'bold' }"
       >
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="account" label="账号" width="130" />
         <el-table-column prop="username" label="用户名" width="130" />
-        
+
         <el-table-column label="角色" width="120" align="center">
           <template #default="scope">
             <el-tag :type="scope.row.role === 'admin' ? 'danger' : 'info'" effect="light">
@@ -104,98 +102,110 @@
         <el-table-column label="操作" min-width="260" align="center">
           <template #default="scope">
             <el-button size="small" type="primary" plain class="op-btn" @click="handleEdit(scope.row)">编辑</el-button>
-            
-            <el-button 
-              v-if="scope.row.status === 0" 
-              size="small" 
-              type="danger" 
-              plain 
+
+            <el-button
+              v-if="scope.row.status === 0"
+              size="small"
+              type="danger"
+              plain
               class="op-btn"
-              @click="toggleStatus(scope.row)"
+              @click="handleLock(scope.row)"
             >锁定</el-button>
-            
-            <el-button 
-              v-else 
-              size="small" 
-              type="success" 
-              plain 
+
+            <el-button
+              v-else-if="isAdmin"
+              size="small"
+              type="success"
+              plain
               class="op-btn"
-              @click="toggleStatus(scope.row)"
+              @click="handleUnlock(scope.row)"
             >解锁</el-button>
-            
-            <el-button size="small" type="warning" plain class="op-btn-long" @click="handleRoleChange(scope.row)">修改权限</el-button>
-            
-            <el-button 
-              size="small" 
-              type="info" 
-              plain 
-              class="op-btn" 
+
+            <el-button
+              v-if="isAdmin"
+              size="small"
+              type="warning"
+              plain
+              class="op-btn-long"
+              @click="handleRoleChange(scope.row)"
+            >修改权限</el-button>
+
+            <el-button
+              v-if="isAdmin"
+              size="small"
+              type="info"
+              plain
+              class="op-btn"
               @click="handleDelete(scope.row)"
             >删除</el-button>
-
           </template>
         </el-table-column>
       </el-table>
 
       <div class="pagination-container">
         <span class="total-text">共 {{ tableData.length }} 条数据</span>
-        <el-pagination
-          background
-          layout="prev, pager, next"
-          :total="tableData.length"
-        />
       </div>
-      <el-dialog 
-      v-model="editDialogVisible" 
-      :title="isAdding ? '添加新用户' : '修改个人信息'"
+    </el-card>
+
+    <el-dialog
+      v-model="editDialogVisible"
+      :title="isAdding ? '添加新用户' : '修改用户信息'"
       width="450px"
       append-to-body
       destroy-on-close
+      @closed="resetEditForm"
     >
-      <el-form :model="currentUser" label-width="80px" style="padding: 10px 20px 0;">
+      <el-form :model="editForm" label-width="80px" style="padding: 10px 20px 0;">
         <el-form-item label="账号">
-          <el-input v-model="currentUser.account" :disabled="!isAdding" placeholder="请输入系统登录账号" />
+          <el-input v-model="editForm.account" :disabled="!isAdding" placeholder="请输入系统登录账号" />
           <p v-if="!isAdding" style="font-size: 12px; color: #999; margin: 5px 0 0;">账号作为唯一标识，不可修改</p>
         </el-form-item>
-        
+
         <el-form-item label="用户名">
-          <el-input v-model="currentUser.username" placeholder="请输入显示的用户名" />
+          <el-input v-model="editForm.username" placeholder="请输入显示的用户名" />
         </el-form-item>
 
         <el-form-item :label="isAdding ? '初始密码' : '重置密码'">
-          <el-input 
-            v-model="currentUser.password" 
-            type="password" 
-            :placeholder="isAdding ? '请输入登录密码' : '若不修改请留空'" 
-            show-password 
+          <el-input
+            v-model="editForm.password"
+            type="password"
+            :placeholder="isAdding ? '请输入登录密码' : '若不修改请留空'"
+            show-password
           />
+        </el-form-item>
+
+        <el-form-item label="角色" v-if="isAdding">
+          <el-select v-model="editForm.role" style="width: 100%;">
+            <el-option label="操作员" value="operator" />
+            <el-option label="管理员" value="admin" />
+          </el-select>
         </el-form-item>
       </el-form>
 
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="editDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitEdit">保存修改</el-button>
+          <el-button type="primary" :loading="submitLoading" @click="submitEdit">保存修改</el-button>
         </span>
       </template>
     </el-dialog>
 
-    <el-dialog 
-      v-model="roleDialogVisible" 
-      title="权限级别调整" 
+    <el-dialog
+      v-model="roleDialogVisible"
+      title="权限级别调整"
       width="400px"
       append-to-body
     >
       <div style="padding: 10px 20px; text-align: center;">
         <p style="margin-bottom: 20px; color: #606266;">
-          正在调整用户 <strong style="color: #409EFF;">{{ currentUser.username }}</strong> 的系统权限
+          正在调整用户 <strong style="color: #409EFF;">{{ roleTarget.username }}</strong> 的系统权限
         </p>
-        
-        <el-radio-group v-model="currentUser.role">
+
+        <el-radio-group v-model="roleTarget.role">
           <el-radio label="operator" border size="large">操作员</el-radio>
           <el-radio label="admin" border size="large">管理员</el-radio>
         </el-radio-group>
-        
+
         <p style="margin-top: 20px; font-size: 12px; color: #f56c6c;">
           * 管理员拥有删除用户及修改系统配置的权限，请谨慎操作
         </p>
@@ -204,161 +214,378 @@
       <template #footer>
         <span class="dialog-footer">
           <el-button @click="roleDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitRoleUpdate">确认变更</el-button>
+          <el-button type="primary" :loading="roleLoading" @click="submitRoleUpdate">确认变更</el-button>
         </span>
       </template>
     </el-dialog>
-    </el-card>
 
+    <el-dialog
+      v-model="importDialogVisible"
+      title="批量导入用户"
+      width="500px"
+      append-to-body
+    >
+      <div style="padding: 10px 20px;">
+        <el-upload
+          ref="uploadRef"
+          drag
+          :auto-upload="false"
+          :limit="1"
+          accept=".csv"
+          :on-change="handleFileChange"
+          :on-remove="handleFileRemove"
+        >
+          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+          <div class="el-upload__text">
+            将 CSV 文件拖到此处，或<em>点击上传</em>
+          </div>
+          <template #tip>
+            <div class="el-upload__tip">
+              CSV 表头需包含：username, password，可选 role（admin/operator）
+            </div>
+          </template>
+        </el-upload>
+      </div>
+
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="importDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="importLoading" :disabled="!uploadFile" @click="submitImport">开始导入</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="importResultVisible"
+      title="导入结果"
+      width="500px"
+      append-to-body
+    >
+      <div style="padding: 10px 20px;">
+        <el-result :icon="importResult.failCount > 0 ? 'warning' : 'success'">
+          <template #title>
+            成功 {{ importResult.successCount }} 条，失败 {{ importResult.failCount }} 条
+          </template>
+        </el-result>
+        <div v-if="importResult.failList && importResult.failList.length > 0" style="margin-top: 10px;">
+          <p style="color: #f56c6c; font-weight: bold;">失败详情：</p>
+          <div v-for="(item, idx) in importResult.failList" :key="idx" style="font-size: 13px; color: #909399; margin: 4px 0;">
+            第 {{ item.row }} 行：{{ item.reason }}
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button type="primary" @click="importResultVisible = false">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive } from 'vue'
-import { Cpu, List, Warning, User, Unlock, Lock} from '@element-plus/icons-vue'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { Cpu, List, Warning, User, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { UploadFile, UploadInstance } from 'element-plus'
+import request from '@/utils/request'
+import { useUserStore } from '@/stores/user'
 
-// --- 1. 搜索栏变量 ---
+const userStore = useUserStore()
+const currentUserRole = ref('')
+const isAdmin = computed(() => currentUserRole.value === 'admin')
+
+const fetchCurrentUserRole = async () => {
+  try {
+    const res = await request.get('/user/me')
+    if (res.code === 200 && res.data) {
+      currentUserRole.value = res.data.role || ''
+    }
+  } catch {
+    currentUserRole.value = ''
+  }
+}
+
 const searchKeyword = ref('')
 const searchRole = ref('')
+const loading = ref(false)
 
-// --- 2. 弹窗控制与表单数据 ---
+interface UserRow {
+  id: number
+  account: string
+  username: string
+  role: string
+  status: number
+  lastLogin: string
+  email?: string
+  phone?: string
+}
+
+const tableData = ref<UserRow[]>([])
+
+const loadUsers = async () => {
+  loading.value = true
+  try {
+    const res = await request.get('/user/', {
+      params: {
+        keyword: searchKeyword.value,
+        role: searchRole.value,
+      },
+    })
+    if (res.code === 200) {
+      tableData.value = res.data || []
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  await fetchCurrentUserRole()
+  loadUsers()
+})
+
+const handleQuery = () => {
+  loadUsers()
+}
+
 const editDialogVisible = ref(false)
-const roleDialogVisible = ref(false)
-const isAdding = ref(false) // 判断当前是“新增”还是“编辑”模式
-const currentUser = reactive({
+const isAdding = ref(false)
+const submitLoading = ref(false)
+const editForm = reactive({
   id: 0,
   account: '',
   username: '',
-  role: 'operator',
-  status: 0,
   password: '',
-  lastLogin: '' 
+  role: 'operator',
 })
 
-// --- 3. 原始数据源 ---
-const tableData = ref([
-  { id: 1, account: 'admin', username: '操作员A', role: 'admin', status: 0, lastLogin: '2026-04-25 10:00:00' },
-  { id: 2, account: 'op_001', username: '操作员A', role: 'operator', status: 0, lastLogin: '2026-04-24 16:30:22' },
-  { id: 3, account: 'op_002', username: '操作员B', role: 'operator', status: 1, lastLogin: '2026-04-20 09:15:00' },
-  { id: 4, account: 'op_003', username: '操作员C', role: 'operator', status: 0, lastLogin: '2026-04-25 08:00:00' }
-])
-
-// --- 4. 计算属性 ---
-const displayData = computed(() => {
-  return tableData.value.filter(item => {
-    // 使用 toLowerCase() 实现不区分大小写的模糊搜索
-    const key = searchKeyword.value.toLowerCase()
-    const matchKeyword = item.account.toLowerCase().includes(key) || 
-                         item.username.toLowerCase().includes(key)
-    const matchRole = searchRole.value === '' || item.role === searchRole.value
-    return matchKeyword && matchRole
-  })
-})
-
-//动态统计在线用户（状态为正常的用户）
-const onlineUserCount = computed(() => {
-  return tableData.value.filter(user => user.status === 0).length
-})
-
-// --- 5. 操作函数 ---
-
-// 点击查询
-const handleQuery = () => {
-  // 因为我们用了 computed(displayData)，其实数据已经实时过滤了
-  // 这里可以写一个反馈，让用户知道查询已执行
-  ElMessage.success(`已根据关键词 [${searchKeyword.value}] 过滤数据`)
+const resetEditForm = () => {
+  editForm.id = 0
+  editForm.account = ''
+  editForm.username = ''
+  editForm.password = ''
+  editForm.role = 'operator'
 }
 
-// 新增用户入口函数
 const handleAddUser = () => {
   isAdding.value = true
-  // 重置表单
-  Object.assign(currentUser, { id: Date.now(), account: '', username: '', role: 'operator', status: 0, password: '' })
+  resetEditForm()
   editDialogVisible.value = true
 }
 
-//  批量导入 (先留个坑，实现点击反馈)
-const handleImport = () => {
-  ElMessageBox.alert('请选择符合 MES 标准格式的 Excel 文件进行上传', '批量导入', {
-    confirmButtonText: '我知道了'
-  })
-}
-
-//  导出报表
-const handleExport = () => {
-  ElMessage.warning('报表生成中，请稍后...')
-}
-
-// 编辑用户信息入口
-const handleEdit = (row: any) => {
+const handleEdit = (row: UserRow) => {
   isAdding.value = false
-  Object.assign(currentUser, row)
-  currentUser.password = '' // 编辑时密码初始留空
+  editForm.id = row.id
+  editForm.account = row.account
+  editForm.username = row.username
+  editForm.password = ''
+  editForm.role = row.role
   editDialogVisible.value = true
 }
 
-// 保存/提交修改函数 (对应弹窗里的“保存”按钮)
-const submitEdit = () => {
-  if (!currentUser.account || !currentUser.username) {
+const submitEdit = async () => {
+  if (!editForm.account || !editForm.username) {
     ElMessage.error('账号和用户名不能为空')
     return
   }
 
-  if (isAdding.value) {
-    // 新增逻辑
-    tableData.value.push({ ...currentUser, lastLogin: '-' })
-    ElMessage.success('用户创建成功')
-  } else {
-    // 编辑逻辑
-    const index = tableData.value.findIndex(u => u.id === currentUser.id)
-    if (index !== -1) {
-      tableData.value[index] = { ...currentUser }
+  submitLoading.value = true
+  try {
+    if (isAdding.value) {
+      if (!editForm.password || editForm.password.length < 6) {
+        ElMessage.error('密码至少需要 6 位')
+        submitLoading.value = false
+        return
+      }
+      await request.post('/user/', {
+        username: editForm.account,
+        password: editForm.password,
+        role: editForm.role,
+      })
+      ElMessage.success('用户创建成功')
+    } else {
+      const body: Record<string, string> = {
+        username: editForm.account,
+      }
+      if (editForm.password) {
+        body.password = editForm.password
+      }
+      await request.put(`/user/${editForm.id}`, body)
       ElMessage.success('信息更新成功')
     }
-  }
-  editDialogVisible.value = false
-}
-
-// 修改权限入口
-const handleRoleChange = (row: any) => {
-  Object.assign(currentUser, row)
-  roleDialogVisible.value = true
-}
-
-// 提交权限修改
-const submitRoleUpdate = () => {
-  const user = tableData.value.find(u => u.id === currentUser.id)
-  if (user) {
-    user.role = currentUser.role
-    ElMessage.success(`权限已变更为：${currentUser.role === 'admin' ? '管理员' : '操作员'}`)
-    roleDialogVisible.value = false
+    editDialogVisible.value = false
+    loadUsers()
+  } finally {
+    submitLoading.value = false
   }
 }
 
-// 切换锁定
-const toggleStatus = (row: any) => {
-  const isLocking = row.status === 0
-  row.status = isLocking ? 1 : 0
-  ElMessage({
-    message: `用户 [${row.username}] 已${isLocking ? '锁定' : '解锁'}`,
-    type: isLocking ? 'warning' : 'success'
-  })
-}
+const handleDelete = (row: UserRow) => {
+  if (userStore.account === row.account) {
+    ElMessage.warning('不能删除当前登录用户')
+    return
+  }
+  if (row.account === 'admin') {
+    ElMessage.warning('admin 账号不允许删除')
+    return
+  }
 
-// 删除
-const handleDelete = (row: any) => {
   ElMessageBox.confirm(`确定要删除用户 [${row.username}] 吗？`, '警告', {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
-    type: 'warning'
-  }).then(() => {
-    tableData.value = tableData.value.filter(item => item.id !== row.id)
-    ElMessage.success('用户已成功删除')
+    type: 'warning',
+  }).then(async () => {
+    try {
+      await request.delete(`/user/${row.id}`)
+      ElMessage.success('用户已成功删除')
+      loadUsers()
+    } catch {
+      // 错误已由拦截器处理
+    }
   }).catch(() => {})
 }
 
+const handleLock = async (row: UserRow) => {
+  ElMessageBox.confirm(`确定要锁定用户 [${row.username}] 吗？锁定后该用户将无法登录。`, '锁定用户', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning',
+  }).then(async () => {
+    try {
+      await request.put(`/user/${row.id}/lock`)
+      ElMessage.success(`用户 [${row.username}] 已锁定`)
+      loadUsers()
+    } catch {
+      // 错误已由拦截器处理
+    }
+  }).catch(() => {})
+}
 
+const handleUnlock = async (row: UserRow) => {
+  ElMessageBox.confirm(`确定要解锁用户 [${row.username}] 吗？`, '解锁用户', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'info',
+  }).then(async () => {
+    try {
+      await request.put(`/user/${row.id}/unlock`)
+      ElMessage.success(`用户 [${row.username}] 已解锁`)
+      loadUsers()
+    } catch {
+      // 错误已由拦截器处理
+    }
+  }).catch(() => {})
+}
+
+const roleDialogVisible = ref(false)
+const roleLoading = ref(false)
+const roleTarget = reactive({ id: 0, username: '', role: 'operator' })
+
+const handleRoleChange = (row: UserRow) => {
+  if (userStore.account === row.account) {
+    ElMessage.warning('不能修改自己的权限')
+    return
+  }
+  roleTarget.id = row.id
+  roleTarget.username = row.username
+  roleTarget.role = row.role
+  roleDialogVisible.value = true
+}
+
+const submitRoleUpdate = async () => {
+  roleLoading.value = true
+  try {
+    await request.put(`/user/${roleTarget.id}/role`, { role: roleTarget.role })
+    ElMessage.success(`权限已变更为：${roleTarget.role === 'admin' ? '管理员' : '操作员'}`)
+    roleDialogVisible.value = false
+    loadUsers()
+  } finally {
+    roleLoading.value = false
+  }
+}
+
+const importDialogVisible = ref(false)
+const importLoading = ref(false)
+const importResultVisible = ref(false)
+const importResult = reactive({ successCount: 0, failCount: 0, failList: [] as any[] })
+const uploadFile = ref<File | null>(null)
+const uploadRef = ref<UploadInstance>()
+
+const handleImport = () => {
+  uploadFile.value = null
+  uploadRef.value?.clearFiles()
+  importDialogVisible.value = true
+}
+
+const handleFileChange = (file: UploadFile) => {
+  uploadFile.value = file.raw || null
+}
+
+const handleFileRemove = () => {
+  uploadFile.value = null
+}
+
+const submitImport = async () => {
+  if (!uploadFile.value) {
+    ElMessage.warning('请先选择 CSV 文件')
+    return
+  }
+
+  importLoading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', uploadFile.value)
+    const response = await fetch('/api/user/import', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${userStore.token}`,
+      },
+      body: formData,
+    })
+    const res = await response.json()
+    if (res.code === 200) {
+      importResult.successCount = res.data.successCount
+      importResult.failCount = res.data.failCount
+      importResult.failList = res.data.failList || []
+      importDialogVisible.value = false
+      importResultVisible.value = true
+      loadUsers()
+    } else {
+      ElMessage.error(res.message || res.detail || '导入失败')
+    }
+  } catch {
+    ElMessage.error('导入失败，请检查网络连接')
+  } finally {
+    importLoading.value = false
+  }
+}
+
+const handleExport = async () => {
+  try {
+    const response = await fetch('/api/user/export', {
+      headers: {
+        Authorization: `Bearer ${userStore.token}`,
+      },
+    })
+    if (!response.ok) {
+      const err = await response.json()
+      ElMessage.error(err.detail || '导出失败')
+      return
+    }
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'users_export.csv'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    ElMessage.success('报表导出成功')
+  } catch {
+    ElMessage.error('导出失败，请检查网络连接')
+  }
+}
 </script>
 
 <style scoped>
@@ -368,7 +595,6 @@ const handleDelete = (row: any) => {
   min-height: calc(100vh - 60px);
 }
 
-/* 仪表盘卡片精修 */
 .dashboard-row { margin-bottom: 20px; }
 .data-card { border: none; border-radius: 8px; transition: all 0.3s; }
 .data-card:hover { transform: translateY(-3px); }
@@ -383,27 +609,23 @@ const handleDelete = (row: any) => {
 .card-value { font-size: 26px; font-weight: bold; color: #303133; margin-bottom: 8px; }
 .card-desc { font-size: 12px; color: #909399; }
 
-/* 辅助颜色 */
 .success-text { color: #67c23a; }
 .danger-text { color: #f56c6c; }
 .warning-text { color: #e6a23c; }
 
-/* ================= 工具栏 (强制对齐与去偏移) ================= */
 .main-card { border-radius: 8px; border: none; }
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 12px; /* 统一间距 */
+  gap: 12px;
   margin-bottom: 25px;
 }
 
-/* 强制清除 Element Plus 按钮默认的 margin-left 干扰 */
 .toolbar :deep(.el-button) { margin-left: 0 !important; }
 
 .search-input { width: 220px; }
 .search-select { width: 130px; }
 
-/* 顶部按钮统一样式：无图标，绝对居中 */
 .toolbar-btn {
   height: 34px;
   padding: 0 18px !important;
@@ -416,12 +638,10 @@ const handleDelete = (row: any) => {
 .query-btn { min-width: 80px; }
 .toolbar-divider { height: 20px; margin: 0 5px; border-color: #dcdfe6; }
 
-/* ================= 表格与按钮 (强制尺寸一致) ================= */
 .user-table { margin-bottom: 20px; }
 
-/* 锁定操作列按钮尺寸，确保 编辑/锁定/解锁 完全一样大 */
 .user-table :deep(.op-btn) {
-  width: 72px; 
+  width: 72px;
   height: 28px;
   padding: 0 !important;
   justify-content: center;
@@ -431,7 +651,6 @@ const handleDelete = (row: any) => {
   margin: 0 4px !important;
 }
 
-/* 修改权限文字多，略宽一点 */
 .user-table :deep(.op-btn-long) {
   width: 90px;
   height: 28px;
@@ -442,7 +661,6 @@ const handleDelete = (row: any) => {
   margin: 0 4px !important;
 }
 
-/* 分页对齐 */
 .pagination-container {
   display: flex;
   justify-content: flex-end;

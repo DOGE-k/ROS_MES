@@ -8,6 +8,7 @@ import type {
   ModuleCreatePayload,
   CoordinationPayload,
   FineTuningPayload,
+  DrawingItem,
 } from "./types";
 
 let mockHardwareList: any[] = [
@@ -152,4 +153,71 @@ export function saveFineTuningConfig(data: any): Promise<ApiResponse> {
   }
 
   return request.post("/finetuning/config", data);
+}
+
+// ========== 图纸管理 API ==========
+
+let mockDrawingList: any[] = [
+  { id: 1, name: "机械臂底座点云图", filePath: null, jsonData: '{"points": 1024, "resolution": "0.01mm"}', createdAt: "2026-05-01 10:00:00", updatedAt: null },
+  { id: 2, name: "夹具装配点云图", filePath: null, jsonData: '{"points": 2048, "resolution": "0.005mm", "format": "pcd"}', createdAt: "2026-05-03 14:30:00", updatedAt: null },
+];
+
+export function getDrawingList(): Promise<ApiResponse<DrawingItem[]>> {
+  if (useMock) {
+    return mockSuccess(mockDrawingList, "获取图纸列表成功");
+  }
+  return request.get("/drawing/");
+}
+
+export function getDrawingDetail(id: number): Promise<ApiResponse<DrawingItem>> {
+  if (useMock) {
+    const item = mockDrawingList.find(d => d.id === id);
+    return mockSuccess(item || null, item ? "获取图纸详情成功" : "图纸不存在");
+  }
+  return request.get(`/drawing/${id}`);
+}
+
+export function createDrawing(formData: FormData): Promise<ApiResponse<DrawingItem>> {
+  if (useMock) {
+    const name = formData.get("name") as string;
+    const jsonData = formData.get("json_data") as string;
+    const newItem = {
+      id: Date.now(),
+      name,
+      filePath: null,
+      jsonData,
+      createdAt: new Date().toLocaleString(),
+      updatedAt: null,
+    };
+    mockDrawingList.unshift(newItem);
+    return mockSuccess(newItem, "上传图纸成功");
+  }
+  return request.post("/drawing/", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+}
+
+export function updateDrawing(id: number, formData: FormData): Promise<ApiResponse<DrawingItem>> {
+  if (useMock) {
+    const item = mockDrawingList.find(d => d.id === id);
+    if (item) {
+      const name = formData.get("name") as string;
+      const jsonData = formData.get("json_data") as string;
+      if (name) item.name = name;
+      if (jsonData) item.jsonData = jsonData;
+      item.updatedAt = new Date().toLocaleString();
+    }
+    return mockSuccess(item, "更新图纸成功");
+  }
+  return request.put(`/drawing/${id}`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+}
+
+export function deleteDrawing(id: number): Promise<ApiResponse> {
+  if (useMock) {
+    mockDrawingList = mockDrawingList.filter(d => d.id !== id);
+    return mockSuccess({ id }, "删除图纸成功");
+  }
+  return request.delete(`/drawing/${id}`);
 }

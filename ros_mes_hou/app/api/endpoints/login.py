@@ -1,4 +1,4 @@
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -27,6 +27,15 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if user.status == 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该账号已被锁定，请联系管理员",
+        )
+
+    user.last_login = datetime.now(timezone.utc)
+    db.commit()
+
     access_token_expires = timedelta(minutes=security.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
         data={"sub": user.username},
@@ -38,6 +47,7 @@ def login_for_access_token(
         "message": "登录成功",
         "data": {
             "account": user.username,
+            "role": user.role,
             "token": access_token,
             "tokenType": "bearer",
             "updateTime": datetime.now().isoformat()

@@ -10,8 +10,13 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     username = Column(String(50), unique=True, index=True, nullable=False)
-    password = Column(String(255), nullable=False)  # 建议存储加密后的密码
-    role = Column(String(20), default="operator")  # 用户角色，例如：admin, operator
+    password = Column(String(255), nullable=False)
+    role = Column(String(20), default="operator")
+    email = Column(String(100), default="")
+    phone = Column(String(20), default="")
+    avatar = Column(String(500), default="")
+    status = Column(Integer, default=0)
+    last_login = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -40,7 +45,7 @@ class FineTuning(Base):
 
 
 class FineTuningConfig(Base):
-    """保存“机械臂姿态微调与压力监控”页面的一次配置快照。"""
+    """保存"机械臂姿态微调与压力监控"页面的一次配置快照。"""
 
     __tablename__ = "fine_tuning_config"
 
@@ -50,3 +55,16 @@ class FineTuningConfig(Base):
     config_json = Column(Text, nullable=False)
     saved_by = Column(String(50))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Drawing(Base):
+    """图纸管理 - 点云图与JSON数据"""
+
+    __tablename__ = "drawings"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(200), nullable=False, comment="图纸名称")
+    file_path = Column(String(500), nullable=True, comment="上传文件存储路径")
+    json_data = Column(Text, nullable=True, comment="JSON数据内容")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

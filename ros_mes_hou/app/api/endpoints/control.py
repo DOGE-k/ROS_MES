@@ -1,4 +1,5 @@
 # app/api/endpoints/control.py
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_current_user
 from app.db import models
@@ -20,16 +21,20 @@ async def get_realtime_hardware_status(
     return status_data
 
 @router.post("/emergency_stop", response_model=EmergencyStopResponse)
-def activate_emergency_stop(
+async def activate_emergency_stop(
     current_user: models.User = Depends(get_current_user)
 ):
     """
     点击按钮：触发机械臂急停！
     """
     print(f"警告：操作员 {current_user.username} 触发了紧急停止！")
-    success = ros_control.trigger_emergency_stop()
+    success = await ros_control.trigger_emergency_stop()
     
     if success:
-        return {"message": "急停指令已成功下发至底层节点！", "status": "STOPPED"}
+        return {
+            "success": True,
+            "message": "急停指令已成功下发至底层节点！",
+            "timestamp": datetime.now()
+        }
     else:
         raise HTTPException(status_code=500, detail="急停指令发送失败，请检查 ROS 节点连接！")

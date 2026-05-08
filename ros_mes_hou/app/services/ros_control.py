@@ -5,6 +5,11 @@ import asyncio
 import traceback # 用于打印更详细的错误
 import sys
 
+try:
+    import websockets
+except ImportError:
+    websockets = None
+
 # ==========================================
 # 1. 黑魔法：路径自动寻址 (绝对路径)
 # ==========================================
@@ -19,6 +24,9 @@ SCRIPTS_DIR = os.path.join(PROJECT_ROOT, "robot_control_backend", "scripts")
 
 # 你的执行环境（如果你在 venv 里无法运行 ROS 库，可将此改为 "/usr/bin/python3" 或具体的 conda/ros 环境路径）
 PYTHON_CMD = "python"
+
+# WebSocket 地址（web_data_node 的 rosbridge 桥接端口）
+WEBSOCKET_URI = "ws://localhost:8760"
 
 
 async def get_hardware_status() -> dict:
@@ -64,31 +72,26 @@ async def get_hardware_status() -> dict:
 
 async def trigger_emergency_stop() -> bool:
     """
-    无痛调用 module_confirme_node.py (触发急停)
-    特性：最高优先级，极速响应
+    通过 WebSocket 向 web_data_node 发送 rosbridge 格式的急停指令
+    data="000000" 表示急停
     """
-    script_path = os.path.join(SCRIPTS_DIR, "module_confirme_node.py")
-
-    if not os.path.exists(script_path):
-        print(f"[紧急故障] 找不到急停脚本: {script_path}")
+    if websockets is None:
+        print("[紧急故障] websockets 库未安装，无法发送急停指令")
         return False
 
+    emergency_msg = json.dumps({
+        "op": "publish",
+        "topic": "/emergency_stop",
+        "msg": {"data": "000000"}
+    }, ensure_ascii=False)
+
     try:
-        process = await asyncio.create_subprocess_exec(
-            PYTHON_CMD, script_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-
-        # 急停必须立刻返回，给 2 秒超时限制
-        await asyncio.wait_for(process.communicate(), timeout=2.0)
-        
-        # 只要没有抛出异常，且返回码正常，就认为急停信号发送成功
-        return process.returncode == 0
-
+        async with websockets.connect(WEBSOCKET_URI, close_timeout=1) as ws:
+            await asyncio.wait_for(ws.send(emergency_msg), timeout=2.0)
+        print("[急停] rosbridge 指令已发送: " + emergency_msg)
+        return True
     except asyncio.TimeoutError:
-        process.kill()
-        print("[紧急故障] 急停脚本执行超时")
+        print("[紧急故障] 急停 WebSocket 发送超时")
         return False
     except Exception as e:
         print(f"[紧急故障] 急停系统异常: {e}")

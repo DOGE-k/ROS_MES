@@ -13,9 +13,6 @@ const whiteList = [
   "/login",
   "/register",
   "/RosTestPage",
-  "/HardWorkPage",
-  "/ModuleManagement",
-  "/FineTuningPage",
 ];
 
 router.beforeEach((to) => {

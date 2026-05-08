@@ -4,6 +4,7 @@ import HardWorkPage from "../components/Main/Hardwork/HardWorkPage.vue";
 import FineTuningPage from "../components/Main/ModulePage/FineTuningPage.vue";
 import ModuleManagement from "../components/Main/ModulePage/ModuleManagement.vue";
 import RegisterPage from "../components/Login/RegisterPage.vue";
+import DrawingManage from "../components/Main/DrawingManage/DrawingManage.vue";
 import UserManagement from "../components/Main/UserManage/UserManagement.vue";
 import Profile from '../components/Main/UserManage/Profile.vue'
 import RosTestPage from "../components/Main/RosTestPage.vue";
@@ -49,6 +50,14 @@ const routes = [
         meta: {
           // 关键：微调页也绑定模块管理的激活key
           activeMenu: '/ModuleManagement'
+        }
+      },
+      {
+        path: '/DrawingManage',
+        name: 'DrawingManage',
+        component: DrawingManage,
+        meta: {
+          activeMenu: '/DrawingManage'
         }
       },
       {

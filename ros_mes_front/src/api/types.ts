@@ -48,3 +48,12 @@ export interface FineTuningPayload {
   device_id: number;
   position: string;
 }
+
+export interface DrawingItem {
+  id: number;
+  name: string;
+  filePath: string | null;
+  jsonData: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
