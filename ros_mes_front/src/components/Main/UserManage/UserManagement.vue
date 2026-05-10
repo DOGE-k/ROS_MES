@@ -104,7 +104,7 @@
             <el-button size="small" type="primary" plain class="op-btn" @click="handleEdit(scope.row)">编辑</el-button>
 
             <el-button
-              v-if="scope.row.status === 0"
+              v-if="isAdmin && scope.row.status === 0 && scope.row.role !== 'admin'"
               size="small"
               type="danger"
               plain
@@ -113,7 +113,7 @@
             >锁定</el-button>
 
             <el-button
-              v-else-if="isAdmin"
+              v-else-if="isAdmin && scope.row.role !== 'admin'"
               size="small"
               type="success"
               plain
@@ -284,6 +284,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { Cpu, List, Warning, User, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadInstance } from 'element-plus'
@@ -291,6 +292,7 @@ import request from '@/utils/request'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
+const router = useRouter()
 const currentUserRole = ref('')
 const isAdmin = computed(() => currentUserRole.value === 'admin')
 
@@ -299,9 +301,14 @@ const fetchCurrentUserRole = async () => {
     const res = await request.get('/user/me')
     if (res.code === 200 && res.data) {
       currentUserRole.value = res.data.role || ''
+      if (currentUserRole.value !== 'admin') {
+        ElMessage.warning('无权访问用户管理页面')
+        router.replace('/HardWorkPage')
+      }
     }
   } catch {
     currentUserRole.value = ''
+    router.replace('/login')
   }
 }
 

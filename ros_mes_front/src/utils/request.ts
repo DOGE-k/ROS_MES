@@ -30,7 +30,7 @@ service.interceptors.request.use(
       config.data = qs.stringify(config.data);
       config.headers["Content-Type"] = "application/x-www-form-urlencoded";
     } else if (config.data instanceof FormData) {
-      config.headers["Content-Type"] = "multipart/form-data";
+      delete config.headers["Content-Type"];
     } else {
       config.headers["Content-Type"] = "application/json;charset=utf-8";
     }

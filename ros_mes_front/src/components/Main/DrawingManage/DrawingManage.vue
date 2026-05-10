@@ -1,454 +1,517 @@
 <template>
-  <div class="drawing-manage-container">
-    <el-row :gutter="20" class="dashboard-row">
-      <el-col :span="6">
-        <el-card shadow="hover" class="data-card border-blue">
-          <div class="card-header">
-            <span class="card-title">图纸总数</span>
-            <el-icon class="card-icon" color="#409eff"><Document /></el-icon>
-          </div>
-          <div class="card-value">{{ tableData.length }}</div>
-          <div class="card-desc">已上传图纸数量</div>
-        </el-card>
-      </el-col>
-
-      <el-col :span="6">
-        <el-card shadow="hover" class="data-card border-green">
-          <div class="card-header">
-            <span class="card-title">包含JSON数据</span>
-            <el-icon class="card-icon" color="#67c23a"><DataAnalysis /></el-icon>
-          </div>
-          <div class="card-value success-text">{{ hasJsonCount }}</div>
-          <div class="card-desc">含点云参数的图纸数</div>
-        </el-card>
-      </el-col>
-
-      <el-col :span="6">
-        <el-card shadow="hover" class="data-card border-orange">
-          <div class="card-header">
-            <span class="card-title">已上传文件</span>
-            <el-icon class="card-icon" color="#e6a23c"><Files /></el-icon>
-          </div>
-          <div class="card-value warning-text">{{ hasFileCount }}</div>
-          <div class="card-desc">关联了点云文件的图纸数</div>
-        </el-card>
-      </el-col>
-
-      <el-col :span="6">
-        <el-card shadow="hover" class="data-card border-purple">
-          <div class="card-header">
-            <span class="card-title">今日新增</span>
-            <el-icon class="card-icon" color="#9b59b6"><TrendCharts /></el-icon>
-          </div>
-          <div class="card-value purple-text">{{ todayCount }}</div>
-          <div class="card-desc">今日新上传图纸数量</div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <el-card shadow="never" class="main-card">
-      <div class="toolbar">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="请输入图纸名称"
-          clearable
-          class="search-input"
-        />
-        <el-button type="primary" class="toolbar-btn query-btn" @click="handleQuery">查询</el-button>
-
-        <el-divider direction="vertical" class="toolbar-divider" />
-
-        <el-button type="primary" class="toolbar-btn" @click="handleImport">
-          <el-icon style="margin-right: 4px;"><Upload /></el-icon>
-          导入图纸
-        </el-button>
-      </div>
-
-      <el-table
-        :data="displayData"
-        border
-        stripe
-        style="width: 100%"
-        class="drawing-table"
-        :header-cell-style="{ backgroundColor: '#fafafa', color: '#333', fontWeight: 'bold' }"
-      >
-        <el-table-column type="index" label="序号" width="60" align="center" />
-        <el-table-column prop="name" label="图纸名称" min-width="180" />
-
-        <el-table-column label="JSON数据" min-width="200" align="center">
-          <template #default="scope">
-            <el-button
-              v-if="scope.row.jsonData && scope.row.jsonData !== '{}'"
-              size="small"
-              type="success"
-              plain
-              @click="showJsonDetail(scope.row)"
-            >
-              查看JSON
-            </el-button>
-            <el-tag v-else type="info" size="small">无数据</el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="关联文件" width="100" align="center">
-          <template #default="scope">
-            <el-tag v-if="scope.row.filePath" type="primary" size="small">是</el-tag>
-            <el-tag v-else type="info" size="small">否</el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="createdAt" label="创建时间" width="180" align="center" />
-
-        <el-table-column label="操作" width="200" align="center">
-          <template #default="scope">
-            <el-button size="small" type="primary" plain class="op-btn" @click="handleEdit(scope.row)">编辑</el-button>
-            <el-button
-              size="small"
-              type="danger"
-              plain
-              class="op-btn"
-              @click="handleDelete(scope.row)"
-            >删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="pagination-container">
-        <span class="total-text">共 {{ tableData.length }} 条数据</span>
+  <div class="drawing-manage">
+    <el-card class="header-card">
+      <div class="header-row">
+        <h2 class="page-title">图纸管理</h2>
+        <el-button type="primary" @click="openImportDialog">导入 JSON 图纸数据</el-button>
       </div>
     </el-card>
 
-    <!-- 导入/编辑对话框 -->
-    <el-dialog
-      v-model="importDialogVisible"
-      :title="isEditing ? '编辑图纸' : '导入图纸'"
-      width="600px"
-      append-to-body
-      destroy-on-close
-    >
-      <el-form :model="formData" label-width="100px" style="padding: 10px 20px 0;">
-        <el-form-item label="图纸名称">
-          <el-input v-model="formData.name" placeholder="请输入图纸名称" />
-        </el-form-item>
+    <el-card class="search-card">
+      <el-form :model="searchForm" label-width="80px">
+        <el-row :gutter="16">
+          <el-col :span="8">
+            <el-form-item label="图纸名称">
+              <el-input
+                v-model="searchForm.keyword"
+                placeholder="按图纸名称 / 描述搜索"
+                clearable
+                @keyup.enter="handleSearch"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item>
+              <el-button type="primary" @click="handleSearch">查询</el-button>
+              <el-button @click="handleReset">重置</el-button>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+    </el-card>
 
-        <el-form-item label="点云文件">
+    <el-card class="table-card">
+      <el-table :data="drawingList" border stripe v-loading="loading">
+        <el-table-column prop="drawingId" label="图纸ID" width="80" />
+        <el-table-column prop="drawingName" label="图纸名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="drawingDescription" label="图纸描述" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="drawingFile" label="文件路径" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="createTime" label="创建时间" width="170" />
+        <el-table-column prop="modifyTime" label="修改时间" width="170" />
+        <el-table-column prop="notes" label="备注" min-width="160" show-overflow-tooltip />
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openDetailDialog(row)">查看</el-button>
+            <el-button link type="success" @click="openEditDialog(row)">编辑</el-button>
+            <el-button link type="warning" @click="openReimportDialog(row)">重新导入</el-button>
+            <el-popconfirm title="确定删除该图纸吗？" @confirm="handleDelete(row)">
+              <template #reference>
+                <el-button link type="danger">删除</el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-dialog v-model="importVisible" title="导入 JSON 图纸数据" width="700px" destroy-on-close>
+      <el-form :model="importForm" label-width="100px">
+        <el-form-item label="图纸名称" required>
+          <el-input v-model="importForm.drawingName" placeholder="请输入图纸名称" />
+        </el-form-item>
+        <el-form-item label="图纸描述">
+          <el-input v-model="importForm.drawingDescription" type="textarea" :rows="2" placeholder="请输入图纸描述（可选）" />
+        </el-form-item>
+        <el-form-item label="JSON 文件" required>
           <el-upload
             ref="uploadRef"
             :auto-upload="false"
             :limit="1"
+            accept=".json"
             :on-change="handleFileChange"
             :on-remove="handleFileRemove"
-            accept=".pcd,.ply,.las,.laz,.xyz,.bin,.txt"
           >
-            <el-button type="primary" plain>
-              <el-icon style="margin-right: 4px;"><Upload /></el-icon>
-              选择文件
-            </el-button>
-            <template #tip>
-              <div class="el-upload__tip" style="font-size: 12px; color: #909399;">
-                支持 .pcd .ply .las .xyz 等点云格式
-              </div>
-            </template>
+            <el-button type="primary">选择 JSON 文件</el-button>
           </el-upload>
         </el-form-item>
-
-        <el-form-item label="JSON数据">
-          <el-input
-            v-model="formData.jsonData"
-            type="textarea"
-            :rows="8"
-            placeholder='请输入JSON格式数据，例如：{"points": 1024, "resolution": "0.01mm"}'
-          />
-          <p style="font-size: 12px; color: #909399; margin: 4px 0 0;">
-            导入点云图时，前端会自动显示并保存JSON数据内容
-          </p>
+        <el-form-item v-if="fileSummary.length > 0" label="文件信息">
+          <div class="file-summary">
+            <div v-for="(item, idx) in fileSummary" :key="idx">{{ item }}</div>
+          </div>
+        </el-form-item>
+        <el-form-item v-if="jsonPreview" label="JSON 预览">
+          <div class="json-preview-wrapper">
+            <el-input
+              v-model="jsonPreview"
+              type="textarea"
+              :rows="15"
+              readonly
+              class="json-preview-input"
+            />
+            <div v-if="jsonTruncated" class="json-truncated-tip">
+              当前仅展示部分 JSON 内容，完整文件将在导入后保存。
+            </div>
+          </div>
         </el-form-item>
       </el-form>
-
       <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="importDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitImport" :loading="submitting">
-            {{ isEditing ? '保存修改' : '确认导入' }}
-          </el-button>
-        </span>
+        <el-button @click="importVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleImport" :loading="importing">确认导入</el-button>
       </template>
     </el-dialog>
 
-    <!-- JSON详情对话框 -->
-    <el-dialog
-      v-model="jsonDialogVisible"
-      title="JSON数据详情"
-      width="600px"
-      append-to-body
-      destroy-on-close
-    >
-      <div style="padding: 0 10px;">
-        <p style="font-size: 14px; color: #606266; margin-bottom: 10px;">
-          图纸：<strong style="color: #409eff;">{{ jsonDetailTitle }}</strong>
-        </p>
-        <el-input
-          :model-value="formattedJson"
-          type="textarea"
-          :rows="12"
-          readonly
-        />
+    <el-dialog v-model="detailVisible" title="图纸详情" width="800px" destroy-on-close class="detail-dialog">
+      <div v-loading="detailLoading" class="detail-body">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="图纸ID">{{ detailData.drawingId }}</el-descriptions-item>
+          <el-descriptions-item label="图纸名称">{{ detailData.drawingName }}</el-descriptions-item>
+          <el-descriptions-item label="图纸描述" :span="2">
+            <span class="desc-cell">{{ detailData.drawingDescription || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="文件路径" :span="2">
+            <span class="desc-cell">{{ detailData.drawingFile }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="创建人ID">{{ detailData.creatorId }}</el-descriptions-item>
+          <el-descriptions-item label="最新版本ID">{{ detailData.latestVersionId || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ detailData.createTime }}</el-descriptions-item>
+          <el-descriptions-item label="修改时间">{{ detailData.modifyTime || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="备注" :span="2">
+            <span class="desc-cell">{{ detailData.notes || '-' }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+        <div v-if="detailJsonContent" class="detail-json-section">
+          <h4 class="json-section-title">JSON 文件内容预览</h4>
+          <div class="json-preview-wrapper">
+            <el-input
+              v-model="detailJsonContent"
+              type="textarea"
+              :rows="12"
+              readonly
+              class="json-preview-input"
+            />
+            <div v-if="detailJsonTruncated" class="json-truncated-tip">
+              当前仅展示前 10000 个字符，完整文件已上传保存。
+            </div>
+          </div>
+        </div>
       </div>
       <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="jsonDialogVisible = false">关闭</el-button>
-        </span>
+        <el-button @click="detailVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="editVisible" title="编辑图纸信息" width="500px" destroy-on-close>
+      <el-form :model="editForm" label-width="100px">
+        <el-form-item label="图纸名称" required>
+          <el-input v-model="editForm.drawingName" placeholder="请输入图纸名称" />
+        </el-form-item>
+        <el-form-item label="图纸描述">
+          <el-input v-model="editForm.drawingDescription" type="textarea" :rows="2" placeholder="请输入图纸描述" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="editForm.notes" type="textarea" :rows="3" placeholder="请输入备注信息" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleEdit" :loading="editing">保存</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, reactive, onMounted } from 'vue';
+import { ElMessage } from 'element-plus';
+import type { UploadFile, UploadInstance } from 'element-plus';
 import {
-  Document,
-  DataAnalysis,
-  Files,
-  TrendCharts,
-  Upload,
-} from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import type { UploadInstance, UploadFile } from 'element-plus'
-import {
-  getDrawingList,
-  createDrawing,
-  updateDrawing,
-  deleteDrawing,
-} from '@/api/rosApi'
-import type { DrawingItem } from '@/api/types'
+  getDrawingListApi,
+  getDrawingDetailApi,
+  getDrawingFileContentApi,
+  importDrawingApi,
+  updateDrawingApi,
+  deleteDrawingApi,
+} from '@/api/rosApi';
+import type { DrawingItem } from '@/api/types';
 
-const searchKeyword = ref('')
-const importDialogVisible = ref(false)
-const jsonDialogVisible = ref(false)
-const isEditing = ref(false)
-const editingId = ref<number | null>(null)
-const submitting = ref(false)
-const uploadRef = ref<UploadInstance>()
-const selectedFile = ref<File | null>(null)
+const loading = ref(false);
+const drawingList = ref<DrawingItem[]>([]);
 
-const formData = ref({
-  name: '',
-  jsonData: '',
-})
+const searchForm = reactive({
+  keyword: '',
+});
 
-const jsonDetailTitle = ref('')
-const formattedJson = ref('')
+const uploadRef = ref<UploadInstance>();
 
-const tableData = ref<DrawingItem[]>([])
+const importVisible = ref(false);
+const importing = ref(false);
+const importForm = reactive({
+  drawingName: '',
+  drawingDescription: '',
+});
+const currentFile = ref<File | null>(null);
+const jsonPreview = ref('');
+const jsonTruncated = ref(false);
+const fileSummary = ref<string[]>([]);
 
-const displayData = computed(() => {
-  const key = searchKeyword.value.toLowerCase()
-  if (!key) return tableData.value
-  return tableData.value.filter(item => item.name.toLowerCase().includes(key))
-})
+const detailVisible = ref(false);
+const detailLoading = ref(false);
+const detailData = reactive<Partial<DrawingItem>>({});
+const detailJsonContent = ref('');
+const detailJsonTruncated = ref(false);
 
-const hasJsonCount = computed(() =>
-  tableData.value.filter(item => item.jsonData && item.jsonData !== '{}').length
-)
+const editVisible = ref(false);
+const editing = ref(false);
+const editForm = reactive({
+  drawingId: 0,
+  drawingName: '',
+  drawingDescription: '',
+  notes: '',
+});
 
-const hasFileCount = computed(() =>
-  tableData.value.filter(item => item.filePath).length
-)
+const MAX_PREVIEW_CHARS = 5000;
 
-const todayCount = computed(() => {
-  const today = new Date().toISOString().slice(0, 10)
-  return tableData.value.filter(item => {
-    if (!item.createdAt) return false
-    return item.createdAt.slice(0, 10) === today
-  }).length
-})
+function parseFileSummary(jsonObj: any): string[] {
+  const fileInfo = jsonObj?.['文件信息'];
+  if (!fileInfo) return [];
+  const items: string[] = [];
+  if (fileInfo['STP文件路径']) items.push('STP文件路径: ' + fileInfo['STP文件路径']);
+  if (fileInfo['聚类阈值(mm)']) items.push('聚类阈值(mm): ' + fileInfo['聚类阈值(mm)']);
+  if (fileInfo['总坐标点数量']) items.push('总坐标点数量: ' + fileInfo['总坐标点数量']);
+  if (fileInfo['虚拟部件数量']) items.push('虚拟部件数量: ' + fileInfo['虚拟部件数量']);
+  return items;
+}
 
-const loadData = async () => {
+function handleFileChange(file: UploadFile) {
+  const raw = file.raw as File;
+  if (!raw) return;
+  if (!raw.name.toLowerCase().endsWith('.json')) {
+    ElMessage.warning('请选择 JSON 格式文件');
+    uploadRef.value?.clearFiles();
+    return;
+  }
+  currentFile.value = raw;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const text = e.target?.result as string;
+    try {
+      const jsonObj = JSON.parse(text);
+      fileSummary.value = parseFileSummary(jsonObj);
+      if (text.length > MAX_PREVIEW_CHARS) {
+        jsonPreview.value = text.substring(0, MAX_PREVIEW_CHARS);
+        jsonTruncated.value = true;
+      } else {
+        jsonPreview.value = text;
+        jsonTruncated.value = false;
+      }
+    } catch {
+      fileSummary.value = [];
+      jsonPreview.value = text.substring(0, MAX_PREVIEW_CHARS);
+      jsonTruncated.value = text.length > MAX_PREVIEW_CHARS;
+    }
+  };
+  reader.readAsText(raw);
+}
+
+function handleFileRemove() {
+  currentFile.value = null;
+  jsonPreview.value = '';
+  jsonTruncated.value = false;
+  fileSummary.value = [];
+}
+
+function resetImportForm() {
+  importForm.drawingName = '';
+  importForm.drawingDescription = '';
+  currentFile.value = null;
+  jsonPreview.value = '';
+  jsonTruncated.value = false;
+  fileSummary.value = [];
+  uploadRef.value?.clearFiles();
+}
+
+function openImportDialog() {
+  resetImportForm();
+  importVisible.value = true;
+}
+
+function openReimportDialog(row: DrawingItem) {
+  resetImportForm();
+  importForm.drawingName = row.drawingName;
+  importForm.drawingDescription = row.drawingDescription || '';
+  (importForm as any).drawingId = row.drawingId;
+  importVisible.value = true;
+}
+
+async function handleImport() {
+  if (!importForm.drawingName.trim()) {
+    ElMessage.warning('请输入图纸名称');
+    return;
+  }
+  if (!currentFile.value && !uploadRef.value?.uploadFiles?.length) {
+    ElMessage.warning('请选择 JSON 文件');
+    return;
+  }
+
+  importing.value = true;
   try {
-    const res = await getDrawingList()
+    const formData = new FormData();
+    formData.append('drawing_name', importForm.drawingName.trim());
+    formData.append('drawing_description', importForm.drawingDescription.trim());
+    const drawingId = (importForm as any).drawingId;
+    if (drawingId) {
+      formData.append('drawing_id', String(drawingId));
+    }
+    if (currentFile.value) {
+      formData.append('file', currentFile.value);
+    }
+
+    const res = await importDrawingApi(formData);
     if (res.code === 200) {
-      tableData.value = [...(res.data || [])]
-    }
-  } catch {
-    ElMessage.error('获取图纸列表失败')
-  }
-}
-
-loadData()
-
-const handleFileChange = (uploadFile: UploadFile) => {
-  if (uploadFile.raw) {
-    selectedFile.value = uploadFile.raw
-  }
-}
-
-const handleFileRemove = () => {
-  selectedFile.value = null
-}
-
-const handleQuery = () => {
-  ElMessage.success(`已根据关键词 [${searchKeyword.value}] 过滤数据`)
-}
-
-const handleImport = () => {
-  isEditing.value = false
-  editingId.value = null
-  formData.value = { name: '', jsonData: '' }
-  selectedFile.value = null
-  importDialogVisible.value = true
-}
-
-const handleEdit = (row: DrawingItem) => {
-  isEditing.value = true
-  editingId.value = row.id
-  formData.value = {
-    name: row.name,
-    jsonData: row.jsonData || '',
-  }
-  selectedFile.value = null
-  importDialogVisible.value = true
-}
-
-const showJsonDetail = (row: DrawingItem) => {
-  jsonDetailTitle.value = row.name
-  try {
-    const parsed = JSON.parse(row.jsonData || '{}')
-    formattedJson.value = JSON.stringify(parsed, null, 2)
-  } catch {
-    formattedJson.value = row.jsonData || ''
-  }
-  jsonDialogVisible.value = true
-}
-
-const submitImport = async () => {
-  if (!formData.value.name.trim()) {
-    ElMessage.error('图纸名称不能为空')
-    return
-  }
-
-  let jsonToSave = formData.value.jsonData.trim()
-  if (jsonToSave) {
-    try {
-      JSON.parse(jsonToSave)
-    } catch {
-      ElMessage.error('JSON 格式不正确')
-      return
-    }
-  } else {
-    jsonToSave = '{}'
-  }
-
-  submitting.value = true
-  try {
-    const fd = new FormData()
-    fd.append('name', formData.value.name.trim())
-    fd.append('json_data', jsonToSave)
-    if (selectedFile.value) {
-      fd.append('file', selectedFile.value)
-    }
-
-    if (isEditing.value && editingId.value) {
-      await updateDrawing(editingId.value, fd)
-      ElMessage.success('图纸更新成功')
+      ElMessage.success(res.message || '导入成功');
+      importVisible.value = false;
+      delete (importForm as any).drawingId;
+      fetchDrawingList();
     } else {
-      await createDrawing(fd)
-      ElMessage.success('图纸导入成功')
+      ElMessage.error(res.message || '导入失败');
     }
-
-    importDialogVisible.value = false
-    await loadData()
   } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || '操作失败'
-      ElMessage.error(msg)
-    } finally {
-    submitting.value = false
+    const msg = err?.response?.data?.detail || err?.message || '导入失败';
+    ElMessage.error(msg);
+  } finally {
+    importing.value = false;
   }
 }
 
-const handleDelete = (row: DrawingItem) => {
-  ElMessageBox.confirm(`确定要删除图纸 [${row.name}] 吗？`, '警告', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning',
-  }).then(async () => {
-    try {
-      await deleteDrawing(row.id)
-      ElMessage.success('图纸已成功删除')
-      await loadData()
-    } catch {
-      ElMessage.error('删除失败')
+async function fetchDrawingList(keyword?: string) {
+  loading.value = true;
+  try {
+    const params: any = {};
+    if (keyword && keyword.trim()) {
+      params.keyword = keyword.trim();
     }
-  }).catch(() => {})
+    const res = await getDrawingListApi(params);
+    if (res.code === 200) {
+      drawingList.value = res.data || [];
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || '获取图纸列表失败';
+    ElMessage.error(msg);
+  } finally {
+    loading.value = false;
+  }
 }
+
+function handleSearch() {
+  fetchDrawingList(searchForm.keyword);
+}
+
+function handleReset() {
+  searchForm.keyword = '';
+  fetchDrawingList();
+}
+
+async function openDetailDialog(row: DrawingItem) {
+  detailVisible.value = true;
+  detailLoading.value = true;
+  detailJsonContent.value = '';
+  detailJsonTruncated.value = false;
+  Object.assign(detailData, row);
+
+  try {
+    const res = await getDrawingFileContentApi(row.drawingId);
+    if (res.code === 200) {
+      const fileData = res.data;
+      detailJsonContent.value = fileData.content;
+      detailJsonTruncated.value = fileData.truncated;
+    }
+  } catch {
+    detailJsonContent.value = '';
+  } finally {
+    detailLoading.value = false;
+  }
+}
+
+function openEditDialog(row: DrawingItem) {
+  editForm.drawingId = row.drawingId;
+  editForm.drawingName = row.drawingName;
+  editForm.drawingDescription = row.drawingDescription || '';
+  editForm.notes = row.notes || '';
+  editVisible.value = true;
+}
+
+async function handleEdit() {
+  if (!editForm.drawingName.trim()) {
+    ElMessage.warning('请输入图纸名称');
+    return;
+  }
+
+  editing.value = true;
+  try {
+    const formData = new FormData();
+    formData.append('drawing_name', editForm.drawingName.trim());
+    formData.append('drawing_description', editForm.drawingDescription.trim());
+    formData.append('notes', editForm.notes.trim());
+
+    const res = await updateDrawingApi(editForm.drawingId, formData);
+    if (res.code === 200) {
+      ElMessage.success('更新成功');
+      editVisible.value = false;
+      fetchDrawingList();
+    } else {
+      ElMessage.error(res.message || '更新失败');
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || '更新失败';
+    ElMessage.error(msg);
+  } finally {
+    editing.value = false;
+  }
+}
+
+async function handleDelete(row: DrawingItem) {
+  try {
+    const res = await deleteDrawingApi(row.drawingId);
+    if (res.code === 200) {
+      ElMessage.success('删除成功');
+      fetchDrawingList();
+    } else {
+      ElMessage.error(res.message || '删除失败');
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || '删除失败';
+    ElMessage.error(msg);
+  }
+}
+
+onMounted(() => {
+  fetchDrawingList();
+});
 </script>
 
 <style scoped>
-.drawing-manage-container {
+.drawing-manage {
   padding: 20px;
-  background-color: #f5f7fa;
-  min-height: calc(100vh - 60px);
 }
 
-.dashboard-row { margin-bottom: 20px; }
-.data-card { border: none; border-radius: 8px; transition: all 0.3s; }
-.data-card:hover { transform: translateY(-3px); }
-.border-blue { border-top: 4px solid #409eff; }
-.border-green { border-top: 4px solid #67c23a; }
-.border-orange { border-top: 4px solid #e6a23c; }
-.border-purple { border-top: 4px solid #9b59b6; }
+.header-card {
+  margin-bottom: 16px;
+}
 
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-.card-title { font-size: 14px; color: #606266; font-weight: bold; }
-.card-icon { font-size: 22px; }
-.card-value { font-size: 26px; font-weight: bold; color: #303133; margin-bottom: 8px; }
-.card-desc { font-size: 12px; color: #909399; }
-
-.success-text { color: #67c23a; }
-.warning-text { color: #e6a23c; }
-.purple-text { color: #9b59b6; }
-
-.main-card { border-radius: 8px; border: none; }
-.toolbar {
+.header-row {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 25px;
 }
 
-.toolbar :deep(.el-button) { margin-left: 0 !important; }
-
-.search-input { width: 220px; }
-
-.toolbar-btn {
-  height: 34px;
-  padding: 0 18px !important;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  font-size: 14px;
-  letter-spacing: 1px;
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  color: #303133;
 }
-.query-btn { min-width: 80px; }
-.toolbar-divider { height: 20px; margin: 0 5px; border-color: #dcdfe6; }
 
-.drawing-table { margin-bottom: 20px; }
+.search-card {
+  margin-bottom: 16px;
+}
 
-.drawing-table :deep(.op-btn) {
-  width: 72px;
-  height: 28px;
-  padding: 0 !important;
-  justify-content: center;
-  align-items: center;
-  display: inline-flex;
+.search-card .el-form {
+  margin-bottom: 0;
+}
+
+.table-card {
+  min-height: 400px;
+}
+
+.file-summary {
+  background: #f5f7fa;
+  padding: 12px 16px;
+  border-radius: 4px;
+  line-height: 1.8;
   font-size: 13px;
-  margin: 0 4px !important;
+  color: #303133;
 }
 
-.pagination-container {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-top: 10px;
+.json-preview-wrapper {
+  width: 100%;
 }
-.total-text { font-size: 13px; color: #606266; margin-right: 15px; }
+
+.json-preview-input {
+  overflow: auto;
+}
+
+.json-preview-input :deep(.el-textarea__inner) {
+  height: 300px !important;
+  max-height: 300px;
+  overflow: auto;
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: none;
+  white-space: pre;
+  word-break: break-all;
+}
+
+.json-truncated-tip {
+  color: #e6a23c;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.detail-dialog .detail-body {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.detail-dialog .desc-cell {
+  word-break: break-all;
+  white-space: pre-wrap;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.json-section-title {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  color: #303133;
+}
 </style>

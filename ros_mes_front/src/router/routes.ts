@@ -65,7 +65,8 @@ const routes = [
         name: 'UserManagement',
         component: UserManagement,
         meta: {
-          activeMenu: '/UserManagement' // 用于让侧边栏高亮
+          activeMenu: '/UserManagement',
+          requiresAdmin: true,
         }
       },
       {

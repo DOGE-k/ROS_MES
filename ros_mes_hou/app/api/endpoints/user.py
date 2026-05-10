@@ -223,6 +223,8 @@ def lock_user(
         raise HTTPException(status_code=404, detail="用户不存在")
     if user.id == current_user.id:
         raise HTTPException(status_code=400, detail="不能锁定当前登录用户")
+    if user.role == "admin":
+        raise HTTPException(status_code=400, detail="不能锁定管理员账号")
     user.status = 1
     db.commit()
     db.refresh(user)
@@ -238,6 +240,8 @@ def unlock_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    if user.role == "admin":
+        raise HTTPException(status_code=400, detail="不能解锁管理员账号")
     user.status = 0
     db.commit()
     db.refresh(user)

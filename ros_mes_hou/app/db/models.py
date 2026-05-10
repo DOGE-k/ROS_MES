@@ -1,5 +1,5 @@
 # app/db/models.py
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, ForeignKey, Text
 from sqlalchemy.sql import func
 
 from app.db.database import Base
@@ -25,8 +25,8 @@ class Hardware(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String(100), index=True, nullable=False)
-    type = Column(String(50))  # 硬件类型：如 sensor, motor, camera
-    status = Column(String(20))  # 状态：如 online, offline, error
+    type = Column(String(50))
+    status = Column(String(20))
     ip_address = Column(String(50))
     description = Column(String(255))
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -40,13 +40,11 @@ class FineTuning(Base):
     parameter_name = Column(String(100), nullable=False)
     old_value = Column(Float)
     new_value = Column(Float, nullable=False)
-    adjusted_by = Column(String(50))  # 记录是谁调整的
+    adjusted_by = Column(String(50))
     adjusted_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class FineTuningConfig(Base):
-    """保存"机械臂姿态微调与压力监控"页面的一次配置快照。"""
-
     __tablename__ = "fine_tuning_config"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
@@ -58,13 +56,29 @@ class FineTuningConfig(Base):
 
 
 class Drawing(Base):
-    """图纸管理 - 点云图与JSON数据"""
-
     __tablename__ = "drawings"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(200), nullable=False, comment="图纸名称")
-    file_path = Column(String(500), nullable=True, comment="上传文件存储路径")
-    json_data = Column(Text, nullable=True, comment="JSON数据内容")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    drawing_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    drawing_name = Column(String(200), nullable=False)
+    drawing_description = Column(Text, nullable=True)
+    drawing_file = Column(String(500), nullable=False)
+    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    create_time = Column(DateTime(timezone=True), server_default=func.now())
+    modify_time = Column(DateTime(timezone=True), nullable=True)
+    latest_version_id = Column(Integer, ForeignKey("drawings_version.version_id"), nullable=True)
+    del_flag = Column(Boolean, default=False)
+    notes = Column(Text, nullable=True)
+
+
+class DrawingVersion(Base):
+    __tablename__ = "drawings_version"
+
+    version_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    drawing_id = Column(Integer, ForeignKey("drawings.drawing_id"), nullable=False)
+    drawing_file = Column(String(500), nullable=False)
+    creator_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    create_time = Column(DateTime(timezone=True), server_default=func.now())
+    modify_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    modify_time = Column(DateTime(timezone=True), nullable=True)
+    del_flag = Column(Boolean, default=False)
+    notes = Column(Text, nullable=True)

@@ -1,0 +1,31 @@
+{
+  "paperType": "project_planning",
+  "paperSize": "custom",
+  "lineColor": "#721daa",
+  "lineSpacing": 8,
+  "lineWidth": 0.5,
+  "lineStyle": "dotted",
+  "margins": {
+    "top": 25,
+    "right": 20,
+    "bottom": 25,
+    "left": 20
+  },
+  "theme": "tech",
+  "background": {
+    "color": "#ffffff",
+    "pattern": "none",
+    "patternColor": "#e0e0e0",
+    "patternOpacity": 0.1
+  },
+  "pages": {
+    "count": 1,
+    "numberingEnabled": false,
+    "startNumber": 1
+  },
+  "id": "project_planning",
+  "name": "项目规划纸",
+  "description": "帮助规划和跟踪项目进度的专业模板",
+  "specialConfig": {},
+  "version": "1.2"
+}

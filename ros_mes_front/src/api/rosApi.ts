@@ -1,223 +1,211 @@
-import request from "@/utils/request";
-import { mockSuccess, useMock } from "./mock";
+import request from '../utils/request';
 import type {
-  ApiResponse,
-  RosStatus,
-  HardwareItem,
-  HardwareCreatePayload,
-  ModuleCreatePayload,
-  CoordinationPayload,
-  FineTuningPayload,
-  DrawingItem,
-} from "./types";
+	ApiResponse,
+	DrawingFileContent,
+	DrawingForm,
+	DrawingItem,
+	FineTuningConfigItem,
+	FineTuningItem,
+	HardwareItem,
+	LoginForm,
+	LoginResponse,
+	UserInfo
+} from './types';
 
-let mockHardwareList: any[] = [
-  {
-    id: 1,
-    device_id: 1,
-    hardware_id: 1,
-    name: "机械臂 A",
-    hardware_name: "机械臂 A",
-    type: "机械臂",
-    hardware_type: "机械臂",
-    status: "normal",
-    description: "六轴机械臂",
-    specification: "六轴机械臂",
-    updated_at: new Date().toLocaleString(),
-    create_time: new Date().toLocaleString(),
-  },
-  {
-    id: 2,
-    device_id: 2,
-    hardware_id: 2,
-    name: "压力传感器 A",
-    hardware_name: "压力传感器 A",
-    type: "压力传感器",
-    hardware_type: "压力传感器",
-    status: "normal",
-    description: "标准压力传感器",
-    specification: "标准压力传感器",
-    updated_at: new Date().toLocaleString(),
-    create_time: new Date().toLocaleString(),
-  },
-];
-
-export function getHardwareList(): Promise<ApiResponse<any[]>> {
-  if (useMock) {
-    return mockSuccess(mockHardwareList, "获取硬件列表成功");
-  }
-
-  return request.get("/hardware/");
+// ==================== 登录 ====================
+export function loginApi(data: LoginForm) {
+	return request<any, ApiResponse<LoginResponse>>({
+		url: '/login',
+		method: 'post',
+		data: new URLSearchParams({
+			username: data.username,
+			password: data.password
+		}).toString(),
+		headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+	});
 }
 
-export function createHardware(data: any): Promise<ApiResponse<any>> {
-  if (useMock) {
-    const deviceId = Number(data.device_id ?? data.hardware_id ?? Date.now());
-
-    const item = {
-      id: deviceId,
-      device_id: deviceId,
-      hardware_id: deviceId,
-      name: data.name || data.hardware_name || "未命名硬件",
-      hardware_name: data.hardware_name || data.name || "未命名硬件",
-      type: data.type || data.hardware_type || "机械臂",
-      hardware_type: data.hardware_type || data.type || "机械臂",
-      status: data.status || "normal",
-      description: data.description || data.specification || "",
-      specification: data.specification || data.description || "",
-      updated_at: new Date().toLocaleString(),
-      create_time: new Date().toLocaleString(),
-    };
-
-    mockHardwareList.push(item);
-
-    return mockSuccess(item, "新增硬件成功");
-  }
-
-  return request.post("/hardware/", data);
+// ==================== 用户信息 ====================
+export function getUserInfoApi() {
+	return request<any, ApiResponse<UserInfo>>({
+		url: '/user/info',
+		method: 'get'
+	});
 }
 
-export function deleteHardware(id: number | string): Promise<ApiResponse> {
-  if (useMock) {
-    mockHardwareList = mockHardwareList.filter(
-      (item) =>
-        String(item.id) !== String(id) &&
-        String(item.device_id) !== String(id) &&
-        String(item.hardware_id) !== String(id)
-    );
-
-    return mockSuccess({ id }, "删除硬件成功");
-  }
-
-  return request.delete(`/hardware/${id}`);
+// ==================== 硬件管理 ====================
+export function getHardwareList(params?: { type?: string; status?: string }) {
+	return request<any, ApiResponse<HardwareItem[]>>({
+		url: '/hardware/',
+		method: 'get',
+		params
+	});
 }
 
-export function sendRosMessage(msg: string): Promise<ApiResponse> {
-  if (useMock) {
-    return mockSuccess(
-      {
-        msg,
-        topic: "/web_cmd",
-      },
-      `已模拟发送到 ROS：${msg}`
-    );
-  }
-
-  return request.get("/send_ros", {
-    params: { msg },
-  });
+export function getHardwareDetail(id: number) {
+	return request<any, ApiResponse<HardwareItem>>({
+		url: `/hardware/${id}`,
+		method: 'get'
+	});
 }
 
-export function getRosStatus(): Promise<ApiResponse<RosStatus>> {
-  if (useMock) {
-    return mockSuccess({
-      robot_status: "running",
-      battery: 85,
-      node: "ros_mock_node",
-    });
-  }
-
-  return request.get("/get_ros_status");
+export function createHardware(data: Partial<HardwareItem>) {
+	return request<any, ApiResponse<HardwareItem>>({
+		url: '/hardware/',
+		method: 'post',
+		data
+	});
 }
 
-
-
-export function createModule(data: ModuleCreatePayload): Promise<ApiResponse> {
-  if (useMock) {
-    return mockSuccess(data, "模块创建成功，已模拟下发 ROS");
-  }
-
-  return request.post("/module/", data);
+export function updateHardware(id: number, data: Partial<HardwareItem>) {
+	return request<any, ApiResponse<HardwareItem>>({
+		url: `/hardware/${id}`,
+		method: 'put',
+		data
+	});
 }
 
-export function sendCoordination(data: CoordinationPayload): Promise<ApiResponse> {
-  if (useMock) {
-    return mockSuccess(data, "坐标已模拟下发 ROS");
-  }
-
-  return request.post("/coordination/", data);
+export function deleteHardware(id: number) {
+	return request<any, ApiResponse<null>>({
+		url: `/hardware/${id}`,
+		method: 'delete'
+	});
 }
 
-export function sendFineTuning(data: FineTuningPayload): Promise<ApiResponse> {
-  if (useMock) {
-    return mockSuccess(data, `微调指令 ${data.position} 已模拟发送`);
-  }
-
-  return request.post("/finetuning/", data);
+// ==================== 微调管理 ====================
+export function getFineTuningList(params?: { hardwareId?: number }) {
+	return request<any, ApiResponse<FineTuningItem[]>>({
+		url: '/finetuning/',
+		method: 'get',
+		params
+	});
 }
 
-// 保存微调配置
-export function saveFineTuningConfig(data: any): Promise<ApiResponse> {
-  if (useMock) {
-    return mockSuccess(data, "配置保存成功");
-  }
-
-  return request.post("/finetuning/config", data);
+export function createFineTuning(data: Partial<FineTuningItem>) {
+	return request<any, ApiResponse<FineTuningItem>>({
+		url: '/finetuning/',
+		method: 'post',
+		data
+	});
 }
 
-// ========== 图纸管理 API ==========
-
-let mockDrawingList: any[] = [
-  { id: 1, name: "机械臂底座点云图", filePath: null, jsonData: '{"points": 1024, "resolution": "0.01mm"}', createdAt: "2026-05-01 10:00:00", updatedAt: null },
-  { id: 2, name: "夹具装配点云图", filePath: null, jsonData: '{"points": 2048, "resolution": "0.005mm", "format": "pcd"}', createdAt: "2026-05-03 14:30:00", updatedAt: null },
-];
-
-export function getDrawingList(): Promise<ApiResponse<DrawingItem[]>> {
-  if (useMock) {
-    return mockSuccess(mockDrawingList, "获取图纸列表成功");
-  }
-  return request.get("/drawing/");
+export function getFineTuningHistory() {
+	return request<any, ApiResponse<FineTuningItem[]>>({
+		url: '/finetuning/',
+		method: 'get'
+	});
 }
 
-export function getDrawingDetail(id: number): Promise<ApiResponse<DrawingItem>> {
-  if (useMock) {
-    const item = mockDrawingList.find(d => d.id === id);
-    return mockSuccess(item || null, item ? "获取图纸详情成功" : "图纸不存在");
-  }
-  return request.get(`/drawing/${id}`);
+export function saveFineTuningConfigApi(data: {
+	moduleId: number;
+	deviceId: number;
+	configJson: string;
+	savedBy?: string;
+}) {
+	return request<any, ApiResponse<FineTuningConfigItem>>({
+		url: '/finetuning/config',
+		method: 'post',
+		data
+	});
 }
 
-export function createDrawing(formData: FormData): Promise<ApiResponse<DrawingItem>> {
-  if (useMock) {
-    const name = formData.get("name") as string;
-    const jsonData = formData.get("json_data") as string;
-    const newItem = {
-      id: Date.now(),
-      name,
-      filePath: null,
-      jsonData,
-      createdAt: new Date().toLocaleString(),
-      updatedAt: null,
-    };
-    mockDrawingList.unshift(newItem);
-    return mockSuccess(newItem, "上传图纸成功");
-  }
-  return request.post("/drawing/", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+export function getFineTuningConfig(params: { moduleId?: number; deviceId?: number }) {
+	return request<any, ApiResponse<FineTuningConfigItem[]>>({
+		url: '/finetuning/config',
+		method: 'get',
+		params
+	});
 }
 
-export function updateDrawing(id: number, formData: FormData): Promise<ApiResponse<DrawingItem>> {
-  if (useMock) {
-    const item = mockDrawingList.find(d => d.id === id);
-    if (item) {
-      const name = formData.get("name") as string;
-      const jsonData = formData.get("json_data") as string;
-      if (name) item.name = name;
-      if (jsonData) item.jsonData = jsonData;
-      item.updatedAt = new Date().toLocaleString();
-    }
-    return mockSuccess(item, "更新图纸成功");
-  }
-  return request.put(`/drawing/${id}`, formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-  });
+// ==================== ROS 测试页面 ====================
+export function sendRosMessage(data: any) {
+	return request<any, ApiResponse<any>>({
+		url: '/ros/send',
+		method: 'post',
+		data
+	});
 }
 
-export function deleteDrawing(id: number): Promise<ApiResponse> {
-  if (useMock) {
-    mockDrawingList = mockDrawingList.filter(d => d.id !== id);
-    return mockSuccess({ id }, "删除图纸成功");
-  }
-  return request.delete(`/drawing/${id}`);
+export function getRosStatus() {
+	return request<any, ApiResponse<any>>({
+		url: '/ros/status',
+		method: 'get'
+	});
+}
+
+// ==================== 模块管理 ====================
+export function createModule(data: any) {
+	return request<any, ApiResponse<any>>({
+		url: '/module/',
+		method: 'post',
+		data
+	});
+}
+
+// ==================== 坐标协调 ====================
+export function sendCoordinate(data: any) {
+	return request<any, ApiResponse<any>>({
+		url: '/coordination/send',
+		method: 'post',
+		data
+	});
+}
+
+// ==================== 微调控制 ====================
+export function sendFineTuning(data: any) {
+	return request<any, ApiResponse<any>>({
+		url: '/control/finetuning',
+		method: 'post',
+		data
+	});
+}
+
+export const sendCoordination = sendCoordinate;
+
+export const saveFineTuningConfig = saveFineTuningConfigApi;
+
+// ==================== 图纸管理 ====================
+export function getDrawingListApi(params?: Record<string, any>) {
+	return request<any, ApiResponse<DrawingItem[]>>({
+		url: '/drawing/',
+		method: 'get',
+		params
+	});
+}
+
+export function getDrawingDetailApi(drawingId: number) {
+	return request<any, ApiResponse<DrawingItem>>({
+		url: `/drawing/${drawingId}`,
+		method: 'get'
+	});
+}
+
+export function getDrawingFileContentApi(drawingId: number) {
+	return request<any, ApiResponse<DrawingFileContent>>({
+		url: `/drawing/${drawingId}/file`,
+		method: 'get'
+	});
+}
+
+export function importDrawingApi(formData: FormData) {
+	return request<any, ApiResponse<DrawingItem>>({
+		url: '/drawing/import',
+		method: 'post',
+		data: formData
+	});
+}
+
+export function updateDrawingApi(drawingId: number, formData: FormData) {
+	return request<any, ApiResponse<DrawingItem>>({
+		url: `/drawing/${drawingId}`,
+		method: 'put',
+		data: formData
+	});
+}
+
+export function deleteDrawingApi(drawingId: number) {
+	return request<any, ApiResponse<null>>({
+		url: `/drawing/${drawingId}`,
+		method: 'delete'
+	});
 }

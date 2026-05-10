@@ -28,7 +28,7 @@
         <el-icon><PictureFilled /></el-icon>
         <span>图纸管理</span>
       </el-menu-item>
-      <el-menu-item index="/UserManagement">
+      <el-menu-item v-if="isAdmin" index="/UserManagement">
         <el-icon><User /></el-icon>
         <span>用户管理</span>
       </el-menu-item>
@@ -82,10 +82,14 @@ import { computed, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import request from '@/utils/request';
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
+import { useUserStore } from '@/stores/user';
 
 const router = useRouter();
 const route = useRoute();
 const layoutStore = useLayoutSettingStore();
+
+const userStore = useUserStore();
+const isAdmin = computed(() => userStore.isAdmin());
 
 const activeMenu = computed(() => {
  return route.meta?.activeMenu || route.path

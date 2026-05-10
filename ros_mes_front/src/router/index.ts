@@ -30,6 +30,10 @@ router.beforeEach((to) => {
     return "/login";
   }
 
+  if (to.meta?.requiresAdmin && localStorage.getItem("role") !== "admin") {
+    return "/HardWorkPage";
+  }
+
   return true;
 });
 
