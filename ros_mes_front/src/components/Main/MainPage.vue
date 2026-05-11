@@ -11,8 +11,10 @@
             </el-icon>
           </div>
           <div class="header-right">
-            <el-icon><User /></el-icon>
-            <span class="header-account">{{ userStore.account }}</span>
+            <el-avatar :size="32" :src="userStore.avatar || ''" class="header-avatar">
+              <el-icon><User /></el-icon>
+            </el-avatar>
+            <span class="header-nickname">{{ userStore.nickname || userStore.account }}</span>
             <el-button type="danger" size="small" plain @click="handleLogout">退出登录</el-button>
           </div>
         </el-header>
@@ -99,7 +101,11 @@ const handleLogout = async () => {
   font-size: 14px;
 }
 
-.header-account {
+.header-avatar {
+  flex-shrink: 0;
+}
+
+.header-nickname {
   font-weight: 500;
 }
 </style>

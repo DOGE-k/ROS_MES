@@ -68,10 +68,10 @@ const handleFineTuning = async (position: string) => {
 
 <template>
   <div class="ros-test-page">
+    <el-card class="header-card">
+      <h2 class="page-title">ROS API 前端 Mock 测试</h2>
+    </el-card>
     <el-card>
-      <template #header>
-        <strong>ROS API 前端 Mock 测试</strong>
-      </template>
 
       <div class="row">
         <span>消息：</span>
@@ -120,6 +120,17 @@ const handleFineTuning = async (position: string) => {
 <style scoped>
 .ros-test-page {
   padding: 20px;
+}
+
+.header-card {
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
 }
 
 .row {

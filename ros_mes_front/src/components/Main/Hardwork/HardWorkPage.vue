@@ -1,5 +1,8 @@
 <template>
   <div class="container">
+    <el-card class="header-card">
+      <h2 class="page-title">硬件信息管理</h2>
+    </el-card>
     <!-- 搜索表单 -->
     <el-form :model="searchForm" label-width="80px" style="max-width: 600px">
       <el-form-item label="硬件编号">
@@ -405,6 +408,17 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   overflow: auto;
+}
+
+.header-card {
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
 }
 .container > :last-child {
   flex: 1;

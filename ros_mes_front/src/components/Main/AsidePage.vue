@@ -16,6 +16,10 @@
         active-text-color="#409eff"
         text-color="#fff"
     >
+      <el-menu-item index="/Dashboard">
+        <el-icon><Odometer /></el-icon>
+        <span>首页仪表盘</span>
+      </el-menu-item>
       <el-menu-item index="/HardWorkPage">
         <el-icon><icon-menu /></el-icon>
         <span>设备信息管理</span>
@@ -27,6 +31,14 @@
       <el-menu-item index="/DrawingManage">
         <el-icon><PictureFilled /></el-icon>
         <span>图纸管理</span>
+      </el-menu-item>
+      <el-menu-item index="/WorkflowManage">
+        <el-icon><List /></el-icon>
+        <span>工作流管理</span>
+      </el-menu-item>
+      <el-menu-item index="/TaskManagement">
+        <el-icon><Management /></el-icon>
+        <span>任务管理</span>
       </el-menu-item>
       <el-menu-item v-if="isAdmin" index="/UserManagement">
         <el-icon><User /></el-icon>
@@ -72,10 +84,13 @@
 <script setup>
 import {
   Document,
+  List,
+  Management,
   Menu as IconMenu,
   User,
   Setting,
   PictureFilled,
+  Odometer,
 } from '@element-plus/icons-vue';
 import { useRouter, useRoute } from 'vue-router';
 import { computed, ref } from 'vue';

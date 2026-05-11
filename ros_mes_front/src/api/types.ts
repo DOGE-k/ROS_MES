@@ -99,3 +99,103 @@ export interface DrawingForm {
 	drawingDescription: string;
 	notes?: string;
 }
+
+// 仪表盘统计
+export interface DashboardStatItem {
+	label: string;
+	value: string | number;
+	unit: string;
+	trend: number;
+}
+
+export interface DashboardStats {
+	deviceStatus: DashboardStatItem;
+	taskCount: DashboardStatItem;
+	faultCount: DashboardStatItem;
+	onlineUsers: DashboardStatItem;
+	responseTime: DashboardStatItem;
+	concurrency: DashboardStatItem;
+	deviceConnections: DashboardStatItem;
+}
+
+// 工作管理相关
+export interface WorkItem {
+	Work_ID: number;
+	Workname: string;
+	WorkDescript: string;
+	Drawing_ID: number | null;
+	Device_id: number | null;
+	unit_id: number | null;
+	sensor_id: number | null;
+	data: string;
+	creater_id: number;
+	Createtime: string;
+	Modifytime: string;
+	del_flag: boolean;
+	Notes: string;
+}
+
+// 工作流相关
+export interface WorkflowItem {
+	Workflow_ID: number;
+	Workflowname: string;
+	WorkflowDescript: string;
+	creater_id: number;
+	Createtime: string;
+	Modifytime: string;
+	del_flag: boolean;
+	Notes: string;
+	work_count?: number;
+	works?: WorkItem[];
+}
+
+export interface WorkflowDetail extends WorkflowItem {
+	works: (WorkItem & { flow_seq: number })[];
+}
+
+// 任务管理相关
+export interface TaskItem {
+	Task_ID: number;
+	Taskname: string;
+	Taskdescripte: string;
+	Workflow_ID: number | null;
+	Drawing_ID: number | null;
+	creater_id: number;
+	Createtime: string;
+	TaskAssignment_id: number | null;
+	Status: string;
+	Modifytime: string;
+	del_flag: boolean;
+	Notes: string;
+	DrawingName?: string;
+	WorkflowName?: string;
+	AssigneeName?: string;
+	WorksSubset?: WorkSubsetItem[];
+}
+
+export interface WorkSubsetItem {
+	Work_ID: number;
+	Workname: string;
+	WorkDescript: string;
+	flow_seq: number;
+}
+
+export interface TaskTracingItem {
+	TasksTracing_ID: number;
+	Task_ID: number;
+	operate_type: number;
+	Workflow_ID: number;
+	operater_ID: number;
+	operate_time: string;
+	Notes: string;
+	OperatorName?: string;
+}
+
+export interface TaskForm {
+	Taskname: string;
+	Taskdescripte?: string;
+	Workflow_ID?: number | null;
+	Drawing_ID?: number | null;
+	TaskAssignment_id?: number | null;
+	Notes?: string;
+}

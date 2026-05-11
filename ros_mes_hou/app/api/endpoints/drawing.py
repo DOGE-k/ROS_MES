@@ -19,30 +19,30 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def drawing_to_dict(drawing: models.Drawing):
     return {
-        "drawingId": drawing.drawing_id,
-        "drawingName": drawing.drawing_name,
-        "drawingDescription": drawing.drawing_description or "",
-        "drawingFile": drawing.drawing_file or "",
-        "creatorId": drawing.creator_id,
-        "createTime": str(drawing.create_time) if drawing.create_time else "",
-        "modifyTime": str(drawing.modify_time) if drawing.modify_time else "",
-        "latestVersionId": drawing.latest_version_id,
+        "drawingId": drawing.Drawing_ID,
+        "drawingName": drawing.Drawingname,
+        "drawingDescription": drawing.Drawingdescripte or "",
+        "drawingFile": drawing.Drawingfile or "",
+        "creatorId": drawing.Creator_ID,
+        "createTime": str(drawing.Createtime) if drawing.Createtime else "",
+        "modifyTime": str(drawing.Modifytime) if drawing.Modifytime else "",
+        "latestVersionId": drawing.NewVersion_ID,
         "delFlag": drawing.del_flag,
-        "notes": drawing.notes or "",
+        "notes": drawing.Notes or "",
     }
 
 
 def version_to_dict(version: models.DrawingVersion):
     return {
-        "versionId": version.version_id,
-        "drawingId": version.drawing_id,
-        "drawingFile": version.drawing_file or "",
-        "creatorId": version.creator_id,
-        "createTime": str(version.create_time) if version.create_time else "",
-        "modifyId": version.modify_id,
-        "modifyTime": str(version.modify_time) if version.modify_time else "",
+        "versionId": version.DrawingsVersion_ID,
+        "drawingId": version.Drawing_ID,
+        "drawingFile": version.Drawingfile or "",
+        "creatorId": version.Creator_ID,
+        "createTime": str(version.Createtime) if version.Createtime else "",
+        "modifyId": version.Modify_ID,
+        "modifyTime": str(version.Modifytime) if version.Modifytime else "",
         "delFlag": version.del_flag,
-        "notes": version.notes or "",
+        "notes": version.Notes or "",
     }
 
 
@@ -76,11 +76,11 @@ def list_drawings(
     if keyword and keyword.strip():
         like_pattern = f"%{keyword.strip()}%"
         query = query.filter(
-            models.Drawing.drawing_name.ilike(like_pattern)
-            | models.Drawing.drawing_description.ilike(like_pattern)
-            | models.Drawing.notes.ilike(like_pattern)
+            models.Drawing.Drawingname.ilike(like_pattern)
+            | models.Drawing.Drawingdescripte.ilike(like_pattern)
+            | models.Drawing.Notes.ilike(like_pattern)
         )
-    drawings = query.order_by(models.Drawing.drawing_id.desc()).all()
+    drawings = query.order_by(models.Drawing.Drawing_ID.desc()).all()
     return {
         "code": 200,
         "message": "获取图纸列表成功",
@@ -96,7 +96,7 @@ def get_drawing(
 ):
     drawing = (
         db.query(models.Drawing)
-        .filter(models.Drawing.drawing_id == drawing_id, models.Drawing.del_flag == False)
+        .filter(models.Drawing.Drawing_ID == drawing_id, models.Drawing.del_flag == False)
         .first()
     )
     if not drawing:
@@ -117,7 +117,7 @@ def get_drawing_versions(
 ):
     drawing = (
         db.query(models.Drawing)
-        .filter(models.Drawing.drawing_id == drawing_id, models.Drawing.del_flag == False)
+        .filter(models.Drawing.Drawing_ID == drawing_id, models.Drawing.del_flag == False)
         .first()
     )
     if not drawing:
@@ -125,8 +125,8 @@ def get_drawing_versions(
 
     versions = (
         db.query(models.DrawingVersion)
-        .filter(models.DrawingVersion.drawing_id == drawing_id)
-        .order_by(models.DrawingVersion.version_id.desc())
+        .filter(models.DrawingVersion.Drawing_ID == drawing_id)
+        .order_by(models.DrawingVersion.DrawingsVersion_ID.desc())
         .all()
     )
     return {
@@ -144,13 +144,13 @@ def get_drawing_file_content(
 ):
     drawing = (
         db.query(models.Drawing)
-        .filter(models.Drawing.drawing_id == drawing_id, models.Drawing.del_flag == False)
+        .filter(models.Drawing.Drawing_ID == drawing_id, models.Drawing.del_flag == False)
         .first()
     )
     if not drawing:
         raise HTTPException(status_code=404, detail="图纸不存在")
 
-    file_path = drawing.drawing_file
+    file_path = drawing.Drawingfile
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="图纸文件不存在")
 
@@ -212,58 +212,61 @@ async def import_drawing(
     if drawing_id:
         drawing = (
             db.query(models.Drawing)
-            .filter(models.Drawing.drawing_id == drawing_id, models.Drawing.del_flag == False)
+            .filter(models.Drawing.Drawing_ID == drawing_id, models.Drawing.del_flag == False)
             .first()
         )
         if not drawing:
             raise HTTPException(status_code=404, detail="图纸不存在")
 
-        drawing.drawing_file = file_path
-        drawing.modify_time = datetime.now(timezone.utc)
+        drawing.Drawingfile = file_path
+        drawing.Modifytime = datetime.now(timezone.utc)
         if drawing_description is not None:
-            drawing.drawing_description = drawing_description.strip()
+            drawing.Drawingdescripte = drawing_description.strip()
         if summary_notes:
-            drawing.notes = summary_notes
+            drawing.Notes = summary_notes
 
         version = models.DrawingVersion(
-            drawing_id=drawing.drawing_id,
-            drawing_file=file_path,
-            creator_id=current_user.id,
-            notes=summary_notes,
+            Drawing_ID=drawing.Drawing_ID,
+            Drawingfile=file_path,
+            Creator_ID=current_user.User_ID,
+            Modify_ID=current_user.User_ID,
+            Notes=summary_notes,
         )
         db.add(version)
         db.flush()
 
-        drawing.latest_version_id = version.version_id
+        drawing.NewVersion_ID = version.DrawingsVersion_ID
         db.commit()
         db.refresh(drawing)
 
         return {
             "code": 200,
-            "message": f"图纸 [{drawing.drawing_name}] 新版本导入成功",
+            "message": f"图纸 [{drawing.Drawingname}] 新版本导入成功",
             "data": drawing_to_dict(drawing),
         }
     else:
         drawing = models.Drawing(
-            drawing_name=drawing_name.strip(),
-            drawing_description=drawing_description.strip() if drawing_description else "",
-            drawing_file=file_path,
-            creator_id=current_user.id,
-            notes=summary_notes,
+            Drawingname=drawing_name.strip(),
+            Drawingdescripte=drawing_description.strip() if drawing_description else "",
+            Drawingfile=file_path,
+            Creator_ID=current_user.User_ID,
+            Notes=summary_notes,
+            NewVersion_ID=1,
         )
         db.add(drawing)
         db.flush()
 
         version = models.DrawingVersion(
-            drawing_id=drawing.drawing_id,
-            drawing_file=file_path,
-            creator_id=current_user.id,
-            notes=summary_notes,
+            Drawing_ID=drawing.Drawing_ID,
+            Drawingfile=file_path,
+            Creator_ID=current_user.User_ID,
+            Modify_ID=current_user.User_ID,
+            Notes=summary_notes,
         )
         db.add(version)
         db.flush()
 
-        drawing.latest_version_id = version.version_id
+        drawing.NewVersion_ID = version.DrawingsVersion_ID
         db.commit()
         db.refresh(drawing)
 
@@ -285,7 +288,7 @@ def update_drawing(
 ):
     drawing = (
         db.query(models.Drawing)
-        .filter(models.Drawing.drawing_id == drawing_id, models.Drawing.del_flag == False)
+        .filter(models.Drawing.Drawing_ID == drawing_id, models.Drawing.del_flag == False)
         .first()
     )
     if not drawing:
@@ -294,15 +297,15 @@ def update_drawing(
     if drawing_name is not None:
         if not drawing_name.strip():
             raise HTTPException(status_code=400, detail="图纸名称不能为空")
-        drawing.drawing_name = drawing_name.strip()
+        drawing.Drawingname = drawing_name.strip()
 
     if drawing_description is not None:
-        drawing.drawing_description = drawing_description.strip()
+        drawing.Drawingdescripte = drawing_description.strip()
 
     if notes is not None:
-        drawing.notes = notes.strip()
+        drawing.Notes = notes.strip()
 
-    drawing.modify_time = datetime.now(timezone.utc)
+    drawing.Modifytime = datetime.now(timezone.utc)
     db.commit()
     db.refresh(drawing)
 
@@ -321,14 +324,14 @@ def delete_drawing(
 ):
     drawing = (
         db.query(models.Drawing)
-        .filter(models.Drawing.drawing_id == drawing_id, models.Drawing.del_flag == False)
+        .filter(models.Drawing.Drawing_ID == drawing_id, models.Drawing.del_flag == False)
         .first()
     )
     if not drawing:
         raise HTTPException(status_code=404, detail="图纸不存在")
 
     drawing.del_flag = True
-    drawing.modify_time = datetime.now(timezone.utc)
+    drawing.Modifytime = datetime.now(timezone.utc)
     db.commit()
 
     return {

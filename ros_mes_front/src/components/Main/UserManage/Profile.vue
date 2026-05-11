@@ -1,5 +1,8 @@
 <template>
   <div class="profile-container">
+    <el-card class="header-card">
+      <h2 class="page-title">个人中心</h2>
+    </el-card>
     <el-row :gutter="20">
       
       <el-col :span="8">
@@ -12,15 +15,17 @@
               :auto-upload="false"
               accept=".png,.jpg,.jpeg,.gif,.webp"
               :on-change="handleAvatarChange">
-              <el-avatar :size="120" :src="displayAvatar" class="user-avatar" />
+              <el-avatar :size="120" :src="displayAvatar" class="user-avatar" @error="onAvatarError">
+                <el-icon :size="40"><UserFilled /></el-icon>
+              </el-avatar>
               <div class="avatar-mask">
                 <el-icon><Plus /></el-icon>
                 <span>更换头像</span>
               </div>
             </el-upload>
-            <h2 class="user-name">{{ userInfo.username || '未设置' }}</h2>
-            <el-tag :type="userInfo.role === 'admin' ? 'danger' : 'info'">
-              {{ userInfo.role === 'admin' ? '系统管理员' : userInfo.role === 'operator' ? '一线操作员' : userInfo.role }}
+            <h2 class="user-name">{{ userInfo.name || userInfo.account || '未设置昵称' }}</h2>
+            <el-tag :type="userInfo.typeId === 1 ? 'danger' : 'info'">
+              {{ userInfo.typeLabel || (userInfo.typeId === 1 ? '管理员' : '操作员') }}
             </el-tag>
           </div>
           
@@ -33,7 +38,7 @@
             </div>
             <div class="bio-item">
               <el-icon><Clock /></el-icon>
-              <span>注册时间：{{ formatDate(userInfo.createdAt) }}</span>
+              <span>注册时间：{{ formatDate(userInfo.createtime) }}</span>
             </div>
           </div>
         </el-card>
@@ -45,14 +50,25 @@
             
             <el-tab-pane label="基本信息" name="info">
               <el-form :model="userInfo" label-width="100px" style="margin-top: 20px;">
-                <el-form-item label="姓名">
-                  <el-input v-model="userInfo.username" placeholder="请输入真实姓名" />
+                <el-form-item label="昵称">
+                  <el-input v-model="userInfo.name" placeholder="给自己起个喜欢的昵称吧" />
                 </el-form-item>
-                <el-form-item label="联系电话">
-                  <el-input v-model="userInfo.phone" placeholder="请输入手机号" />
+                <el-form-item label="出生日期">
+                  <el-date-picker
+                    v-model="userInfo.birthday"
+                    type="date"
+                    placeholder="选择出生日期"
+                    value-format="YYYY-MM-DD"
+                    format="YYYY-MM-DD"
+                    style="width: 100%"
+                  />
                 </el-form-item>
-                <el-form-item label="电子邮箱">
-                  <el-input v-model="userInfo.email" placeholder="请输入常用邮箱" />
+                <el-form-item label="性别">
+                  <el-radio-group v-model="userInfo.sex">
+                    <el-radio :value="0">保密</el-radio>
+                    <el-radio :value="1">男</el-radio>
+                    <el-radio :value="2">女</el-radio>
+                  </el-radio-group>
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" :loading="saving" @click="saveBasicInfo">保存基本信息</el-button>
@@ -86,27 +102,31 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import { Plus, Postcard, Clock } from '@element-plus/icons-vue'
+import { Plus, Postcard, Clock, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { UploadProps } from 'element-plus'
 import request from '@/utils/request'
+import { useUserStore } from '@/stores/user'
 
+const userStore = useUserStore()
 const activeTab = ref('info')
 const loading = ref(true)
 const saving = ref(false)
 const changingPassword = ref(false)
 const previewUrl = ref('')
 const avatarFile = ref<File | null>(null)
+const avatarLoadFailed = ref(false)
 
 const userInfo = reactive({
   id: 0,
   account: '',
-  username: '',
-  role: '',
-  email: '',
-  phone: '',
-  avatar: '',
-  createdAt: ''
+  name: '',
+  typeId: 2,
+  typeLabel: '',
+  birthday: '',
+  sex: 0,
+  headImage: '',
+  createtime: ''
 })
 
 const securityForm = reactive({
@@ -117,27 +137,38 @@ const securityForm = reactive({
 
 const displayAvatar = computed(() => {
   if (previewUrl.value) return previewUrl.value
-  return userInfo.avatar || ''
+  if (avatarLoadFailed.value) return ''
+  return userInfo.headImage || ''
 })
 
-onMounted(async () => {
+async function fetchUserInfo() {
   try {
     const res: any = await request.get('/user/me')
     if (res.code === 200) {
       const data = res.data
       userInfo.id = data.id
       userInfo.account = data.account
-      userInfo.username = data.username
-      userInfo.role = data.role
-      userInfo.email = data.email || ''
-      userInfo.phone = data.phone || ''
-      userInfo.avatar = data.avatar || ''
-      userInfo.createdAt = data.createdAt || ''
+      userInfo.name = data.name || data.account
+      userInfo.typeId = data.typeId
+      userInfo.typeLabel = data.typeLabel
+      userInfo.birthday = data.birthday || ''
+      userInfo.sex = data.sex !== null && data.sex !== undefined ? data.sex : 0
+      userInfo.headImage = data.headImage || ''
+      userInfo.createtime = data.createtime || ''
+      avatarLoadFailed.value = false
+
+      userStore.nickname = userInfo.name
+      userStore.avatar = userInfo.headImage
+      localStorage.setItem('nickname', userInfo.name)
+      localStorage.setItem('avatar', userInfo.headImage)
     }
   } catch {
-  } finally {
-    loading.value = false
   }
+}
+
+onMounted(async () => {
+  await fetchUserInfo()
+  loading.value = false
 })
 
 onUnmounted(() => {
@@ -145,6 +176,10 @@ onUnmounted(() => {
     URL.revokeObjectURL(previewUrl.value)
   }
 })
+
+function onAvatarError() {
+  avatarLoadFailed.value = true
+}
 
 const handleAvatarChange: UploadProps['onChange'] = (uploadFile) => {
   if (!uploadFile.raw) return
@@ -164,6 +199,7 @@ const handleAvatarChange: UploadProps['onChange'] = (uploadFile) => {
 
   avatarFile.value = uploadFile.raw
   previewUrl.value = URL.createObjectURL(uploadFile.raw)
+  avatarLoadFailed.value = false
 }
 
 const saveBasicInfo = async () => {
@@ -174,21 +210,28 @@ const saveBasicInfo = async () => {
       fd.append('file', avatarFile.value)
       const uploadRes: any = await request.post('/user/avatar', fd)
       if (uploadRes.code === 200) {
-        userInfo.avatar = uploadRes.data.avatar
         avatarFile.value = null
-        URL.revokeObjectURL(previewUrl.value)
-        previewUrl.value = ''
+        if (previewUrl.value) {
+          URL.revokeObjectURL(previewUrl.value)
+          previewUrl.value = ''
+        }
       }
     }
 
-    const res: any = await request.put('/user/profile/me', {
-      username: userInfo.username,
-      email: userInfo.email,
-      phone: userInfo.phone
-    })
-    if (res.code === 200) {
-      ElMessage.success('个人资料已保存')
+    const payload: Record<string, any> = {
+      name: userInfo.name
     }
+    if (userInfo.birthday) {
+      payload.birthday = userInfo.birthday
+    }
+    if (userInfo.sex !== null && userInfo.sex !== undefined) {
+      payload.sex = userInfo.sex
+    }
+
+    await request.put('/user/profile/me', payload)
+
+    await fetchUserInfo()
+    ElMessage.success('个人资料已保存')
   } catch {
   } finally {
     saving.value = false
@@ -237,6 +280,17 @@ function formatDate(dateStr: string): string {
   padding: 20px;
   background-color: #f0f2f5;
   min-height: calc(100vh - 60px);
+}
+
+.header-card {
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
 }
 
 .profile-card {

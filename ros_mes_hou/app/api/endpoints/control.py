@@ -27,7 +27,7 @@ async def activate_emergency_stop(
     """
     点击按钮：触发机械臂急停！
     """
-    print(f"警告：操作员 {current_user.username} 触发了紧急停止！")
+    print(f"警告：操作员 {current_user.Username} 触发了紧急停止！")
     success = await ros_control.trigger_emergency_stop()
     
     if success:

@@ -1,47 +1,50 @@
 <template>
   <div class="user-manage-container">
+    <el-card class="header-card">
+      <h2 class="page-title">用户管理</h2>
+    </el-card>
     <el-row :gutter="20" class="dashboard-row">
       <el-col :span="6">
         <el-card shadow="hover" class="data-card border-blue">
           <div class="card-header">
-            <span class="card-title">设备状态</span>
-            <el-icon class="card-icon" color="#409eff"><Cpu /></el-icon>
+            <span class="card-title">用户总数</span>
+            <el-icon class="card-icon" color="#409eff"><User /></el-icon>
           </div>
-          <div class="card-value">36 / 40</div>
-          <div class="card-desc">正常运行 / 总台数</div>
+          <div class="card-value">{{ tableData.length }}</div>
+          <div class="card-desc">系统注册用户总数</div>
         </el-card>
       </el-col>
 
       <el-col :span="6">
         <el-card shadow="hover" class="data-card border-green">
           <div class="card-header">
-            <span class="card-title">实时任务</span>
-            <el-icon class="card-icon" color="#67c23a"><List /></el-icon>
+            <span class="card-title">管理员人数</span>
+            <el-icon class="card-icon" color="#67c23a"><Avatar /></el-icon>
           </div>
-          <div class="card-value success-text">115</div>
-          <div class="card-desc">当前进行中任务数量</div>
-        </el-card>
-      </el-col>
-
-      <el-col :span="6">
-        <el-card shadow="hover" class="data-card border-red">
-          <div class="card-header">
-            <span class="card-title">待处理故障</span>
-            <el-icon class="card-icon" color="#f56c6c"><Warning /></el-icon>
-          </div>
-          <div class="card-value danger-text">0</div>
-          <div class="card-desc">待确认告警数量</div>
+          <div class="card-value success-text">{{ adminCount }}</div>
+          <div class="card-desc">权限为管理员的账号数</div>
         </el-card>
       </el-col>
 
       <el-col :span="6">
         <el-card shadow="hover" class="data-card border-orange">
           <div class="card-header">
-            <span class="card-title">用户总数</span>
-            <el-icon class="card-icon" color="#e6a23c"><User /></el-icon>
+            <span class="card-title">正常账号</span>
+            <el-icon class="card-icon" color="#e6a23c"><CircleCheck /></el-icon>
           </div>
-          <div class="card-value warning-text">{{ tableData.length }}</div>
-          <div class="card-desc">系统注册用户总数</div>
+          <div class="card-value warning-text">{{ normalCount }}</div>
+          <div class="card-desc">当前状态正常的账号数</div>
+        </el-card>
+      </el-col>
+
+      <el-col :span="6">
+        <el-card shadow="hover" class="data-card border-red">
+          <div class="card-header">
+            <span class="card-title">锁定账号</span>
+            <el-icon class="card-icon" color="#f56c6c"><Warning /></el-icon>
+          </div>
+          <div class="card-value danger-text">{{ lockedCount }}</div>
+          <div class="card-desc">当前已被锁定的账号数</div>
         </el-card>
       </el-col>
     </el-row>
@@ -55,10 +58,10 @@
           class="search-input"
           @keyup.enter="handleQuery"
         />
-        <el-select v-model="searchRole" placeholder="全部角色" class="search-select" @change="handleQuery">
-          <el-option label="全部角色" value="" />
-          <el-option label="管理员" value="admin" />
-          <el-option label="操作员" value="operator" />
+        <el-select v-model="searchTypeId" placeholder="全部角色" class="search-select" @change="handleQuery">
+          <el-option label="全部角色" :value="0" />
+          <el-option label="管理员" :value="1" />
+          <el-option label="操作员" :value="2" />
         </el-select>
         <el-button type="primary" class="toolbar-btn query-btn" @click="handleQuery">查询</el-button>
 
@@ -84,27 +87,27 @@
 
         <el-table-column label="角色" width="120" align="center">
           <template #default="scope">
-            <el-tag :type="scope.row.role === 'admin' ? 'danger' : 'info'" effect="light">
-              {{ scope.row.role === 'admin' ? '管理员' : '操作员' }}
+            <el-tag :type="scope.row.typeId === 1 ? 'danger' : 'info'" effect="light">
+              {{ scope.row.typeLabel }}
             </el-tag>
           </template>
         </el-table-column>
 
         <el-table-column label="状态" width="100" align="center">
           <template #default="scope">
-            <el-tag v-if="scope.row.status === 0" type="success" size="small">正常</el-tag>
+            <el-tag v-if="!scope.row.isLock" type="success" size="small">正常</el-tag>
             <el-tag v-else type="danger" size="small" effect="dark">已锁定</el-tag>
           </template>
         </el-table-column>
 
-        <el-table-column prop="lastLogin" label="最后登录时间" width="180" align="center" />
+        <el-table-column prop="locktime" label="最后登录时间" width="180" align="center" />
 
         <el-table-column label="操作" min-width="260" align="center">
           <template #default="scope">
             <el-button size="small" type="primary" plain class="op-btn" @click="handleEdit(scope.row)">编辑</el-button>
 
             <el-button
-              v-if="isAdmin && scope.row.status === 0 && scope.row.role !== 'admin'"
+              v-if="isAdmin && !scope.row.isLock && scope.row.typeId !== 1"
               size="small"
               type="danger"
               plain
@@ -113,7 +116,7 @@
             >锁定</el-button>
 
             <el-button
-              v-else-if="isAdmin && scope.row.role !== 'admin'"
+              v-else-if="isAdmin && scope.row.typeId !== 1"
               size="small"
               type="success"
               plain
@@ -175,9 +178,9 @@
         </el-form-item>
 
         <el-form-item label="角色" v-if="isAdding">
-          <el-select v-model="editForm.role" style="width: 100%;">
-            <el-option label="操作员" value="operator" />
-            <el-option label="管理员" value="admin" />
+          <el-select v-model="editForm.typeId" style="width: 100%;">
+            <el-option :value="2" label="操作员" />
+            <el-option :value="1" label="管理员" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -201,9 +204,9 @@
           正在调整用户 <strong style="color: #409EFF;">{{ roleTarget.username }}</strong> 的系统权限
         </p>
 
-        <el-radio-group v-model="roleTarget.role">
-          <el-radio label="operator" border size="large">操作员</el-radio>
-          <el-radio label="admin" border size="large">管理员</el-radio>
+        <el-radio-group v-model="roleTarget.typeId">
+          <el-radio :value="2" border size="large">操作员</el-radio>
+          <el-radio :value="1" border size="large">管理员</el-radio>
         </el-radio-group>
 
         <p style="margin-top: 20px; font-size: 12px; color: #f56c6c;">
@@ -285,7 +288,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Cpu, List, Warning, User, UploadFilled } from '@element-plus/icons-vue'
+import { User, Avatar, CircleCheck, Warning, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadFile, UploadInstance } from 'element-plus'
 import request from '@/utils/request'
@@ -293,38 +296,50 @@ import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
 const router = useRouter()
-const currentUserRole = ref('')
-const isAdmin = computed(() => currentUserRole.value === 'admin')
+const currentUserTypeId = ref(0)
+const isAdmin = computed(() => currentUserTypeId.value === 1)
+
+const adminCount = computed(() => tableData.value.filter(u => u.typeId === 1).length)
+const normalCount = computed(() => tableData.value.filter(u => !u.isLock).length)
+const lockedCount = computed(() => tableData.value.filter(u => u.isLock).length)
 
 const fetchCurrentUserRole = async () => {
   try {
     const res = await request.get('/user/me')
     if (res.code === 200 && res.data) {
-      currentUserRole.value = res.data.role || ''
-      if (currentUserRole.value !== 'admin') {
+      currentUserTypeId.value = res.data.typeId || 0
+      if (currentUserTypeId.value !== 1) {
         ElMessage.warning('无权访问用户管理页面')
         router.replace('/HardWorkPage')
       }
     }
   } catch {
-    currentUserRole.value = ''
+    currentUserTypeId.value = 0
     router.replace('/login')
   }
 }
 
 const searchKeyword = ref('')
-const searchRole = ref('')
+const searchTypeId = ref(0)
 const loading = ref(false)
 
 interface UserRow {
   id: number
   account: string
   username: string
-  role: string
-  status: number
-  lastLogin: string
-  email?: string
-  phone?: string
+  name: string
+  typeId: number
+  typeLabel: string
+  headImage: string
+  isLock: boolean
+  birthday: string
+  sex: number
+  creatorId: number
+  createtime: string
+  locktime: string
+  modifytime: string
+  delFlag: boolean
+  notes: string
 }
 
 const tableData = ref<UserRow[]>([])
@@ -332,12 +347,11 @@ const tableData = ref<UserRow[]>([])
 const loadUsers = async () => {
   loading.value = true
   try {
-    const res = await request.get('/user/', {
-      params: {
-        keyword: searchKeyword.value,
-        role: searchRole.value,
-      },
-    })
+    const params: Record<string, any> = { keyword: searchKeyword.value }
+    if (searchTypeId.value) {
+      params.type_id = searchTypeId.value
+    }
+    const res = await request.get('/user/', { params })
     if (res.code === 200) {
       tableData.value = res.data || []
     }
@@ -363,7 +377,7 @@ const editForm = reactive({
   account: '',
   username: '',
   password: '',
-  role: 'operator',
+  typeId: 2,
 })
 
 const resetEditForm = () => {
@@ -371,7 +385,7 @@ const resetEditForm = () => {
   editForm.account = ''
   editForm.username = ''
   editForm.password = ''
-  editForm.role = 'operator'
+  editForm.typeId = 2
 }
 
 const handleAddUser = () => {
@@ -386,7 +400,7 @@ const handleEdit = (row: UserRow) => {
   editForm.account = row.account
   editForm.username = row.username
   editForm.password = ''
-  editForm.role = row.role
+  editForm.typeId = row.typeId
   editDialogVisible.value = true
 }
 
@@ -406,13 +420,15 @@ const submitEdit = async () => {
       }
       await request.post('/user/', {
         username: editForm.account,
+        name: editForm.username,
         password: editForm.password,
-        role: editForm.role,
+        type_id: editForm.typeId,
       })
       ElMessage.success('用户创建成功')
     } else {
-      const body: Record<string, string> = {
+      const body: Record<string, any> = {
         username: editForm.account,
+        name: editForm.username,
       }
       if (editForm.password) {
         body.password = editForm.password
@@ -486,7 +502,7 @@ const handleUnlock = async (row: UserRow) => {
 
 const roleDialogVisible = ref(false)
 const roleLoading = ref(false)
-const roleTarget = reactive({ id: 0, username: '', role: 'operator' })
+const roleTarget = reactive({ id: 0, username: '', typeId: 2 })
 
 const handleRoleChange = (row: UserRow) => {
   if (userStore.account === row.account) {
@@ -495,15 +511,15 @@ const handleRoleChange = (row: UserRow) => {
   }
   roleTarget.id = row.id
   roleTarget.username = row.username
-  roleTarget.role = row.role
+  roleTarget.typeId = row.typeId
   roleDialogVisible.value = true
 }
 
 const submitRoleUpdate = async () => {
   roleLoading.value = true
   try {
-    await request.put(`/user/${roleTarget.id}/role`, { role: roleTarget.role })
-    ElMessage.success(`权限已变更为：${roleTarget.role === 'admin' ? '管理员' : '操作员'}`)
+    await request.put(`/user/${roleTarget.id}/role`, { type_id: roleTarget.typeId })
+    ElMessage.success(`权限已变更为：${roleTarget.typeId === 1 ? '管理员' : '操作员'}`)
     roleDialogVisible.value = false
     loadUsers()
   } finally {
@@ -600,6 +616,17 @@ const handleExport = async () => {
   padding: 20px;
   background-color: #f5f7fa;
   min-height: calc(100vh - 60px);
+}
+
+.header-card {
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
 }
 
 .dashboard-row { margin-bottom: 20px; }

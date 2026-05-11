@@ -1,14 +1,16 @@
 <template>
   <div class="fine-tuning-container">
     <!-- 顶部静态文字和按钮 -->
-    <div class="header-bar">
-      <div class="header-left">
-        <el-button type="default" @click="goBack" class="back-button">
-          &lt; Back
-        </el-button>
-        <span class="header-title">机械臂姿态微调与压力监控</span>
+    <el-card class="header-card">
+      <div class="header-row">
+        <div class="header-left">
+          <el-button type="default" @click="goBack" class="back-button">
+            &lt; Back
+          </el-button>
+          <h2 class="page-title">机械臂姿态微调与压力监控</h2>
+        </div>
       </div>
-    </div>
+    </el-card>
     <div class="arm-list">
       <el-card shadow="hover" class="main-control-card">
         <template #header>
@@ -432,13 +434,14 @@ onMounted(async () => {
   overflow: auto;
 }
 
-.header-bar {
+.header-card {
+  margin-bottom: 16px;
+}
+
+.header-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #e4e7ed;
+  justify-content: space-between;
 }
 
 .header-left {
@@ -451,10 +454,11 @@ onMounted(async () => {
   font-size: 14px;
 }
 
-.header-title {
+.page-title {
+  margin: 0;
   font-size: 18px;
-  font-weight: bold;
-  color: #333;
+  font-weight: 600;
+  color: #303133;
 }
 
 .header-right {

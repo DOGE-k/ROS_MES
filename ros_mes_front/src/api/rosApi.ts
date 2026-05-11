@@ -1,6 +1,7 @@
 import request from '../utils/request';
 import type {
 	ApiResponse,
+	DashboardStats,
 	DrawingFileContent,
 	DrawingForm,
 	DrawingItem,
@@ -9,7 +10,14 @@ import type {
 	HardwareItem,
 	LoginForm,
 	LoginResponse,
-	UserInfo
+	TaskForm,
+	TaskItem,
+	TaskTracingItem,
+	UserInfo,
+	WorkItem,
+	WorkSubsetItem,
+	WorkflowItem,
+	WorkflowDetail
 } from './types';
 
 // ==================== 登录 ====================
@@ -30,6 +38,14 @@ export function getUserInfoApi() {
 	return request<any, ApiResponse<UserInfo>>({
 		url: '/user/info',
 		method: 'get'
+	});
+}
+
+export function getUserListApi(params?: { keyword?: string; type_id?: number }) {
+	return request<any, ApiResponse<UserInfo[]>>({
+		url: '/user/',
+		method: 'get',
+		params
 	});
 }
 
@@ -207,5 +223,212 @@ export function deleteDrawingApi(drawingId: number) {
 	return request<any, ApiResponse<null>>({
 		url: `/drawing/${drawingId}`,
 		method: 'delete'
+	});
+}
+
+// ==================== 仪表盘 ====================
+export function getDashboardStats() {
+	return request<any, ApiResponse<DashboardStats>>({
+		url: '/dashboard/stats',
+		method: 'get'
+	});
+}
+
+// ==================== 工作管理 ====================
+export function createWorkApi(data: {
+	Workname: string;
+	WorkDescript?: string;
+	Drawing_ID?: number | null;
+	Device_id?: number | null;
+	unit_id?: number | null;
+	sensor_id?: number | null;
+	data?: string;
+	Notes?: string;
+}) {
+	return request<any, ApiResponse<WorkItem>>({
+		url: '/work/create',
+		method: 'post',
+		params: data
+	});
+}
+
+export function getWorkListApi(params?: { keyword?: string }) {
+	return request<any, ApiResponse<WorkItem[]>>({
+		url: '/work/list',
+		method: 'get',
+		params
+	});
+}
+
+export function updateWorkApi(workId: number, data: {
+	Workname?: string;
+	WorkDescript?: string;
+	Drawing_ID?: number | null;
+	Device_id?: number | null;
+	unit_id?: number | null;
+	sensor_id?: number | null;
+	data?: string;
+	Notes?: string;
+}) {
+	return request<any, ApiResponse<WorkItem>>({
+		url: `/work/${workId}`,
+		method: 'put',
+		params: data
+	});
+}
+
+export function deleteWorkApi(workId: number) {
+	return request<any, ApiResponse<null>>({
+		url: `/work/${workId}`,
+		method: 'delete'
+	});
+}
+
+// ==================== 工作流管理 ====================
+export function createWorkflowApi(data: {
+	Workflowname: string;
+	WorkflowDescript?: string;
+	Notes?: string;
+	work_ids: string;
+}) {
+	return request<any, ApiResponse<WorkflowItem>>({
+		url: '/workflow/create',
+		method: 'post',
+		params: data
+	});
+}
+
+export function getWorkflowListApi() {
+	return request<any, ApiResponse<WorkflowItem[]>>({
+		url: '/workflow/list',
+		method: 'get'
+	});
+}
+
+export function getWorkflowDetailApi(workflowId: number) {
+	return request<any, ApiResponse<WorkflowDetail>>({
+		url: `/workflow/${workflowId}`,
+		method: 'get'
+	});
+}
+
+export function updateWorkflowApi(workflowId: number, data: {
+	Workflowname?: string;
+	WorkflowDescript?: string;
+	Notes?: string;
+	work_ids?: string;
+}) {
+	return request<any, ApiResponse<WorkflowItem>>({
+		url: `/workflow/${workflowId}`,
+		method: 'put',
+		params: data
+	});
+}
+
+export function deleteWorkflowApi(workflowId: number) {
+	return request<any, ApiResponse<null>>({
+		url: `/workflow/${workflowId}`,
+		method: 'delete'
+	});
+}
+
+// ==================== 任务管理 ====================
+export function getTaskListApi(params?: {
+	keyword?: string;
+	status?: string;
+	drawing_id?: number;
+	workflow_id?: number;
+}) {
+	return request<any, ApiResponse<TaskItem[]>>({
+		url: '/task/list',
+		method: 'get',
+		params
+	});
+}
+
+export function getTaskDetailApi(taskId: number) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: `/task/${taskId}`,
+		method: 'get'
+	});
+}
+
+export function createTaskApi(data: TaskForm) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: '/task/create',
+		method: 'post',
+		data
+	});
+}
+
+export function updateTaskApi(taskId: number, data: Partial<TaskForm>) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: `/task/${taskId}`,
+		method: 'put',
+		data
+	});
+}
+
+export function deleteTaskApi(taskId: number) {
+	return request<any, ApiResponse<null>>({
+		url: `/task/${taskId}`,
+		method: 'delete'
+	});
+}
+
+export function startTaskApi(taskId: number) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: `/task/${taskId}/start`,
+		method: 'post'
+	});
+}
+
+export function pauseTaskApi(taskId: number) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: `/task/${taskId}/pause`,
+		method: 'post'
+	});
+}
+
+export function resumeTaskApi(taskId: number) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: `/task/${taskId}/resume`,
+		method: 'post'
+	});
+}
+
+export function finishTaskApi(taskId: number) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: `/task/${taskId}/finish`,
+		method: 'post'
+	});
+}
+
+export function dispatchTaskApi(taskId: number) {
+	return request<any, ApiResponse<TaskItem>>({
+		url: `/task/${taskId}/dispatch`,
+		method: 'post'
+	});
+}
+
+export function getTaskTracingApi(taskId: number) {
+	return request<any, ApiResponse<TaskTracingItem[]>>({
+		url: `/task/${taskId}/tracing`,
+		method: 'get'
+	});
+}
+
+export function addTaskProgressApi(taskId: number, data: { Notes: string }) {
+	return request<any, ApiResponse<TaskTracingItem>>({
+		url: `/task/${taskId}/progress`,
+		method: 'post',
+		data
+	});
+}
+
+export function getTaskWorksApi(taskId: number) {
+	return request<any, ApiResponse<WorkSubsetItem[]>>({
+		url: `/task/${taskId}/works`,
+		method: 'get'
 	});
 }

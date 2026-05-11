@@ -4,7 +4,7 @@
 import os
 import sys
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 from fastapi import FastAPI
@@ -31,22 +31,29 @@ app.include_router(api_router, prefix=settings.API_STR)
 
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 def create_initial_user():
     db = SessionLocal()
     try:
-        existing = db.query(models.User).filter(models.User.username == "admin").first()
+        existing = db.query(models.User).filter(models.User.Username == "admin").first()
         if not existing:
-            import hashlib
+            from app.core.security import get_password_hash
 
-            sha = hashlib.sha256()
-            sha.update("admin123".encode("utf-8"))
-            hashed_password = sha.hexdigest()
-            admin_user = models.User(username="admin", password=hashed_password, role="admin")
+            admin_user = models.User(
+                Username="admin",
+                Password=get_password_hash("admin123"),
+                Type_ID=1,
+                Creator_ID=1,
+            )
             db.add(admin_user)
             db.commit()
+            db.refresh(admin_user)
+
+            admin_user.Creator_ID = admin_user.User_ID
+            db.commit()
+
             print("Initial admin user created (admin / admin123)")
         else:
             print("Admin user already exists")
@@ -55,103 +62,72 @@ def create_initial_user():
 
 
 def migrate_drawing_table():
-    db = SessionLocal()
-    try:
-        import sqlalchemy as sa
-        from sqlalchemy import inspect
-
-        inspector = inspect(engine)
-        existing_tables = inspector.get_table_names()
-
-        if "drawing" in existing_tables and "drawings" not in existing_tables:
-            db.execute(sa.text("ALTER TABLE drawing RENAME TO drawings"))
-            db.commit()
-            print("Renamed 'drawing' table to 'drawings'")
-            existing_tables = inspector.get_table_names()
-
-        if "drawings" in existing_tables:
-            columns = [col["name"] for col in inspector.get_columns("drawings")]
-
-            rename_map = {
-                "id": "drawing_id",
-                "name": "drawing_name",
-                "file_path": "drawing_file",
-                "created_at": "create_time",
-                "updated_at": "modify_time",
-            }
-            for old_name, new_name in rename_map.items():
-                if old_name in columns and new_name not in columns:
-                    db.execute(sa.text(f"ALTER TABLE drawings RENAME COLUMN {old_name} TO {new_name}"))
-                    db.commit()
-                    print(f"Renamed drawings.{old_name} to drawings.{new_name}")
-
-            columns = [col["name"] for col in inspector.get_columns("drawings")]
-
-            columns_to_add = [
-                ("drawing_description", "TEXT"),
-                ("creator_id", "INTEGER DEFAULT 1"),
-                ("latest_version_id", "INTEGER"),
-                ("del_flag", "BOOLEAN DEFAULT 0"),
-                ("notes", "TEXT"),
-            ]
-            for col_name, col_type in columns_to_add:
-                if col_name not in columns:
-                    db.execute(sa.text(f"ALTER TABLE drawings ADD COLUMN {col_name} {col_type}"))
-                    db.commit()
-                    print(f"Added drawings.{col_name}")
-
-            if "json_data" in columns:
-                db.execute(sa.text("ALTER TABLE drawings DROP COLUMN json_data"))
-                db.commit()
-                print("Dropped drawings.json_data")
-
-        if "drawings_version" in existing_tables:
-            columns = [col["name"] for col in inspector.get_columns("drawings_version")]
-
-            columns_to_add = [
-                ("create_time", "DATETIME DEFAULT CURRENT_TIMESTAMP"),
-                ("modify_id", "INTEGER"),
-                ("modify_time", "DATETIME"),
-                ("del_flag", "BOOLEAN DEFAULT 0"),
-                ("notes", "TEXT"),
-            ]
-            for col_name, col_type in columns_to_add:
-                if col_name not in columns:
-                    db.execute(sa.text(f"ALTER TABLE drawings_version ADD COLUMN {col_name} {col_type}"))
-                    db.commit()
-                    print(f"Added drawings_version.{col_name}")
-
-    finally:
-        db.close()
-
-
-def migrate_user_schema():
-    """为 users 表添加新字段（兼容旧数据库文件）"""
+    """迁移 drawings 和 drawings_version 表到新规范"""
     import sqlalchemy as sa
     from sqlalchemy import inspect
 
     inspector = inspect(engine)
+    existing_tables = inspector.get_table_names()
+
+    new_drawings_columns = {"Drawing_ID", "Drawingname", "Drawingdescripte", "Drawingfile",
+                            "Creator_ID", "Createtime", "Modifytime", "NewVersion_ID",
+                            "del_flag", "Notes"}
+    new_versions_columns = {"DrawingsVersion_ID", "Drawing_ID", "Drawingfile", "Creator_ID",
+                            "Createtime", "Modify_ID", "Modifytime", "del_flag", "Notes"}
+
+    if "drawings" in existing_tables:
+        columns = [col["name"] for col in inspector.get_columns("drawings")]
+        existing_set = set(columns)
+        if existing_set.issuperset(new_drawings_columns):
+            pass
+        else:
+            print("Detected old drawings table schema, dropping and recreating...")
+            models.Drawing.__table__.drop(engine)
+            models.Drawing.__table__.create(engine)
+            print("Drawings table recreated with new schema")
+
+    if "drawings_version" in existing_tables:
+        columns = [col["name"] for col in inspector.get_columns("drawings_version")]
+        existing_set = set(columns)
+        if existing_set.issuperset(new_versions_columns):
+            pass
+        else:
+            print("Detected old drawings_version table schema, dropping and recreating...")
+            models.DrawingVersion.__table__.drop(engine)
+            models.DrawingVersion.__table__.create(engine)
+            print("Drawings_version table recreated with new schema")
+
+
+def migrate_user_schema():
+    """迁移 users 表到新规范（兼容旧数据库文件）"""
+    import sqlalchemy as sa
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    existing_tables = inspector.get_table_names()
+
+    if "users" not in existing_tables:
+        return
+
     columns = [col["name"] for col in inspector.get_columns("users")]
+    new_columns = {"User_ID", "Username", "Password", "Type_ID", "Creator_ID",
+                   "Createtime", "Islock", "Locktime", "Name", "Headimage",
+                   "Birthday", "Sex", "Modifytime", "del_flag", "Notes"}
 
-    with engine.connect() as conn:
-        if "email" not in columns:
-            conn.execute(sa.text("ALTER TABLE users ADD COLUMN email VARCHAR(100) DEFAULT ''"))
-        if "phone" not in columns:
-            conn.execute(sa.text("ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT ''"))
-        if "avatar" not in columns:
-            conn.execute(sa.text("ALTER TABLE users ADD COLUMN avatar VARCHAR(500) DEFAULT ''"))
-        if "status" not in columns:
-            conn.execute(sa.text("ALTER TABLE users ADD COLUMN status INTEGER DEFAULT 0"))
-        if "last_login" not in columns:
-            conn.execute(sa.text("ALTER TABLE users ADD COLUMN last_login DATETIME"))
+    existing_column_names = set(columns)
 
-        conn.execute(sa.text("UPDATE users SET status = 0 WHERE status IS NULL"))
-        conn.commit()
+    if existing_column_names.issuperset(new_columns):
+        return
+
+    print("Detected old users table schema, dropping and recreating...")
+    models.User.__table__.drop(engine)
+    models.User.__table__.create(engine)
+    print("Users table recreated with new schema")
 
 
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
+    migrate_user_schema()
     create_initial_user()
     migrate_drawing_table()
-    migrate_user_schema()

@@ -35,7 +35,7 @@ async def robot_status_stream(websocket: WebSocket, token: str = Query(None), db
             return
         
         # 数据库验证用户是否存在
-        user = db.query(models.User).filter(models.User.username == username).first()
+        user = db.query(models.User).filter(models.User.Username == username).first()
         if user is None:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return

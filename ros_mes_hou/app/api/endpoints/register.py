@@ -20,7 +20,7 @@ def register_user(
         raise HTTPException(status_code=400, detail="密码至少需要 6 位")
 
     db_user = db.query(models.User).filter(
-        models.User.username == username
+        models.User.Username == username
     ).first()
 
     if db_user:
@@ -30,7 +30,9 @@ def register_user(
         )
 
     hashed_password = security.get_password_hash(password)
-    new_user = models.User(username=username, password=hashed_password)
+    admin = db.query(models.User).filter(models.User.Type_ID == 1).order_by(models.User.User_ID).first()
+    creator_id = admin.User_ID if admin else 1
+    new_user = models.User(Username=username, Password=hashed_password, Type_ID=2, Creator_ID=creator_id)
 
     try:
         db.add(new_user)

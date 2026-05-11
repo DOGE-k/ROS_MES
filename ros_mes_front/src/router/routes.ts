@@ -1,13 +1,16 @@
 import LoginPage from "../components/Login/LoginPage.vue";
 import MainPage from "../components/Main/MainPage.vue";
+import DashboardPage from "../components/Main/Dashboard/DashboardPage.vue";
 import HardWorkPage from "../components/Main/Hardwork/HardWorkPage.vue";
 import FineTuningPage from "../components/Main/ModulePage/FineTuningPage.vue";
 import ModuleManagement from "../components/Main/ModulePage/ModuleManagement.vue";
 import RegisterPage from "../components/Login/RegisterPage.vue";
 import DrawingManage from "../components/Main/DrawingManage/DrawingManage.vue";
+import TaskManage from "../components/Main/TaskManage/TaskManage.vue";
 import UserManagement from "../components/Main/UserManage/UserManagement.vue";
 import Profile from '../components/Main/UserManage/Profile.vue'
 import RosTestPage from "../components/Main/RosTestPage.vue";
+import WorkflowManage from "../components/Main/WorkflowManage/WorkflowManage.vue";
 const routes = [
   {
     path: '/login',
@@ -15,7 +18,7 @@ const routes = [
     component: LoginPage
   },
   {
-    path: '/register', // 2. 给注册页分配路径
+    path: '/register',
     name: 'Register',
     component: RegisterPage
   },
@@ -23,14 +26,21 @@ const routes = [
     path: '/',
     name: 'Main',
     component: MainPage,
-    redirect: '/HardWorkPage',  // 默认显示硬件信息管理页面
+    redirect: '/Dashboard',  // 默认显示首页仪表盘
     children: [
+      {
+        path: '/Dashboard',
+        name: 'Dashboard',
+        component: DashboardPage,
+        meta: {
+          activeMenu: '/Dashboard'
+        }
+      },
       {
         path: '/HardWorkPage',
         name: 'HardWorkPage',
         component: HardWorkPage,
         meta: {
-          // 设备信息管理菜单的激活key
           activeMenu: '/HardWorkPage'
         }
       },
@@ -61,6 +71,14 @@ const routes = [
         }
       },
       {
+        path: '/TaskManagement',
+        name: 'TaskManagement',
+        component: TaskManage,
+        meta: {
+          activeMenu: '/TaskManagement'
+        }
+      },
+      {
         path: '/UserManagement',
         name: 'UserManagement',
         component: UserManagement,
@@ -81,6 +99,14 @@ const routes = [
         meta: {
           activeMenu: "/RosTestPage",
         },
+      },
+      {
+        path: '/WorkflowManage',
+        name: 'WorkflowManage',
+        component: WorkflowManage,
+        meta: {
+          activeMenu: '/WorkflowManage'
+        }
       },
     ]
   }
