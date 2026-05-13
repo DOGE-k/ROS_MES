@@ -6,7 +6,7 @@ from std_msgs.msg import Header
 
 def publish_test():
     rospy.init_node('test_data_publisher')
-    pub = rospy.Publisher('/control/kinematics_cmd', Feedback, queue_size=10)
+    pub = rospy.Publisher('/control/kinematics_pose', Feedback, queue_size=10)
     rate = rospy.Rate(1)  # 1秒发一次
 
     while not rospy.is_shutdown():

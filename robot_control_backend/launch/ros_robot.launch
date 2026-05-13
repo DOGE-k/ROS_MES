@@ -1,0 +1,86 @@
+<launch>
+  <!-- 1. 模块确认节点：初始化模块确认 -->
+  <node
+    name="module_confirme_node"
+    pkg="robot_control_backend"
+    type="module_confirme_node.py"
+    output="screen"
+  />
+
+  <!-- 2. 反馈节点：数据解析与单位转换 -->
+  <node
+    name="feedback_node"
+    pkg="robot_control_backend"
+    type="feedback_node.py"
+    output="screen"
+  />
+
+  <!-- 3. STM32 串口桥接节点：下位机通信 -->
+  <node
+    name="stm32_bridge"
+    pkg="robot_control_backend"
+    type="hardware_node.py"
+    output="screen"
+  />
+
+  <!-- 4. web桥接节点：前端通信 -->
+  <!-- <node
+    name="web_data_node"
+    pkg="robot_control_backend"
+    type="web_data_node.py"
+    output="screen"
+  /> -->
+
+  <!-- 5. 点云处理节点：PCA摆正 + 统计滤波 + 智能全覆盖切块 -->
+  <node
+    name="pointcloud_processor_node"
+    pkg="robot_control_backend"
+    type="date_process_node.py"
+    output="screen"
+  />
+
+  <!-- 6. 点位选择器节点：融合点选择 -->
+  <node
+    name="arm_point_selector"
+    pkg="robot_control_backend"
+    type="calculation_node.py"
+    output="screen"
+  />
+
+  <!-- 7. 逆运动学节点：坐标解算为各轴指令 -->
+  <node
+    name="arm_kinematics"
+    pkg="robot_control_backend"
+    type="kinematics_node.py"
+    output="screen"
+  />
+
+  <!-- 8. 三轴控制节点 -->
+  <node
+    name="rotation_simple_node"
+    pkg="robot_control_backend"
+    type="rotation_node.py"
+    output="screen"
+  />
+  <node
+    name="swing_simple_node"
+    pkg="robot_control_backend"
+    type="swing_node.py"
+    output="screen"
+  />
+  <node
+    name="telescope_simple_node"
+    pkg="robot_control_backend"
+    type="telescopic_node.py"
+    output="screen"
+  />
+
+  <!-- 9. 压力传感器控制节点 -->
+  <node
+    name="pressure_sensor_control_node"
+    pkg="robot_control_backend"
+    type="sensor_control_node.py"
+    output="screen"
+  />
+
+</launch>

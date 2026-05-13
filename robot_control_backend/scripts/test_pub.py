@@ -6,7 +6,7 @@ from std_msgs.msg import Header
 
 def publish_test():
     rospy.init_node('test_data_publisher')
-    pub = rospy.Publisher('/hardware/rotation_feedback', Feedback, queue_size=10)
+    pub = rospy.Publisher('/hardware/all_feedback', Feedback, queue_size=10)
     rate = rospy.Rate(1)  # 1秒发一次
 
     while not rospy.is_shutdown():
@@ -14,7 +14,7 @@ def publish_test():
         msg.header = Header()
         msg.header.stamp = rospy.Time.now()
         msg.module_id = 17
-        msg.device_id = 34
+        msg.device_id = 41
         msg.position = [10.0]
         pub.publish(msg)
         rospy.loginfo("发布数据：module=%d device_id=%d position=%s", 

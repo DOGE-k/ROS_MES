@@ -14,8 +14,8 @@ def publish_test():
         msg.header = Header()
         msg.header.stamp = rospy.Time.now()
         msg.module_id = 17
-        msg.device_id = 33
-        msg.position = [45]
+        msg.device_id = 34
+        msg.position = [11000]
         pub.publish(msg)
         rospy.loginfo("发布数据：module=%d device_id=%d position=%s", 
                       msg.module_id, msg.device_id, msg.position) 
