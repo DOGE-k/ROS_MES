@@ -8,6 +8,21 @@ from app.schemas.hardware import HardwareFeedback, EmergencyStopResponse
 
 router = APIRouter()
 
+@router.get("/serial_test")
+async def test_serial_connection(
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    串口连接测试：
+    通过串口向下位机发送测试数据，并等待响应确认，来验证上下位机通信是否正常
+    """
+    result = await ros_control.test_serial_connection()
+    return {
+        "code": 200,
+        "message": "串口测试完成" if result.get("success") else "串口测试失败",
+        "data": result,
+    }
+
 @router.get("/hardware/realtime", response_model=HardwareFeedback)
 async def get_realtime_hardware_status(
     current_user: models.User = Depends(get_current_user)

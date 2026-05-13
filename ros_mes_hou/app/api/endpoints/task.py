@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -13,20 +14,20 @@ router = APIRouter()
 
 class TaskCreate(BaseModel):
     Taskname: str
-    Taskdescripte: str | None = None
-    Workflow_ID: int | None = None
-    Drawing_ID: int | None = None
-    TaskAssignment_id: int | None = None
-    Notes: str | None = None
+    Taskdescripte: Optional[str] = None
+    Workflow_ID: Optional[int] = None
+    Drawing_ID: Optional[int] = None
+    TaskAssignment_id: Optional[int] = None
+    Notes: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
-    Taskname: str | None = None
-    Taskdescripte: str | None = None
-    Workflow_ID: int | None = None
-    Drawing_ID: int | None = None
-    TaskAssignment_id: int | None = None
-    Notes: str | None = None
+    Taskname: Optional[str] = None
+    Taskdescripte: Optional[str] = None
+    Workflow_ID: Optional[int] = None
+    Drawing_ID: Optional[int] = None
+    TaskAssignment_id: Optional[int] = None
+    Notes: Optional[str] = None
 
 
 class ProgressCreate(BaseModel):
@@ -62,16 +63,21 @@ def tracing_to_dict(tracing: models.TasksTracing):
     }
 
 
-def get_work_subset(db: Session, workflow_id: int | None):
+def get_work_subset(db: Session, workflow_id: Optional[int]):
     if not workflow_id:
         return []
+
     relations = db.query(models.WorkFlowRelation).filter(
         models.WorkFlowRelation.Workflow_ID == workflow_id,
         models.WorkFlowRelation.del_flag == False,
     ).order_by(models.WorkFlowRelation.flow_seq).all()
+
     result = []
     for rel in relations:
-        work = db.query(models.Work).filter(models.Work.Work_ID == rel.Work_ID).first()
+        work = db.query(models.Work).filter(
+            models.Work.Work_ID == rel.Work_ID
+        ).first()
+
         if work:
             result.append({
                 "Work_ID": work.Work_ID,
@@ -79,25 +85,37 @@ def get_work_subset(db: Session, workflow_id: int | None):
                 "WorkDescript": work.WorkDescript or "",
                 "flow_seq": rel.flow_seq,
             })
+
     return result
 
 
 def enrich_task_response(db: Session, task: models.Task, d: dict):
     if task.Drawing_ID:
-        drawing = db.query(models.Drawing).filter(models.Drawing.Drawing_ID == task.Drawing_ID).first()
+        drawing = db.query(models.Drawing).filter(
+            models.Drawing.Drawing_ID == task.Drawing_ID
+        ).first()
         d["DrawingName"] = drawing.Drawingname if drawing else ""
     else:
         d["DrawingName"] = ""
+
     if task.Workflow_ID:
-        workflow = db.query(models.Workflow).filter(models.Workflow.Workflow_ID == task.Workflow_ID).first()
+        workflow = db.query(models.Workflow).filter(
+            models.Workflow.Workflow_ID == task.Workflow_ID
+        ).first()
         d["WorkflowName"] = workflow.Workflowname if workflow else ""
     else:
         d["WorkflowName"] = ""
+
     if task.TaskAssignment_id:
-        assignee = db.query(models.User).filter(models.User.User_ID == task.TaskAssignment_id).first()
-        d["AssigneeName"] = assignee.Name if assignee and assignee.Name else (assignee.Username if assignee else "")
+        assignee = db.query(models.User).filter(
+            models.User.User_ID == task.TaskAssignment_id
+        ).first()
+        d["AssigneeName"] = assignee.Name if assignee and assignee.Name else (
+            assignee.Username if assignee else ""
+        )
     else:
         d["AssigneeName"] = ""
+
     d["WorksSubset"] = get_work_subset(db, task.Workflow_ID)
     return d
 
@@ -141,6 +159,7 @@ def create_task(
         del_flag=False,
         Notes=data.Notes.strip() if data.Notes else None,
     )
+
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -154,10 +173,10 @@ def create_task(
 
 @router.get("/list")
 def list_tasks(
-    keyword: str = None,
-    status: str = None,
-    drawing_id: int = None,
-    workflow_id: int = None,
+    keyword: Optional[str] = None,
+    status: Optional[str] = None,
+    drawing_id: Optional[int] = None,
+    workflow_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -207,6 +226,7 @@ def get_task(
 
     d = task_to_dict(task)
     enrich_task_response(db, task, d)
+
     return {
         "code": 200,
         "message": "获取任务详情成功",
@@ -250,6 +270,7 @@ def update_task(
         task.Notes = data.Notes.strip() if data.Notes else None
 
     task.Modifytime = datetime.now(timezone.utc)
+
     db.commit()
     db.refresh(task)
 
@@ -279,7 +300,12 @@ def delete_task(
 
     workflow_id = task.Workflow_ID if task.Workflow_ID else 0
     create_tracing_record(
-        db, task_id, 6, workflow_id, current_user.User_ID, "删除任务"
+        db,
+        task_id,
+        6,
+        workflow_id,
+        current_user.User_ID,
+        "删除任务",
     )
 
     db.commit()
@@ -310,10 +336,17 @@ def start_task(
 
     task.Status = "1"
     task.Modifytime = datetime.now(timezone.utc)
+
     workflow_id = task.Workflow_ID if task.Workflow_ID else 0
     create_tracing_record(
-        db, task_id, 0, workflow_id, current_user.User_ID, "启动任务"
+        db,
+        task_id,
+        0,
+        workflow_id,
+        current_user.User_ID,
+        "启动任务",
     )
+
     db.commit()
     db.refresh(task)
 
@@ -343,10 +376,17 @@ def pause_task(
 
     task.Status = "2"
     task.Modifytime = datetime.now(timezone.utc)
+
     workflow_id = task.Workflow_ID if task.Workflow_ID else 0
     create_tracing_record(
-        db, task_id, 1, workflow_id, current_user.User_ID, "暂停任务"
+        db,
+        task_id,
+        1,
+        workflow_id,
+        current_user.User_ID,
+        "暂停任务",
     )
+
     db.commit()
     db.refresh(task)
 
@@ -376,10 +416,17 @@ def resume_task(
 
     task.Status = "1"
     task.Modifytime = datetime.now(timezone.utc)
+
     workflow_id = task.Workflow_ID if task.Workflow_ID else 0
     create_tracing_record(
-        db, task_id, 2, workflow_id, current_user.User_ID, "唤醒任务"
+        db,
+        task_id,
+        2,
+        workflow_id,
+        current_user.User_ID,
+        "唤醒任务",
     )
+
     db.commit()
     db.refresh(task)
 
@@ -409,10 +456,17 @@ def finish_task(
 
     task.Status = "3"
     task.Modifytime = datetime.now(timezone.utc)
+
     workflow_id = task.Workflow_ID if task.Workflow_ID else 0
     create_tracing_record(
-        db, task_id, 3, workflow_id, current_user.User_ID, "结束任务"
+        db,
+        task_id,
+        3,
+        workflow_id,
+        current_user.User_ID,
+        "结束任务",
     )
+
     db.commit()
     db.refresh(task)
 
@@ -448,16 +502,28 @@ def dispatch_task(
     if running_task:
         running_task.Status = "2"
         running_task.Modifytime = datetime.now(timezone.utc)
+
         r_workflow_id = running_task.Workflow_ID if running_task.Workflow_ID else 0
         create_tracing_record(
-            db, running_task.Task_ID, 1, r_workflow_id, current_user.User_ID, "因任务调度被暂停"
+            db,
+            running_task.Task_ID,
+            1,
+            r_workflow_id,
+            current_user.User_ID,
+            "因任务调度被暂停",
         )
 
     target_task.Status = "1"
     target_task.Modifytime = datetime.now(timezone.utc)
+
     t_workflow_id = target_task.Workflow_ID if target_task.Workflow_ID else 0
     create_tracing_record(
-        db, task_id, 5, t_workflow_id, current_user.User_ID, "任务被调度进入流水线"
+        db,
+        task_id,
+        5,
+        t_workflow_id,
+        current_user.User_ID,
+        "任务被调度进入流水线",
     )
 
     db.commit()
@@ -491,11 +557,17 @@ def get_task_tracing(
     result = []
     for t in tracings:
         d = tracing_to_dict(t)
+
         if t.operater_ID:
-            user = db.query(models.User).filter(models.User.User_ID == t.operater_ID).first()
-            d["OperatorName"] = user.Name if user and user.Name else (user.Username if user else "")
+            user = db.query(models.User).filter(
+                models.User.User_ID == t.operater_ID
+            ).first()
+            d["OperatorName"] = user.Name if user and user.Name else (
+                user.Username if user else ""
+            )
         else:
             d["OperatorName"] = ""
+
         result.append(d)
 
     return {
@@ -520,6 +592,7 @@ def get_task_works(
         raise HTTPException(status_code=404, detail="任务不存在")
 
     works = get_work_subset(db, task.Workflow_ID)
+
     return {
         "code": 200,
         "message": "获取工作子集成功",
@@ -544,8 +617,14 @@ def add_task_progress(
 
     workflow_id = task.Workflow_ID if task.Workflow_ID else 0
     record = create_tracing_record(
-        db, task_id, 4, workflow_id, current_user.User_ID, data.Notes
+        db,
+        task_id,
+        4,
+        workflow_id,
+        current_user.User_ID,
+        data.Notes,
     )
+
     db.commit()
     db.refresh(record)
 

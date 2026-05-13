@@ -11,6 +11,14 @@
             </el-icon>
           </div>
           <div class="header-right">
+            <el-button
+              type="success"
+              size="small"
+              :icon="Link"
+              :loading="serialTesting"
+              plain
+              @click="handleTestSerial"
+            >串口连接测试</el-button>
             <el-avatar :size="32" :src="userStore.avatar || ''" class="header-avatar">
               <el-icon><User /></el-icon>
             </el-avatar>
@@ -26,16 +34,48 @@
 
 
 <script lang="ts" setup>
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Fold, Expand, User } from '@element-plus/icons-vue'
+import { Fold, Expand, User, Link } from '@element-plus/icons-vue'
 import Aside from '../Main/AsidePage.vue';
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
 import { useUserStore } from '@/stores/user';
-import { ElMessageBox } from 'element-plus';
+import { ElMessageBox, ElMessage } from 'element-plus';
+import { testSerialConnection } from '@/api/rosApi';
 
 const router = useRouter()
 const layoutStore = useLayoutSettingStore();
 const userStore = useUserStore();
+
+const serialTesting = ref(false)
+
+const handleTestSerial = async () => {
+  serialTesting.value = true
+  try {
+    const res = await testSerialConnection()
+    const data = res.data
+    if (data.success && data.data?.connected) {
+      ElMessage.success({
+        message: data.data?.message || '串口连接测试成功',
+        duration: 4000,
+      })
+    } else if (data.success) {
+      ElMessage.warning({
+        message: data.data?.message || '串口物理连接正常，未收到下位机响应',
+        duration: 5000,
+      })
+    } else {
+      ElMessage.error({
+        message: data.data?.message || '串口连接测试失败',
+        duration: 5000,
+      })
+    }
+  } catch {
+    ElMessage.error('串口连接测试请求失败，请检查网络连接或后端服务')
+  } finally {
+    serialTesting.value = false
+  }
+}
 
 const handleLogout = async () => {
   try {

@@ -98,6 +98,43 @@ async def trigger_emergency_stop() -> bool:
         return False
     
 
+async def test_serial_connection() -> dict:
+    """
+    串口连接测试：
+    调用 serial_test_node.py 向下位机发送测试数据并等待响应确认
+    """
+    script_path = os.path.join(SCRIPTS_DIR, "serial_test_node.py")
+
+    if not os.path.exists(script_path):
+        return {"success": False, "message": "找不到串口测试脚本", "path": script_path}
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            PYTHON_CMD, script_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            return {"success": False, "message": "串口测试执行超时，请检查串口连接"}
+
+        if process.returncode == 0:
+            output = stdout.decode().strip()
+            try:
+                return json.loads(output)
+            except json.JSONDecodeError:
+                return {"success": True, "message": "串口连接正常", "raw": output}
+        else:
+            error_msg = stderr.decode().strip()
+            return {"success": False, "message": f"测试脚本执行失败: {error_msg}"}
+
+    except Exception as e:
+        return {"success": False, "message": f"系统错误: {str(e)}"}
+
+
 async def stream_real_robot_data():
     """
     建立真实 ROS 数据流：

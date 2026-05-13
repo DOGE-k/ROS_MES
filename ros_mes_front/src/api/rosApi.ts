@@ -176,6 +176,14 @@ export function sendFineTuning(data: any) {
 	});
 }
 
+// ==================== 串口连接测试 ====================
+export function testSerialConnection() {
+	return request<any, ApiResponse<{ success: boolean; connected: boolean; message: string; bytes_received?: number }>>({
+		url: '/control/serial_test',
+		method: 'get'
+	});
+}
+
 export const sendCoordination = sendCoordinate;
 
 export const saveFineTuningConfig = saveFineTuningConfigApi;
