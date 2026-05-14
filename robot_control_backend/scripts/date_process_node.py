@@ -8,16 +8,27 @@ from std_msgs.msg import String
 from flask import Flask, send_file
 import threading
 import os
+import sqlite3
+from datetime import datetime
 
 app = Flask(__name__)
 point_cloud_data = None
-output_dir = "/home/manbo/ros_pointcloud_output/"
+
+# 点云和三视图输出目录（相对路径）
+output_dir = "./ros_pointcloud_output/"
 
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
-    rospy.loginfo(f"📂 已创建输出目录: {output_dir}")
+    rospy.loginfo(f"📂 已创建输出目录: {os.path.abspath(output_dir)}")
 
-# ===================== 参数 =====================
+# ===================== 数据库配置（与节点B完全一致） =====================
+# 统一使用相对路径 ros_database.db，和节点B共享同一个数据库
+DB_FILE = "ros_database.db"
+DEFAULT_CREATER_ID = 1  # 默认创建者ID，可修改
+DEFAULT_DEL_FLAG = 0    # 默认删除标记：0=未删除
+DEFAULT_NOTES = None    # 默认备注为空
+
+# ===================== 原参数（完全保留） =====================
 MODULE_ORIGIN_X = 0.0          # cm，模块原点 X
 MODULE_ORIGIN_Y = 0.0          # cm，模块原点 Y
 MODULE_ORIGIN_Z = 0.0          # cm，模块原点 Z
@@ -31,7 +42,80 @@ ARM_SAFE_GAP = 1.0
 
 module_pub = None
 
-# ===================== 摆正函数 =====================
+# ===================== 数据库初始化（创建point_data表） =====================
+def init_database():
+    """初始化数据库，创建point_data表，与节点B的calculation表共存"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS point_data (
+            Createtime DATETIME NOT NULL,
+            creater_id INT NOT NULL,
+            model_id INT,
+            point TEXT NOT NULL,
+            arms_address TEXT NOT NULL,
+            del_flag BOOL,
+            Notes TEXT
+        )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        rospy.loginfo(f"🗄️ 数据库初始化成功: {os.path.abspath(DB_FILE)}")
+        rospy.loginfo("✅ 已创建 point_data 表，与节点B共享数据库")
+    except Exception as e:
+        rospy.logerr(f"❌ 数据库初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+# ===================== 数据库存储函数 =====================
+def save_modules_to_database(modules):
+    """将模块数据存入point_data表，del_flag默认0，Notes默认空"""
+    if not modules:
+        rospy.logwarn("⚠️ 无模块数据，跳过数据库存储")
+        return
+    
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        success_count = 0
+
+        for module in modules:
+            point_json = json.dumps(module["points"])
+            arms_json = json.dumps(module["arms"])
+            module_model_id = module["module_id"]
+            
+            cursor.execute('''
+            INSERT INTO point_data (
+                Createtime, creater_id, model_id, point, arms_address, del_flag, Notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                current_time, 
+                DEFAULT_CREATER_ID, 
+                module_model_id, 
+                point_json, 
+                arms_json, 
+                DEFAULT_DEL_FLAG, 
+                DEFAULT_NOTES
+            ))
+            
+            success_count += 1
+
+        conn.commit()
+        conn.close()
+        rospy.loginfo(f"✅ 数据库存储完成: 成功插入 {success_count} 条记录到 point_data 表")
+    except Exception as e:
+        rospy.logerr(f"❌ 数据库存储失败: {e}")
+        import traceback
+        traceback.print_exc()
+        if 'conn' in locals() and conn:
+            conn.rollback()
+            conn.close()
+
+# ===================== 原函数（完全保留，未做任何修改） =====================
 def align_max_face_down(pcd):
     pts = np.asarray(pcd.points)
     center = np.mean(pts, axis=0)
@@ -59,7 +143,6 @@ def align_max_face_down(pcd):
     pcd_rotated.rotate(R, center=center)
     return pcd_rotated
 
-# ===================== 移动至工作原点 =====================
 def move_to_origin(points):
     min_x = np.min(points[:, 0])
     max_x = np.max(points[:, 0])
@@ -97,7 +180,6 @@ def move_to_origin(points):
     rospy.loginfo(f"📍 点云已移动：最低 Z {min_z:.2f} → {target_z:.1f} cm")
     return points
 
-# ===================== 切分为模块（最优全覆盖 + 新编号） =====================
 def split_into_modules(points):
     min_x = np.min(points[:, 0])
     max_x = np.max(points[:, 0])
@@ -127,17 +209,15 @@ def split_into_modules(points):
             arm_y2 = y0 + 15
             arm_y3 = y0 + 25
 
-            # ★ 新编号规则：module_id = (i+1)*16 + (j+1)  十进制
             module_id = (i + 1) * 16 + (j + 1)
 
             modules.append({
-                "module_id": module_id,          # 数字类型，json中为数值
+                "module_id": module_id,
                 "points": seg.tolist(),
                 "arms": [[arm_x, arm_y1, 0], [arm_x, arm_y2, 0], [arm_x, arm_y3, 0]]
             })
     return modules
 
-# ===================== 发布模块 =====================
 def publish_all_modules(modules):
     global module_pub
     if module_pub is None:
@@ -147,7 +227,7 @@ def publish_all_modules(modules):
     module_pub.publish(msg)
     rospy.loginfo(f"📤 已发送 {len(modules)} 个模块")
 
-# ===================== JSON 回调处理 =====================
+# ===================== 原JSON回调（完全保留） =====================
 def json_callback(msg):
     global point_cloud_data
     try:
@@ -179,9 +259,11 @@ def json_callback(msg):
         rospy.loginfo(f"📦 已切割出 {len(modules)} 个模块")
 
         publish_all_modules(modules)
+        
+        save_modules_to_database(modules)
 
         o3d.io.write_point_cloud(os.path.join(output_dir, "pointcloud.pcd"), pcd)
-        rospy.loginfo("💾 已保存处理后的点云文件")
+        rospy.loginfo(f"💾 已保存处理后的点云文件: {os.path.abspath(os.path.join(output_dir, 'pointcloud.pcd'))}")
 
         vis = o3d.visualization.Visualizer()
         vis.create_window(visible=False, width=1600, height=1000)
@@ -210,7 +292,7 @@ def json_callback(msg):
         import traceback
         traceback.print_exc()
 
-# ===================== Flask =====================
+# ===================== 原Flask部分（完全保留） =====================
 @app.route('/get_view/<view_name>')
 def get_view(view_name):
     img_path = os.path.join(output_dir, f"{view_name}.png")
@@ -224,8 +306,13 @@ def run_flask():
 # ===================== 主程序 =====================
 def main():
     rospy.init_node('pointcloud_processor_node')
+    
+    init_database()
+    
     rospy.Subscriber('frontend_pointcloud_topic', String, json_callback)
-    rospy.loginfo("🚀 ROS点云处理节点已启动（PCA摆正 + 统计滤波 + 智能全覆盖切块 + 十六进制编号）")
+    rospy.loginfo("🚀 ROS点云处理节点已启动")
+    rospy.loginfo(f"🗄️ 共享数据库文件: {os.path.abspath(DB_FILE)}")
+    rospy.loginfo(f"📂 点云输出目录: {os.path.abspath(output_dir)}")
 
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
