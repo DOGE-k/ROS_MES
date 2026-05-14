@@ -2,12 +2,10 @@
 
 from fastapi import APIRouter, Body, HTTPException
 
-from app.services.ros_service import RosDispatchError, publish_ros_command
-
 router = APIRouter()
 
 
-@router.post("/")
+@router.post("/send")
 def send_coordination(payload: dict = Body(...)):
     device_id = payload.get("device_id")
     module_id = payload.get("module_id")
@@ -35,14 +33,8 @@ def send_coordination(payload: dict = Body(...)):
     except (TypeError, ValueError):
         raise HTTPException(status_code=422, detail="坐标或设备编号格式错误")
 
-    try:
-        dispatch_result = publish_ros_command("coordination", dispatch_payload)
-    except RosDispatchError as exc:
-        raise HTTPException(status_code=503, detail=f"ROS 下发失败：{exc}") from exc
-
     return {
         "code": 200,
         "message": "坐标下发成功",
         "data": dispatch_payload,
-        "dispatch": dispatch_result,
     }

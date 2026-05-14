@@ -2,8 +2,6 @@
 
 from fastapi import APIRouter, Body, HTTPException
 
-from app.services.ros_service import RosDispatchError, publish_ros_command
-
 router = APIRouter()
 
 
@@ -60,14 +58,8 @@ def lock_and_dispatch_module(payload: dict = Body(...)):
         "raw": payload,
     }
 
-    try:
-        dispatch_result = publish_ros_command("module_lock", dispatch_payload)
-    except RosDispatchError as exc:
-        raise HTTPException(status_code=503, detail=f"ROS 下发失败：{exc}") from exc
-
     return {
         "code": 200,
-        "message": "模块锁定并下发成功",
+        "message": "模块锁定成功",
         "data": dispatch_payload,
-        "dispatch": dispatch_result,
     }

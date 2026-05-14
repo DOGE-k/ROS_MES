@@ -7,6 +7,7 @@ ROS 环境下 SQLite 数据库初始化脚本
 
 import sqlite3
 import os
+from passlib.context import CryptContext
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "ros_database.db")
 
@@ -296,8 +297,51 @@ def create_database(db_path=DB_PATH):
         );
     """)
 
+    # ----- 硬件表（Web后端补充）-----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS hardware (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT,
+            status TEXT,
+            ip_address TEXT,
+            description TEXT,
+            updated_at DATETIME
+        );
+    """)
+
+    # ----- 微调记录表（Web后端补充）-----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fine_tuning (
+            id INTEGER PRIMARY KEY,
+            hardware_id INTEGER,
+            parameter_name TEXT NOT NULL,
+            old_value REAL,
+            new_value REAL NOT NULL,
+            adjusted_by TEXT,
+            adjusted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (hardware_id) REFERENCES hardware(id)
+        );
+    """)
+
+    # ----- 微调配置表（Web后端补充）-----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fine_tuning_config (
+            id INTEGER PRIMARY KEY,
+            module_id INTEGER NOT NULL,
+            device_id INTEGER NOT NULL,
+            config_json TEXT NOT NULL,
+            saved_by TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
     conn.commit()
     print("所有表创建成功！")
+
+    # 计算bcrypt哈希密码
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    hashed_password = pwd_context.hash("123456")
 
     # 插入系统初始管理员
     try:
@@ -305,8 +349,8 @@ def create_database(db_path=DB_PATH):
         if cursor.fetchone() is None:
             cursor.execute("""
                 INSERT INTO Users (User_ID, Username, Password, Type_ID, Creator_ID, Createtime, Islock)
-                VALUES (1, 'admin', '123456', 1, 1, CURRENT_TIMESTAMP, 0)
-            """)
+                VALUES (1, 'admin', ?, 1, 1, CURRENT_TIMESTAMP, 0)
+            """, (hashed_password,))
             conn.commit()
             print("已插入默认管理员用户（admin）。")
     except Exception as e:

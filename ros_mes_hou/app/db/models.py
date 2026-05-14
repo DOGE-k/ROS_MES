@@ -1,4 +1,3 @@
-# app/db/models.py
 from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, ForeignKey, Text
 from sqlalchemy.sql import func
 
@@ -6,13 +5,13 @@ from app.db.database import Base
 
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = "Users"
 
     User_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Username = Column(Text, nullable=False)
     Password = Column(Text, nullable=False)
-    Type_ID = Column(Integer, nullable=False, default=2)
-    Creator_ID = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    Type_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False, default=2)
+    Creator_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     Islock = Column(Boolean, nullable=False, default=False)
     Locktime = Column(DateTime(timezone=True), nullable=True)
@@ -61,29 +60,29 @@ class FineTuningConfig(Base):
 
 
 class Drawing(Base):
-    __tablename__ = "drawings"
+    __tablename__ = "Drawings"
 
     Drawing_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Drawingname = Column(Text, nullable=False)
     Drawingdescripte = Column(Text, nullable=False)
     Drawingfile = Column(Text, nullable=False)
-    Creator_ID = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    Creator_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     Modifytime = Column(DateTime(timezone=True), nullable=True)
-    NewVersion_ID = Column(Integer, ForeignKey("drawings_version.DrawingsVersion_ID"), nullable=False)
+    NewVersion_ID = Column(Integer, ForeignKey("DrawingsVersion.DrawingsVersion_ID"), nullable=False)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
 
 
 class DrawingVersion(Base):
-    __tablename__ = "drawings_version"
+    __tablename__ = "DrawingsVersion"
 
     DrawingsVersion_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    Drawing_ID = Column(Integer, ForeignKey("drawings.Drawing_ID"), nullable=False)
+    Drawing_ID = Column(Integer, ForeignKey("Drawings.Drawing_ID"), nullable=False)
     Drawingfile = Column(Text, nullable=False)
-    Creator_ID = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    Creator_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    Modify_ID = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    Modify_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Modifytime = Column(DateTime(timezone=True), nullable=True)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
@@ -95,12 +94,12 @@ class Work(Base):
     Work_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Workname = Column(Text, nullable=False)
     WorkDescript = Column(Text, nullable=True)
-    Drawing_ID = Column(Integer, ForeignKey("drawings.Drawing_ID"), nullable=True)
+    Drawing_ID = Column(Integer, ForeignKey("Drawings.Drawing_ID"), nullable=True)
     Device_id = Column(Integer, nullable=True)
     unit_id = Column(Integer, nullable=True)
     sensor_id = Column(Integer, nullable=True)
     data = Column(Text, nullable=True)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now())
     Modifytime = Column(DateTime(timezone=True), nullable=True)
     del_flag = Column(Boolean, default=False)
@@ -113,7 +112,7 @@ class Workflow(Base):
     Workflow_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Workflowname = Column(Text, nullable=False)
     WorkflowDescript = Column(Text, nullable=True)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now())
     Modifytime = Column(DateTime(timezone=True), nullable=True)
     del_flag = Column(Boolean, default=False)
@@ -127,7 +126,7 @@ class WorkFlowRelation(Base):
     Workflow_ID = Column(Integer, ForeignKey("workflows.Workflow_ID"), nullable=False)
     Work_ID = Column(Integer, ForeignKey("works.Work_ID"), nullable=False)
     flow_seq = Column(Integer, nullable=False)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now())
     Modifytime = Column(DateTime(timezone=True), nullable=True)
     del_flag = Column(Boolean, default=False)
@@ -140,7 +139,7 @@ class ModelTooling(Base):
     Model_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Modelname = Column(Text, nullable=False)
     Modeldescripte = Column(Text, nullable=True)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
@@ -153,7 +152,7 @@ class Device(Base):
     Model_ID = Column(Integer, ForeignKey("Model.Model_ID"), nullable=False)
     Devicedescript = Column(Text, nullable=True)
     DeviceAddress = Column(Integer, nullable=False)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
@@ -165,7 +164,7 @@ class Unit(Base):
     Unit_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
     UnitDescript = Column(Text, nullable=True)
     Device_ID = Column(Integer, ForeignKey("Device.Device_ID"), nullable=False)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
@@ -179,7 +178,7 @@ class Sensor(Base):
     IsRead = Column(Integer, nullable=False)
     Unit_ID = Column(Integer, ForeignKey("Unit.Unit_ID"), nullable=False)
     Unit_address = Column(Integer, nullable=False)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
@@ -189,9 +188,9 @@ class SensorLog(Base):
     __tablename__ = "sensor_log"
 
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), primary_key=True, nullable=False)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Work_ID = Column(Integer, ForeignKey("works.Work_ID"), nullable=False)
-    sensor_ID = Column(Integer, ForeignKey("sensors.sensor_ID"), nullable=False)
+    sensor_ID = Column(Integer, ForeignKey("sensors.sensor_ID"), primary_key=True, nullable=False)
     isread = Column(Integer, nullable=False)
     data = Column(Text, nullable=False)
     del_flag = Column(Boolean, default=False)
@@ -205,10 +204,10 @@ class Task(Base):
     Taskname = Column(Text, nullable=False)
     Taskdescripte = Column(Text, nullable=True)
     Workflow_ID = Column(Integer, ForeignKey("workflows.Workflow_ID"), nullable=True)
-    Drawing_ID = Column(Integer, ForeignKey("drawings.Drawing_ID"), nullable=True)
-    creater_id = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    Drawing_ID = Column(Integer, ForeignKey("Drawings.Drawing_ID"), nullable=True)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    TaskAssignment_id = Column(Integer, ForeignKey("users.User_ID"), nullable=True)
+    TaskAssignment_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=True)
     Status = Column(String(20), nullable=False, default="0")
     Modifytime = Column(DateTime(timezone=True), nullable=True)
     del_flag = Column(Boolean, default=False)
@@ -222,6 +221,34 @@ class TasksTracing(Base):
     Task_ID = Column(Integer, ForeignKey("Tasks.Task_ID"), nullable=False)
     operate_type = Column(Integer, nullable=False)
     Workflow_ID = Column(Integer, ForeignKey("workflows.Workflow_ID"), nullable=False)
-    operater_ID = Column(Integer, ForeignKey("users.User_ID"), nullable=False)
+    operater_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     operate_time = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    Notes = Column(Text, nullable=True)
+
+
+class Calculation(Base):
+    __tablename__ = "calculation"
+
+    Createtime = Column(DateTime(timezone=True), server_default=func.now(), primary_key=True, nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
+    Work_ID = Column(Integer, ForeignKey("works.Work_ID"), nullable=False)
+    model_id = Column(Integer, ForeignKey("Model.Model_ID"), nullable=True)
+    Unit_ID = Column(Integer, ForeignKey("Unit.Unit_ID"), nullable=True)
+    device_ID = Column(Integer, ForeignKey("Device.Device_ID"), nullable=True)
+    isread = Column(Integer, nullable=True)
+    coord = Column(Text, nullable=True)
+    position = Column(Text, nullable=True)
+    del_flag = Column(Boolean, default=False)
+    Notes = Column(Text, nullable=True)
+
+
+class PointData(Base):
+    __tablename__ = "point_data"
+
+    Createtime = Column(DateTime(timezone=True), server_default=func.now(), primary_key=True, nullable=False)
+    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
+    model_id = Column(Integer, ForeignKey("Model.Model_ID"), nullable=True)
+    point = Column(Text, nullable=False)
+    arms_address = Column(Text, nullable=False)
+    del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
