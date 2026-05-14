@@ -6,10 +6,9 @@ import threading
 import traceback
 import sqlite3
 import os
-import struct  #  新增：用于解析 4字节 float 或 int
+import struct
 
 from std_msgs.msg import Header
-# 导入原有的消息和新建的陀螺仪消息
 from robot_control_backend.msg import Feedback, IntCmd, GyroFeedback 
 
 def load_env_config():
@@ -34,12 +33,12 @@ class STM32Bridge:
         self.running = True
         self.connected = True
 
-        # ================== 话题发布者（从环境变量读取） ==================
+        # ================== 话题发布者 ==================
         TOPIC_ALL_FEEDBACK = os.environ.get('ROS_TOPIC_ALL_FEEDBACK', '/hardware/all_feedback')
         TOPIC_ARM_CMD_VEL = os.environ.get('ROS_TOPIC_ARM_CMD_VEL', '/arm/cmd_vel')
         
         self.pub_all_feedback = rospy.Publisher(TOPIC_ALL_FEEDBACK, Feedback, queue_size=10)
-        self.pub_gyro = rospy.Publisher("/hardware/gyroscope_feedback", GyroFeedback, queue_size=10) # <--- 新增
+        self.pub_gyro = rospy.Publisher("/hardware/gyroscope_feedback", GyroFeedback, queue_size=10)
         
         rospy.Subscriber(TOPIC_ARM_CMD_VEL, IntCmd, self.on_cmd_received)
 
@@ -50,23 +49,31 @@ class STM32Bridge:
         self.last_raw_data = b""
         self.last_parsed_msg = None
 
-        # ================== 设备 ID 定义（从环境变量读取） ==================
-        self.TARGET_MODULE_ID = int(os.environ.get('MODULE_ID', '17'))
-        self.DEV_ROTATE = int(os.environ.get('DEV_ROTATE', '41'))
-        self.DEV_SWING  = int(os.environ.get('DEV_SWING', '42'))
-        self.DEV_TELES  = int(os.environ.get('DEV_TELES', '43'))
-        self.DEV_SENSOR = int(os.environ.get('DEV_SENSOR', '49'))
-        self.DEV_GYRO   = 50  # 新增：假设陀螺仪的 device_id 是 50，根据实际下位机程序修改
+        # ================== 【关键：和你数据库严格对应】设备ID映射 ==================
+        # 一号机械臂 Unit_ID=32
+        self.UNIT_ID = 32
+        self.CREATER_ID = 1    # 创建者ID固定为1（你数据库里创建者都是1）
+        self.WORK_ID = 1       # 固定绑定初始工作 Work_ID=1
+        self.TARGET_MODULE_ID = int(os.environ.get('MODULE_ID', '17'))  # Model_ID=17（一号型号）
+
+        # 和你sensors表完全对应
+        self.DEV_ROTATE = 33    # 一号机械臂旋转电机 sensor_ID=33
+        self.DEV_SWING  = 34    # 摆动电机 34
+        self.DEV_TELES  = 35    # 伸缩电机 35
+        self.DEV_ROTATE_ENC = 41# 旋转编码器 41
+        self.DEV_SWING_ENC  = 42# 偏转编码器 42
+        self.DEV_TELES_ENC  = 43# 伸缩编码器 43
+        self.DEV_PRESSURE   = 49# 压力传感器 49
+        self.DEV_GYRO       = 50# 陀螺仪传感器 50
 
         # 实时数据缓存字典
         self.realtime_data = {}
 
-        # 数据库初始化
+        # 数据库初始化（直接连接你已建好的库）
         self.db_lock = threading.Lock()
-        self.db_path = os.path.join(os.path.expanduser('~'), "robot_hardware_data.db")
+        self.db_path = os.path.join(os.path.expanduser('~'), "yang/sqlite/main.db") # 改成你实际sqlite路径
         self.db_conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.db_cursor = self.db_conn.cursor()
-        self.init_database()
         rospy.loginfo(f"✅ 数据库已连接，路径: {self.db_path}")
 
         self.try_serial_connect()
@@ -75,34 +82,8 @@ class STM32Bridge:
 
     # -------------------------------------------------------------------------
     def init_database(self):
-        """初始化数据库表"""
-        with self.db_lock:
-            # 基础单值传感器表
-            self.db_cursor.execute('''
-                CREATE TABLE IF NOT EXISTS sensor_data (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp REAL,
-                    module_id INTEGER,
-                    device_id INTEGER,
-                    value REAL
-                )
-            ''')
-            # 陀螺仪多维数据专属表 (新增)
-            self.db_cursor.execute('''
-                CREATE TABLE IF NOT EXISTS gyro_data (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp REAL,
-                    module_id INTEGER,
-                    device_id INTEGER,
-                    acc_x REAL,
-                    acc_y REAL,
-                    acc_z REAL,
-                    gyro_x REAL,
-                    gyro_y REAL,
-                    gyro_z REAL
-                )
-            ''')
-            self.db_conn.commit()
+        """不再新建表，直接使用你已经设计好的表"""
+        pass
 
     # -------------------------------------------------------------------------
     def try_serial_connect(self):
@@ -119,7 +100,6 @@ class STM32Bridge:
 
     # -------------------------------------------------------------------------
     def on_cmd_received(self, msg):
-        # 此处省略下发代码，与原版保持一致
         mid = msg.module_id
         did = msg.device_id
         pos = int(msg.position[0])
@@ -139,7 +119,6 @@ class STM32Bridge:
 
     # -------------------------------------------------------------------------
     def read_serial_thread(self):
-        # 串口读取逻辑
         while self.running and not rospy.is_shutdown():
             if self.receive_stopped: break
             if not self.connected:
@@ -166,25 +145,24 @@ class STM32Bridge:
             buf = self.serial_buffer
 
             if len(buf) == 1 and buf[0] == 0x11:
-                # 单字节特判逻辑保持不变
                 self.serial_buffer = b""
                 return
 
             while len(buf) >= 2:
                 module_id = buf[0]
-                device_id = buf[1]
+                sensor_id = buf[1] # 这里直接对应 sensors表的 sensor_ID
 
                 if module_id != self.TARGET_MODULE_ID:
                     buf = buf[1:]
                     continue
 
                 # ================= 动态长度判定 =================
-                if device_id in [self.DEV_ROTATE, self.DEV_SWING, self.DEV_TELES]:
+                if sensor_id in [self.DEV_ROTATE, self.DEV_SWING, self.DEV_TELES]:
                     frame_len = 4
-                elif device_id == self.DEV_SENSOR:
+                elif sensor_id in [self.DEV_ROTATE_ENC, self.DEV_SWING_ENC, self.DEV_TELES_ENC, self.DEV_PRESSURE]:
                     frame_len = 6
-                elif device_id == self.DEV_GYRO:  # 新增分支
-                    frame_len = 26  # 头2字节 + 6个float*4字节 = 26字节
+                elif sensor_id == self.DEV_GYRO:
+                    frame_len = 26  # 2+6*4
                 else:
                     buf = buf[1:]
                     continue
@@ -196,40 +174,38 @@ class STM32Bridge:
                 buf = buf[frame_len:]
 
                 timestamp_now = rospy.Time.now().to_sec()
+                dt_str = rospy.Time.now().to_str() # 数据库Createtime格式
 
-                # ================= 陀螺仪解析处理 =================
-                if device_id == self.DEV_GYRO:
-                    # 关键点：使用 struct.unpack 拆包
-                    # '<ffffff' 表示按照小端序(Little-Endian)解析6个单精度浮点数 (C语言中的 float)
-                    # 如果下位机发的是 32位整形(int32_t)，请改成 '<iiiiii'
+                # ================= 陀螺仪解析 =================
+                if sensor_id == self.DEV_GYRO:
                     try:
                         ax, ay, az, gx, gy, gz = struct.unpack('<ffffff', frame[2:26])
                     except struct.error:
                         rospy.logwarn("陀螺仪数据解包失败！")
                         continue
 
-                    # 组成元组用于字典比对去重
                     val_tuple = (ax, ay, az, gx, gy, gz)
                     
-                    if self.realtime_data.get(device_id) != val_tuple:
-                        self.realtime_data[device_id] = val_tuple
+                    if self.realtime_data.get(sensor_id) != val_tuple:
+                        self.realtime_data[sensor_id] = val_tuple
+                        json_data = f'{{"acc_x":{ax:.4f},"acc_y":{ay:.4f},"acc_z":{az:.4f},"gyro_x":{gx:.4f},"gyro_y":{gy:.4f},"gyro_z":{gz:.4f}}}'
 
-                        # 1. 存入新数据库表
+                        # 写入 sensor_log 日志表（完全贴合你的表结构）
                         with self.db_lock:
                             try:
                                 self.db_cursor.execute('''
-                                    INSERT INTO gyro_data (timestamp, module_id, device_id, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                ''', (timestamp_now, module_id, device_id, ax, ay, az, gx, gy, gz))
+                                    INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
+                                    VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                                ''', (dt_str, self.CREATER_ID, self.WORK_ID, sensor_id, 1, json_data, "陀螺仪实时数据"))
                                 self.db_conn.commit()
                             except Exception as e:
-                                rospy.logerr(f" 陀螺仪数据库写入失败: {e}")
+                                rospy.logerr(f"陀螺仪数据库写入失败: {e}")
 
-                        # 2. 发布 ROS 消息
+                        # 发布ROS消息
                         msg = GyroFeedback()
                         msg.header = Header(stamp=rospy.Time.now())
                         msg.module_id = module_id
-                        msg.device_id = device_id
+                        msg.device_id = sensor_id
                         msg.accel_x = ax
                         msg.accel_y = ay
                         msg.accel_z = az
@@ -239,7 +215,6 @@ class STM32Bridge:
                         
                         self.pub_gyro.publish(msg)
                         self.last_parsed_msg = msg
-                        # 不刷屏日志：rospy.loginfo(f"[陀螺仪更新] Acc:({ax:.2f},{ay:.2f},{az:.2f})")
 
                 # ================= 普通传感器解析 =================
                 else:
@@ -248,23 +223,26 @@ class STM32Bridge:
                     elif frame_len == 6:
                         value = (frame[2] << 24) | (frame[3] << 16) | (frame[4] << 8) | frame[5]
 
-                    if self.realtime_data.get(device_id) != value:
-                        self.realtime_data[device_id] = value
-                        
+                    if self.realtime_data.get(sensor_id) != value:
+                        self.realtime_data[sensor_id] = value
+                        json_data = f'{{"value":{value}}}'
+
+                        # 写入 sensor_log 日志表
                         with self.db_lock:
                             try:
                                 self.db_cursor.execute('''
-                                    INSERT INTO sensor_data (timestamp, module_id, device_id, value)
-                                    VALUES (?, ?, ?, ?)
-                                ''', (timestamp_now, module_id, device_id, float(value)))
+                                    INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
+                                    VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                                ''', (dt_str, self.CREATER_ID, self.WORK_ID, sensor_id, 1, json_data, "传感器实时数据"))
                                 self.db_conn.commit()
                             except Exception as e:
-                                rospy.logerr(f" 传感器数据库写入失败: {e}")
+                                rospy.logerr(f"传感器数据库写入失败: {e}")
 
+                        # 发布ROS消息
                         msg = Feedback()
                         msg.header = Header(stamp=rospy.Time.now())
                         msg.module_id = module_id
-                        msg.device_id = device_id
+                        msg.device_id = sensor_id
                         msg.position = [float(value)]
                         self.pub_all_feedback.publish(msg)
                         self.last_parsed_msg = msg
@@ -282,7 +260,7 @@ class STM32Bridge:
 
 if __name__ == "__main__":
     rospy.init_node("stm32_bridge")
-    bridge = STM32Bridge()  # 参数从环境变量读取
+    bridge = STM32Bridge()
     rospy.loginfo("硬件桥接节点启动")
     rospy.spin()
     bridge.close()
