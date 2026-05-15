@@ -56,7 +56,7 @@ find_package(catkin REQUIRED COMPONENTS
  SensorCmd.msg
  Kinematics.msg
  IntCmd.msg
- GyroFeedback .msg
+ GyroFeedback.msg
 )
 
 ## Generate services in the 'srv' folder
