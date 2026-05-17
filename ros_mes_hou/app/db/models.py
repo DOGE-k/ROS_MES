@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, ForeignKey, Text
+from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, ForeignKey, Text, UniqueConstraint, Index
 from sqlalchemy.sql import func
 
 from app.db.database import Base
@@ -24,23 +24,13 @@ class User(Base):
     Notes = Column(Text, nullable=True)
 
 
-class Hardware(Base):
-    __tablename__ = "hardware"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(100), index=True, nullable=False)
-    type = Column(String(50))
-    status = Column(String(20))
-    ip_address = Column(String(50))
-    description = Column(String(255))
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-
-
 class FineTuning(Base):
     __tablename__ = "fine_tuning"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    hardware_id = Column(Integer, ForeignKey("hardware.id"))
+    Device_ID = Column(Integer, ForeignKey("Device.Device_ID"), nullable=False)
+    DeviceAddress = Column(Integer, nullable=True)
+    Devicedescript = Column(Text, nullable=True)
     parameter_name = Column(String(100), nullable=False)
     old_value = Column(Float)
     new_value = Column(Float, nullable=False)
@@ -96,8 +86,8 @@ class Work(Base):
     WorkDescript = Column(Text, nullable=True)
     Drawing_ID = Column(Integer, ForeignKey("Drawings.Drawing_ID"), nullable=True)
     Device_id = Column(Integer, nullable=True)
-    unit_id = Column(Integer, nullable=True)
-    sensor_id = Column(Integer, nullable=True)
+    unit_id = Column(Integer, ForeignKey("Unit.id"), nullable=True)
+    sensor_id = Column(Integer, ForeignKey("sensors.id"), nullable=True)
     data = Column(Text, nullable=True)
     creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now())
@@ -161,7 +151,8 @@ class Device(Base):
 class Unit(Base):
     __tablename__ = "Unit"
 
-    Unit_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    Unit_ID = Column(Integer, nullable=False, autoincrement=False)
     UnitDescript = Column(Text, nullable=True)
     Device_ID = Column(Integer, ForeignKey("Device.Device_ID"), nullable=False)
     creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
@@ -169,19 +160,36 @@ class Unit(Base):
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
 
+    __table_args__ = (
+        UniqueConstraint('Device_ID', 'Unit_ID', name='uq_unit_device'),
+    )
+
 
 class Sensor(Base):
     __tablename__ = "sensors"
 
-    sensor_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    sensor_ID = Column(Integer, nullable=False, autoincrement=False)
     sensordescript = Column(Text, nullable=True)
     IsRead = Column(Integer, nullable=False)
-    Unit_ID = Column(Integer, ForeignKey("Unit.Unit_ID"), nullable=False)
+    Device_ID = Column(Integer, ForeignKey("Device.Device_ID"), nullable=False)
+    Unit_ID = Column(Integer, nullable=False)
+    unit_row_id = Column(Integer, ForeignKey("Unit.id"), nullable=False)
     Unit_address = Column(Integer, nullable=False)
     creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index(
+            'uq_sensor_device_active',
+            'Device_ID',
+            'sensor_ID',
+            unique=True,
+            sqlite_where=(del_flag == False),
+        ),
+    )
 
 
 class SensorLog(Base):
@@ -190,7 +198,7 @@ class SensorLog(Base):
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), primary_key=True, nullable=False)
     creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Work_ID = Column(Integer, ForeignKey("works.Work_ID"), nullable=False)
-    sensor_ID = Column(Integer, ForeignKey("sensors.sensor_ID"), primary_key=True, nullable=False)
+    sensor_id = Column(Integer, ForeignKey("sensors.id"), primary_key=True, nullable=False)
     isread = Column(Integer, nullable=False)
     data = Column(Text, nullable=False)
     del_flag = Column(Boolean, default=False)
@@ -233,7 +241,7 @@ class Calculation(Base):
     creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Work_ID = Column(Integer, ForeignKey("works.Work_ID"), nullable=False)
     model_id = Column(Integer, ForeignKey("Model.Model_ID"), nullable=True)
-    Unit_ID = Column(Integer, ForeignKey("Unit.Unit_ID"), nullable=True)
+    Unit_ID = Column(Integer, nullable=True)
     device_ID = Column(Integer, ForeignKey("Device.Device_ID"), nullable=True)
     isread = Column(Integer, nullable=True)
     coord = Column(Text, nullable=True)

@@ -6,40 +6,34 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class FineTuningCreate(BaseModel):
-    """兼容旧版记录格式和新版前端微调格式。
-
-    旧版字段：hardware_id / parameter_name / old_value / new_value
-    新版字段：module_id / device_id / position
-    """
-
-    hardware_id: Optional[int] = None
+    module_id: Optional[int] = None
+    device_id: Optional[int] = None
+    Device_ID: Optional[int] = None
+    unit_id: Optional[int] = None
+    unit_row_id: Optional[int] = None
+    position: Optional[float] = None
     parameter_name: Optional[str] = None
     old_value: Optional[float] = None
     new_value: Optional[float] = None
 
-    module_id: Optional[int] = None
-    device_id: Optional[int] = None
-    position: Optional[float] = None
-
     @model_validator(mode="after")
     def validate_payload(self):
-        has_new_front_payload = self.device_id is not None and self.position is not None
-        has_legacy_payload = (
-            self.hardware_id is not None
-            and self.parameter_name is not None
-            and self.new_value is not None
-        )
-        if not has_new_front_payload and not has_legacy_payload:
-            raise ValueError(
-                "微调参数不完整：新版格式需要 device_id 与 position；"
-                "旧版格式需要 hardware_id、parameter_name 与 new_value"
-            )
+        if self.device_id is None and self.Device_ID is not None:
+            self.device_id = self.Device_ID
+        if self.position is None and self.new_value is not None:
+            self.position = self.new_value
+        if self.device_id is None:
+            raise ValueError("fine-tuning payload requires device_id")
+        if self.position is None and self.new_value is None:
+            raise ValueError("fine-tuning payload requires position or new_value")
         return self
 
 
 class FineTuningResponse(BaseModel):
     id: int
-    hardware_id: int
+    Device_ID: int
+    DeviceAddress: Optional[int] = None
+    Devicedescript: Optional[str] = None
     parameter_name: str
     old_value: Optional[float] = None
     new_value: float
@@ -54,6 +48,7 @@ class FineTuningPoint(BaseModel):
     device_id: int
     position: float
     type: str = "axis"
+    parameter_name: Optional[str] = None
 
 
 class FineTuningApiResponse(BaseModel):
@@ -65,6 +60,9 @@ class FineTuningApiResponse(BaseModel):
 
 class FineTuningConfigDevice(BaseModel):
     device_id: Optional[int] = None
+    unit_id: Optional[int] = None
+    unit_row_id: Optional[int] = None
+    parameter_name: Optional[str] = None
     label: Optional[str] = None
     initial: float = 0
     adjust: Optional[float] = 0

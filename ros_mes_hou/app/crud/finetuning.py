@@ -8,11 +8,17 @@ from app.db import models
 from app.schemas import finetuning as schemas
 
 
-def get_fine_tuning_records(db: Session, skip: int = 0, limit: int = 100):
-    # 按时间倒序排列，最新的修改在最前面
+def get_fine_tuning_records(
+    db: Session,
+    skip: int = 0,
+    limit: int = 100,
+    device_id: Optional[int] = None,
+):
+    query = db.query(models.FineTuning)
+    if device_id is not None:
+        query = query.filter(models.FineTuning.Device_ID == device_id)
     return (
-        db.query(models.FineTuning)
-        .order_by(models.FineTuning.adjusted_at.desc(), models.FineTuning.id.desc())
+        query.order_by(models.FineTuning.adjusted_at.desc(), models.FineTuning.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -22,11 +28,25 @@ def get_fine_tuning_records(db: Session, skip: int = 0, limit: int = 100):
 def get_latest_position(db: Session, device_id: int) -> Optional[float]:
     latest = (
         db.query(models.FineTuning)
-        .filter(models.FineTuning.hardware_id == device_id)
+        .filter(models.FineTuning.Device_ID == device_id)
         .order_by(models.FineTuning.adjusted_at.desc(), models.FineTuning.id.desc())
         .first()
     )
     return latest.new_value if latest else None
+
+
+def get_device_snapshot(db: Session, device_id: int) -> Dict[str, Any]:
+    device = (
+        db.query(models.Device)
+        .filter(models.Device.Device_ID == device_id, models.Device.del_flag == False)
+        .first()
+    )
+    if not device:
+        return {"DeviceAddress": None, "Devicedescript": None}
+    return {
+        "DeviceAddress": device.DeviceAddress,
+        "Devicedescript": device.Devicedescript,
+    }
 
 
 def create_fine_tuning_record(
@@ -34,29 +54,20 @@ def create_fine_tuning_record(
     record: schemas.FineTuningCreate,
     username: str,
 ):
-    """创建微调记录。
+    device_id = int(record.device_id)
+    new_value = record.position if record.position is not None else record.new_value
+    previous = get_latest_position(db, device_id)
+    device_snapshot = get_device_snapshot(db, device_id)
 
-    新版前端传 device_id / position，这里映射到历史表结构，避免直接破坏旧表。
-    """
-
-    if record.device_id is not None and record.position is not None:
-        device_id = int(record.device_id)
-        previous = get_latest_position(db, device_id)
-        db_record = models.FineTuning(
-            hardware_id=device_id,
-            parameter_name=f"module_{record.module_id or 0}_position",
-            old_value=previous,
-            new_value=float(record.position),
-            adjusted_by=username,
-        )
-    else:
-        db_record = models.FineTuning(
-            hardware_id=int(record.hardware_id),
-            parameter_name=str(record.parameter_name),
-            old_value=record.old_value,
-            new_value=float(record.new_value),
-            adjusted_by=username,
-        )
+    db_record = models.FineTuning(
+        Device_ID=device_id,
+        DeviceAddress=device_snapshot["DeviceAddress"],
+        Devicedescript=device_snapshot["Devicedescript"],
+        parameter_name=record.parameter_name or f"module_{record.module_id or 0}_position",
+        old_value=record.old_value if record.old_value is not None else previous,
+        new_value=float(new_value),
+        adjusted_by=username,
+    )
 
     db.add(db_record)
     db.commit()

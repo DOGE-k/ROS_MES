@@ -2,7 +2,7 @@
 
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.crud import finetuning as crud
@@ -29,7 +29,7 @@ def create_record(
         username=username,
     )
 
-    device_id = record.device_id or db_record.hardware_id
+    device_id = record.device_id or db_record.Device_ID
     position = record.position if record.position is not None else db_record.new_value
 
     return {
@@ -40,6 +40,7 @@ def create_record(
                 "device_id": int(device_id),
                 "position": float(position),
                 "type": "axis",
+                "parameter_name": db_record.parameter_name,
             },
             {
                 "device_id": -1,
@@ -54,12 +55,13 @@ def create_record(
 def read_records(
     skip: int = 0,
     limit: int = 100,
+    device_id: int | None = Query(None),
     db: Session = Depends(get_db),
 ):
     """
     获取微调记录列表。
     """
-    return crud.get_fine_tuning_records(db, skip=skip, limit=limit)
+    return crud.get_fine_tuning_records(db, skip=skip, limit=limit, device_id=device_id)
 
 
 @router.post("/config")

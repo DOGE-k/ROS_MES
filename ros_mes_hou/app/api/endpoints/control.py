@@ -1,12 +1,78 @@
 # app/api/endpoints/control.py
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from app.api.deps import get_current_user
+from app.crud import finetuning as finetuning_crud
 from app.db import models
+from app.db.database import get_db
+from app.schemas import finetuning as finetuning_schemas
 from app.services import ros_control
+from app.services.ros_dispatcher import RosDispatchError, ros_dispatcher
+from app.services.rosbridge_gateway import (
+    RosbridgeError,
+    build_fine_tuning_publish_payload,
+    rosbridge_dispatcher,
+    stream_feedback,
+)
 from app.schemas.hardware import HardwareFeedback, EmergencyStopResponse
+from sqlalchemy.orm import Session
 
 router = APIRouter()
+
+
+@router.post("/finetuning", response_model=finetuning_schemas.FineTuningApiResponse)
+def send_fine_tuning(
+    record: finetuning_schemas.FineTuningCreate,
+    db: Session = Depends(get_db),
+    dispatcher=rosbridge_dispatcher,
+):
+    db_record = finetuning_crud.create_fine_tuning_record(
+        db=db,
+        record=record,
+        username="web_frontend",
+    )
+    business_device_id = int(record.device_id or db_record.Device_ID)
+    position = float(record.position if record.position is not None else db_record.new_value)
+    payload = build_fine_tuning_publish_payload(db_record.parameter_name, position)
+    payload["business"] = {
+        "module_id": record.module_id,
+        "device_id": business_device_id,
+        "unit_id": record.unit_id,
+        "unit_row_id": record.unit_row_id,
+    }
+
+    try:
+        dispatch_result = dispatcher.dispatch("fine_tuning", payload)
+    except (RosDispatchError, RosbridgeError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {
+        "code": 200,
+        "message": "微调下发成功",
+        "data": [
+            {
+                "device_id": business_device_id,
+                "position": position,
+                "type": "axis",
+                "parameter_name": db_record.parameter_name,
+            },
+            {
+                "device_id": -1,
+                "position": 0.0,
+                "type": "pressure",
+            },
+        ],
+        "dispatch": dispatch_result,
+    }
+
+@router.websocket("/feedback/ws")
+async def fine_tuning_feedback_ws(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        async for feedback in stream_feedback():
+            await websocket.send_json(feedback)
+    except WebSocketDisconnect:
+        return
 
 @router.get("/serial_test")
 async def test_serial_connection(

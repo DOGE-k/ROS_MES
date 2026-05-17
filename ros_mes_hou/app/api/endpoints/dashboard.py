@@ -15,21 +15,29 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    total_hardware = db.query(func.count(models.Hardware.id)).scalar() or 0
-
-    online_hardware = (
-        db.query(func.count(models.Hardware.id))
-        .filter(models.Hardware.status == "normal")
+    device_count = (
+        db.query(func.count(models.Device.Device_ID))
+        .filter(models.Device.del_flag == False)
         .scalar()
         or 0
     )
-
-    fault_count = (
-        db.query(func.count(models.Hardware.id))
-        .filter(models.Hardware.status == "fault")
+    unit_count = (
+        db.query(func.count(models.Unit.id))
+        .filter(models.Unit.del_flag == False)
         .scalar()
         or 0
     )
+    sensor_count = (
+        db.query(func.count(models.Sensor.id))
+        .filter(models.Sensor.del_flag == False)
+        .scalar()
+        or 0
+    )
+    total_hardware = device_count + unit_count + sensor_count
+
+    # Current Device/Unit/Sensor tables do not have a unified status column.
+    # Keep dashboard stable and reserve fault counting for sensor_log/status data later.
+    fault_count = 0
 
     total_users = db.query(func.count(models.User.User_ID)).scalar() or 0
 

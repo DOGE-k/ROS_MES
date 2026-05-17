@@ -30,20 +30,12 @@ export interface UserInfo {
 }
 
 // 硬件相关
-export interface HardwareItem {
-	id: number;
-	name: string;
-	type: string;
-	status: string;
-	ipAddress: string;
-	description: string;
-	updatedAt: string;
-}
-
 // 微调相关
 export interface FineTuningItem {
 	id: number;
-	hardwareId: number;
+	Device_ID: number;
+	DeviceAddress?: number;
+	Devicedescript?: string;
 	parameterName: string;
 	oldValue: number;
 	newValue: number;

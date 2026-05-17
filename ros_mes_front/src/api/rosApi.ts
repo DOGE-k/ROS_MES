@@ -7,7 +7,6 @@ import type {
 	DrawingItem,
 	FineTuningConfigItem,
 	FineTuningItem,
-	HardwareItem,
 	LoginForm,
 	LoginResponse,
 	TaskForm,
@@ -50,46 +49,8 @@ export function getUserListApi(params?: { keyword?: string; type_id?: number }) 
 }
 
 // ==================== 硬件管理 ====================
-export function getHardwareList(params?: { type?: string; status?: string }) {
-	return request<any, ApiResponse<HardwareItem[]>>({
-		url: '/hardware/',
-		method: 'get',
-		params
-	});
-}
-
-export function getHardwareDetail(id: number) {
-	return request<any, ApiResponse<HardwareItem>>({
-		url: `/hardware/${id}`,
-		method: 'get'
-	});
-}
-
-export function createHardware(data: Partial<HardwareItem>) {
-	return request<any, ApiResponse<HardwareItem>>({
-		url: '/hardware/',
-		method: 'post',
-		data
-	});
-}
-
-export function updateHardware(id: number, data: Partial<HardwareItem>) {
-	return request<any, ApiResponse<HardwareItem>>({
-		url: `/hardware/${id}`,
-		method: 'put',
-		data
-	});
-}
-
-export function deleteHardware(id: number) {
-	return request<any, ApiResponse<null>>({
-		url: `/hardware/${id}`,
-		method: 'delete'
-	});
-}
-
 // ==================== 微调管理 ====================
-export function getFineTuningList(params?: { hardwareId?: number }) {
+export function getFineTuningList(params?: { device_id?: number }) {
 	return request<any, ApiResponse<FineTuningItem[]>>({
 		url: '/finetuning/',
 		method: 'get',
@@ -113,10 +74,16 @@ export function getFineTuningHistory() {
 }
 
 export function saveFineTuningConfigApi(data: {
-	moduleId: number;
-	deviceId: number;
-	configJson: string;
+	module_id?: number;
+	device_id?: number;
+	unit_id?: number;
+	unit_row_id?: number;
+	drawing_id?: number;
+	moduleId?: number;
+	deviceId?: number;
+	configJson?: string;
 	savedBy?: string;
+	devices?: any[];
 }) {
 	return request<any, ApiResponse<FineTuningConfigItem>>({
 		url: '/finetuning/config',
@@ -438,5 +405,197 @@ export function getTaskWorksApi(taskId: number) {
 	return request<any, ApiResponse<WorkSubsetItem[]>>({
 		url: `/task/${taskId}/works`,
 		method: 'get'
+	});
+}
+
+// ==================== 设备树（四层结构：型号→模块→机械臂→传感器） ====================
+export interface TreeNode {
+	id: string;
+	label: string;
+	type: 'model' | 'device' | 'unit' | 'sensor';
+	raw_id: number;
+	arm_type?: number;
+	sensor_type?: number;
+	device_id?: number;
+	children?: TreeNode[];
+}
+
+export function getDeviceTreeApi() {
+	return request<any, ApiResponse<TreeNode[]>>({
+		url: '/model/tree',
+		method: 'get'
+	});
+}
+
+// ==================== 型号 CRUD ====================
+export function getModelListApi() {
+	return request<any, ApiResponse<any[]>>({
+		url: '/model/',
+		method: 'get'
+	});
+}
+
+export function getModelApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/model/${id}`,
+		method: 'get'
+	});
+}
+
+export function createModelApi(data: { Modelname: string; Modeldescripte?: string; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: '/model/',
+		method: 'post',
+		data
+	});
+}
+
+export function updateModelApi(id: number, data: { Modelname?: string; Modeldescripte?: string; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: `/model/${id}`,
+		method: 'put',
+		data
+	});
+}
+
+export function deleteModelApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/model/${id}`,
+		method: 'delete'
+	});
+}
+
+// ==================== 模块(Device) CRUD ====================
+export function getDeviceListApi() {
+	return request<any, ApiResponse<any[]>>({
+		url: '/device/',
+		method: 'get'
+	});
+}
+
+export function getDevicesByModelApi(modelId: number) {
+	return request<any, ApiResponse<any[]>>({
+		url: `/device/by_model/${modelId}`,
+		method: 'get'
+	});
+}
+
+export function getDeviceApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/device/${id}`,
+		method: 'get'
+	});
+}
+
+export function createDeviceApi(data: { Model_ID: number; DeviceAddress: number; Devicedescript?: string; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: '/device/',
+		method: 'post',
+		data
+	});
+}
+
+export function updateDeviceApi(id: number, data: { Model_ID?: number; DeviceAddress?: number; Devicedescript?: string; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: `/device/${id}`,
+		method: 'put',
+		data
+	});
+}
+
+export function deleteDeviceApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/device/${id}`,
+		method: 'delete'
+	});
+}
+
+// ==================== 机械臂(Unit) CRUD ====================
+export function getUnitListApi() {
+	return request<any, ApiResponse<any[]>>({
+		url: '/unit/',
+		method: 'get'
+	});
+}
+
+export function getUnitsByDeviceApi(deviceId: number) {
+	return request<any, ApiResponse<any[]>>({
+		url: `/unit/by_device/${deviceId}`,
+		method: 'get'
+	});
+}
+
+export function getUnitApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/unit/${id}`,
+		method: 'get'
+	});
+}
+
+export function createUnitApi(data: { Unit_ID: number; Device_ID: number; UnitDescript?: string; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: '/unit/',
+		method: 'post',
+		data
+	});
+}
+
+export function updateUnitApi(id: number, data: { Device_ID?: number; UnitDescript?: string; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: `/unit/${id}`,
+		method: 'put',
+		data
+	});
+}
+
+export function deleteUnitApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/unit/${id}`,
+		method: 'delete'
+	});
+}
+
+// ==================== 传感器(sensors) CRUD ====================
+export function getSensorListApi() {
+	return request<any, ApiResponse<any[]>>({
+		url: '/sensors/',
+		method: 'get'
+	});
+}
+
+export function getSensorApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/sensors/${id}`,
+		method: 'get'
+	});
+}
+
+export function createSensorApi(data: { sensor_ID: number; Device_ID: number; Unit_ID: number; unit_row_id: number; sensordescript?: string; Unit_address: number; IsRead?: number; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: '/sensors/',
+		method: 'post',
+		data
+	});
+}
+
+export function getSensorsByUnitApi(unitId: number) {
+	return request<any, ApiResponse<any[]>>({
+		url: `/sensors/by_unit/${unitId}`,
+		method: 'get'
+	});
+}
+
+export function updateSensorApi(id: number, data: { sensor_ID?: number; Device_ID?: number; Unit_ID?: number; unit_row_id?: number; sensordescript?: string; Unit_address?: number; IsRead?: number; Notes?: string }) {
+	return request<any, ApiResponse<any>>({
+		url: `/sensors/${id}`,
+		method: 'put',
+		data
+	});
+}
+
+export function deleteSensorApi(id: number) {
+	return request<any, ApiResponse<any>>({
+		url: `/sensors/${id}`,
+		method: 'delete'
 	});
 }

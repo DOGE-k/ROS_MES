@@ -10,20 +10,23 @@
           <div class="tab-header">
             <el-button type="primary" @click="openCreateWorkDialog">新增工作</el-button>
           </div>
-          <el-table :data="workList" border stripe v-loading="workLoading" style="margin-top: 16px;">
+          <el-table :data="workList" border stripe v-loading="workLoading" style="margin-top: 16px">
             <el-table-column type="index" label="序号" width="60" />
             <el-table-column prop="Workname" label="工作名称" min-width="140" show-overflow-tooltip />
-            <el-table-column prop="Drawing_ID" label="绑定图纸" width="100">
-              <template #default="{ row }">{{ row.Drawing_ID ?? '-' }}</template>
+            <el-table-column label="绑定图纸" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ getDrawingLabel(row.Drawing_ID) }}</template>
             </el-table-column>
-            <el-table-column prop="Device_id" label="绑定设备" width="100">
-              <template #default="{ row }">{{ row.Device_id ?? '-' }}</template>
+            <el-table-column label="绑定型号" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ getModelLabelByDevice(row.Device_id) }}</template>
             </el-table-column>
-            <el-table-column prop="unit_id" label="绑定单元" width="100">
-              <template #default="{ row }">{{ row.unit_id ?? '-' }}</template>
+            <el-table-column label="绑定设备" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ getDeviceLabel(row.Device_id) }}</template>
             </el-table-column>
-            <el-table-column prop="sensor_id" label="绑定传感器" width="100">
-              <template #default="{ row }">{{ row.sensor_id ?? '-' }}</template>
+            <el-table-column label="绑定单元" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ getUnitLabel(row.unit_id) }}</template>
+            </el-table-column>
+            <el-table-column label="绑定传感器" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ getSensorLabel(row.sensor_id) }}</template>
             </el-table-column>
             <el-table-column prop="WorkDescript" label="工作描述" min-width="160" show-overflow-tooltip />
             <el-table-column prop="Createtime" label="创建时间" width="170" />
@@ -44,7 +47,7 @@
           <div class="tab-header">
             <el-button type="primary" @click="openCreateWorkflowDialog">新建工作流</el-button>
           </div>
-          <el-table :data="workflowList" border stripe v-loading="workflowLoading" style="margin-top: 16px;">
+          <el-table :data="workflowList" border stripe v-loading="workflowLoading" style="margin-top: 16px">
             <el-table-column type="index" label="序号" width="60" />
             <el-table-column prop="Workflowname" label="工作流名称" min-width="140" show-overflow-tooltip />
             <el-table-column prop="work_count" label="工作数量" width="100" />
@@ -66,8 +69,7 @@
       </el-tabs>
     </el-card>
 
-    <!-- 新增/编辑工作弹窗 -->
-    <el-dialog v-model="workDialogVisible" :title="workDialogTitle" width="600px" destroy-on-close>
+    <el-dialog v-model="workDialogVisible" :title="workDialogTitle" width="640px" destroy-on-close>
       <el-form :model="workForm" label-width="120px">
         <el-form-item label="工作名称" required>
           <el-input v-model="workForm.Workname" placeholder="请输入工作名称" />
@@ -75,20 +77,85 @@
         <el-form-item label="工作描述">
           <el-input v-model="workForm.WorkDescript" type="textarea" :rows="2" placeholder="请输入工作描述" />
         </el-form-item>
-        <el-form-item label="绑定图纸">
-          <el-input v-model="workForm.Drawing_ID" placeholder="图纸ID" />
+        <el-form-item label="绑定图纸" required>
+          <el-select v-model="workForm.Drawing_ID" filterable clearable placeholder="请选择图纸" style="width: 100%">
+            <el-option
+              v-for="item in drawingOptions"
+              :key="item.drawingId"
+              :label="formatDrawingOption(item)"
+              :value="item.drawingId"
+            />
+          </el-select>
         </el-form-item>
-        <el-form-item label="绑定设备">
-          <el-input v-model="workForm.Device_id" placeholder="设备ID" />
+        <el-form-item label="绑定型号" required>
+          <el-select
+            v-model="workForm.Model_ID"
+            filterable
+            clearable
+            placeholder="请选择型号"
+            style="width: 100%"
+            @change="handleModelChange"
+          >
+            <el-option
+              v-for="item in modelOptions"
+              :key="item.Model_ID"
+              :label="formatModelOption(item)"
+              :value="item.Model_ID"
+            />
+          </el-select>
         </el-form-item>
-        <el-form-item label="绑定单元">
-          <el-input v-model="workForm.unit_id" placeholder="单元ID" />
+        <el-form-item label="绑定设备" required>
+          <el-select
+            v-model="workForm.Device_id"
+            filterable
+            clearable
+            :disabled="!workForm.Model_ID"
+            placeholder="请先选择型号"
+            style="width: 100%"
+            @change="handleDeviceChange"
+          >
+            <el-option
+              v-for="item in deviceOptions"
+              :key="item.Device_ID"
+              :label="formatDeviceOption(item)"
+              :value="item.Device_ID"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="绑定单元" required>
+          <el-select
+            v-model="workForm.unit_id"
+            filterable
+            clearable
+            :disabled="!workForm.Device_id"
+            placeholder="请先选择设备"
+            style="width: 100%"
+            @change="handleUnitChange"
+          >
+            <el-option
+              v-for="item in unitOptions"
+              :key="item.id"
+              :label="formatUnitOption(item)"
+              :value="item.id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="绑定传感器">
-          <el-input v-model="workForm.sensor_id" placeholder="传感器ID" />
-        </el-form-item>
-        <el-form-item label="工作数据">
-          <el-input v-model="workForm.data" type="textarea" :rows="4" placeholder="请输入 JSON 格式的工作数据" />
+          <el-select
+            v-model="workForm.sensor_id"
+            filterable
+            clearable
+            :disabled="!workForm.unit_id"
+            placeholder="请先选择单元"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="item in sensorOptions"
+              :key="item.id"
+              :label="formatSensorOption(item)"
+              :value="item.id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="workForm.Notes" type="textarea" :rows="3" placeholder="请输入备注信息" />
@@ -100,7 +167,6 @@
       </template>
     </el-dialog>
 
-    <!-- 新建/编辑工作流弹窗 -->
     <el-dialog v-model="workflowDialogVisible" :title="workflowDialogTitle" width="700px" destroy-on-close>
       <el-form :model="workflowForm" label-width="120px">
         <el-form-item label="工作流名称" required>
@@ -116,6 +182,7 @@
           <el-select
             v-model="selectedWorkIds"
             multiple
+            filterable
             placeholder="请选择工作"
             style="width: 100%"
             @change="onWorkSelected"
@@ -149,8 +216,7 @@
       </template>
     </el-dialog>
 
-    <!-- 查看工作流详情弹窗 -->
-    <el-dialog v-model="detailVisible" title="工作流详情" width="700px" destroy-on-close>
+    <el-dialog v-model="detailVisible" title="工作流详情" width="760px" destroy-on-close>
       <div v-loading="detailLoading">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="工作流名称">{{ detailData.Workflowname }}</el-descriptions-item>
@@ -164,10 +230,11 @@
           <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="工作名称">{{ work.Workname }}</el-descriptions-item>
             <el-descriptions-item label="工作描述">{{ work.WorkDescript || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="图纸ID">{{ work.Drawing_ID ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="设备ID">{{ work.Device_id ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="单元ID">{{ work.unit_id ?? '-' }}</el-descriptions-item>
-            <el-descriptions-item label="传感器ID">{{ work.sensor_id ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="图纸">{{ getDrawingLabel(work.Drawing_ID) }}</el-descriptions-item>
+            <el-descriptions-item label="型号">{{ getModelLabelByDevice(work.Device_id) }}</el-descriptions-item>
+            <el-descriptions-item label="设备">{{ getDeviceLabel(work.Device_id) }}</el-descriptions-item>
+            <el-descriptions-item label="单元">{{ getUnitLabel(work.unit_id) }}</el-descriptions-item>
+            <el-descriptions-item label="传感器">{{ getSensorLabel(work.sensor_id) }}</el-descriptions-item>
             <el-descriptions-item label="工作数据" :span="2">
               <pre class="data-pre">{{ work.data || '-' }}</pre>
             </el-descriptions-item>
@@ -183,7 +250,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   createWorkApi,
@@ -195,40 +262,236 @@ import {
   getWorkflowDetailApi,
   updateWorkflowApi,
   deleteWorkflowApi,
+  getDrawingListApi,
+  getModelListApi,
+  getDevicesByModelApi,
+  getDeviceListApi,
+  getUnitsByDeviceApi,
+  getUnitListApi,
+  getSensorsByUnitApi,
+  getSensorListApi,
 } from '@/api/rosApi';
-import type { WorkItem, WorkflowItem } from '@/api/types';
+import type { DrawingItem, WorkItem, WorkflowItem } from '@/api/types';
+
+type SelectId = number | null;
 
 const activeTab = ref('work');
 
-// ==================== 工作管理 ====================
 const workLoading = ref(false);
 const workList = ref<WorkItem[]>([]);
-
 const workDialogVisible = ref(false);
 const workDialogTitle = ref('新增工作');
 const workSaving = ref(false);
 const editingWorkId = ref<number | null>(null);
+
 const workForm = reactive({
   Workname: '',
   WorkDescript: '',
-  Drawing_ID: '',
-  Device_id: '',
-  unit_id: '',
-  sensor_id: '',
-  data: '',
+  Drawing_ID: null as SelectId,
+  Model_ID: null as SelectId,
+  Device_id: null as SelectId,
+  unit_id: null as SelectId,
+  sensor_id: null as SelectId,
   Notes: '',
 });
+
+const drawingOptions = ref<DrawingItem[]>([]);
+const modelOptions = ref<any[]>([]);
+const allDeviceOptions = ref<any[]>([]);
+const allUnitOptions = ref<any[]>([]);
+const allSensorOptions = ref<any[]>([]);
+const deviceOptions = ref<any[]>([]);
+const unitOptions = ref<any[]>([]);
+const sensorOptions = ref<any[]>([]);
+
+const workflowLoading = ref(false);
+const workflowList = ref<WorkflowItem[]>([]);
+const workflowDialogVisible = ref(false);
+const workflowDialogTitle = ref('新建工作流');
+const workflowSaving = ref(false);
+const editingWorkflowId = ref<number | null>(null);
+const workflowForm = reactive({
+  Workflowname: '',
+  WorkflowDescript: '',
+  Notes: '',
+});
+const allWorksForSelect = ref<WorkItem[]>([]);
+const selectedWorkIds = ref<number[]>([]);
+const orderedWorks = ref<WorkItem[]>([]);
+
+const detailVisible = ref(false);
+const detailLoading = ref(false);
+const detailData = reactive<{
+  Workflowname: string;
+  WorkflowDescript: string;
+  Createtime: string;
+  Notes: string;
+  works: any[];
+}>({
+  Workflowname: '',
+  WorkflowDescript: '',
+  Createtime: '',
+  Notes: '',
+  works: [],
+});
+
+function unwrapList(res: any): any[] {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.data)) return res.data;
+  return [];
+}
+
+function formatDeviceAddress(address: number | string | null | undefined) {
+  const value = Number(address);
+  if (!Number.isFinite(value)) return '-';
+  return `(${(value >> 4) & 0x0f},${value & 0x0f})`;
+}
+
+function formatDrawingOption(item: any) {
+  return `[${item.drawingId}] ${item.drawingName}`;
+}
+
+function formatModelOption(item: any) {
+  return `[${item.Model_ID}] ${item.Modelname}`;
+}
+
+function formatDeviceOption(item: any) {
+  const desc = item.Devicedescript ? ` - ${item.Devicedescript}` : '';
+  return `[${item.Device_ID}] 模块${formatDeviceAddress(item.DeviceAddress)}${desc}`;
+}
+
+function formatUnitOption(item: any) {
+  const desc = item.UnitDescript ? ` - ${item.UnitDescript}` : '';
+  return `[${item.id}] 机械臂 ${item.Unit_ID}${desc}`;
+}
+
+function formatSensorOption(item: any) {
+  const desc = item.sensordescript ? ` - ${item.sensordescript}` : '';
+  return `[${item.id}] 传感器 ${item.sensor_ID}${desc}`;
+}
+
+function getDrawingLabel(id: number | null | undefined) {
+  if (id == null) return '-';
+  const item = drawingOptions.value.find(d => Number(d.drawingId) === Number(id));
+  return item ? formatDrawingOption(item) : String(id);
+}
+
+function getModelLabelByDevice(deviceId: number | null | undefined) {
+  if (deviceId == null) return '-';
+  const device = allDeviceOptions.value.find(d => Number(d.Device_ID) === Number(deviceId));
+  const modelId = device?.Model_ID;
+  const model = modelOptions.value.find(m => Number(m.Model_ID) === Number(modelId));
+  return model ? formatModelOption(model) : '-';
+}
+
+function getDeviceLabel(id: number | null | undefined) {
+  if (id == null) return '-';
+  const item = allDeviceOptions.value.find(d => Number(d.Device_ID) === Number(id));
+  return item ? formatDeviceOption(item) : String(id);
+}
+
+function getUnitLabel(id: number | null | undefined) {
+  if (id == null) return '-';
+  const item = allUnitOptions.value.find(u => Number(u.id) === Number(id));
+  return item ? formatUnitOption(item) : String(id);
+}
+
+function getSensorLabel(id: number | null | undefined) {
+  if (id == null) return '-';
+  const item = allSensorOptions.value.find(s => Number(s.id) === Number(id));
+  return item ? formatSensorOption(item) : String(id);
+}
+
+async function loadBaseOptions() {
+  try {
+    const [drawingRes, modelRes, deviceRes, unitRes, sensorRes] = await Promise.all([
+      getDrawingListApi(),
+      getModelListApi(),
+      getDeviceListApi(),
+      getUnitListApi(),
+      getSensorListApi(),
+    ]);
+    drawingOptions.value = unwrapList(drawingRes) as DrawingItem[];
+    modelOptions.value = unwrapList(modelRes);
+    allDeviceOptions.value = unwrapList(deviceRes);
+    allUnitOptions.value = unwrapList(unitRes);
+    allSensorOptions.value = unwrapList(sensorRes);
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || '获取绑定选项失败';
+    ElMessage.error(msg);
+  }
+}
+
+async function loadDevicesByModel(modelId: SelectId) {
+  deviceOptions.value = [];
+  if (!modelId) return;
+  try {
+    const res = await getDevicesByModelApi(Number(modelId));
+    deviceOptions.value = unwrapList(res);
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || '获取设备列表失败';
+    ElMessage.error(msg);
+  }
+}
+
+async function loadUnitsByDevice(deviceId: SelectId) {
+  unitOptions.value = [];
+  if (!deviceId) return;
+  try {
+    const res = await getUnitsByDeviceApi(Number(deviceId));
+    unitOptions.value = unwrapList(res);
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || '获取机械臂单元失败';
+    ElMessage.error(msg);
+  }
+}
+
+async function loadSensorsByUnit(unitId: SelectId) {
+  sensorOptions.value = [];
+  if (!unitId) return;
+  try {
+    const res = await getSensorsByUnitApi(Number(unitId));
+    sensorOptions.value = unwrapList(res);
+  } catch (err: any) {
+    const msg = err?.response?.data?.detail || err?.message || '获取传感器列表失败';
+    ElMessage.error(msg);
+  }
+}
 
 function resetWorkForm() {
   workForm.Workname = '';
   workForm.WorkDescript = '';
-  workForm.Drawing_ID = '';
-  workForm.Device_id = '';
-  workForm.unit_id = '';
-  workForm.sensor_id = '';
-  workForm.data = '';
+  workForm.Drawing_ID = null;
+  workForm.Model_ID = null;
+  workForm.Device_id = null;
+  workForm.unit_id = null;
+  workForm.sensor_id = null;
   workForm.Notes = '';
+  deviceOptions.value = [];
+  unitOptions.value = [];
+  sensorOptions.value = [];
   editingWorkId.value = null;
+}
+
+function handleModelChange() {
+  workForm.Device_id = null;
+  workForm.unit_id = null;
+  workForm.sensor_id = null;
+  unitOptions.value = [];
+  sensorOptions.value = [];
+  loadDevicesByModel(workForm.Model_ID);
+}
+
+function handleDeviceChange() {
+  workForm.unit_id = null;
+  workForm.sensor_id = null;
+  sensorOptions.value = [];
+  loadUnitsByDevice(workForm.Device_id);
+}
+
+function handleUnitChange() {
+  workForm.sensor_id = null;
+  loadSensorsByUnit(workForm.unit_id);
 }
 
 function openCreateWorkDialog() {
@@ -237,360 +500,294 @@ function openCreateWorkDialog() {
   workDialogVisible.value = true;
 }
 
-function openEditWorkDialog(row: WorkItem) {
+async function openEditWorkDialog(row: WorkItem) {
   resetWorkForm();
   workDialogTitle.value = '编辑工作';
   editingWorkId.value = row.Work_ID;
   workForm.Workname = row.Workname;
   workForm.WorkDescript = row.WorkDescript || '';
-  workForm.Drawing_ID = row.Drawing_ID != null ? String(row.Drawing_ID) : '';
-  workForm.Device_id = row.Device_id != null ? String(row.Device_id) : '';
-  workForm.unit_id = row.unit_id != null ? String(row.unit_id) : '';
-  workForm.sensor_id = row.sensor_id != null ? String(row.sensor_id) : '';
-  workForm.data = row.data || '';
+  workForm.Drawing_ID = row.Drawing_ID ?? null;
+  workForm.Device_id = row.Device_id ?? null;
+  workForm.unit_id = row.unit_id ?? null;
+  workForm.sensor_id = row.sensor_id ?? null;
   workForm.Notes = row.Notes || '';
-  workDialogVisible.value = true;
-}
 
-function validateJson(str: string): boolean {
-  if (!str || !str.trim()) return true
-  try {
-    JSON.parse(str)
-    return true
-  } catch {
-    return false
-  }
+  const device = allDeviceOptions.value.find(d => Number(d.Device_ID) === Number(row.Device_id));
+  workForm.Model_ID = device?.Model_ID ?? null;
+  await loadDevicesByModel(workForm.Model_ID);
+  await loadUnitsByDevice(workForm.Device_id);
+  await loadSensorsByUnit(workForm.unit_id);
+  workDialogVisible.value = true;
 }
 
 async function handleSaveWork() {
   if (!workForm.Workname.trim()) {
-    ElMessage.warning('请输入工作名称')
-    return
+    ElMessage.warning('请输入工作名称');
+    return;
   }
-  if (!validateJson(workForm.data)) {
-    ElMessage.warning('工作数据不是合法的 JSON 格式')
-    return
+  if (!workForm.Drawing_ID) {
+    ElMessage.warning('请选择绑定图纸');
+    return;
+  }
+  if (!workForm.Model_ID) {
+    ElMessage.warning('请选择绑定型号');
+    return;
+  }
+  if (!workForm.Device_id) {
+    ElMessage.warning('请选择绑定设备');
+    return;
+  }
+  if (!workForm.unit_id) {
+    ElMessage.warning('请选择绑定单元');
+    return;
   }
 
-  workSaving.value = true
+  workSaving.value = true;
   try {
-    const data: any = {
+    const payload = {
       Workname: workForm.Workname.trim(),
       WorkDescript: workForm.WorkDescript.trim(),
-      data: workForm.data,
+      Drawing_ID: workForm.Drawing_ID,
+      Device_id: workForm.Device_id,
+      unit_id: workForm.unit_id,
+      sensor_id: workForm.sensor_id,
       Notes: workForm.Notes.trim(),
-    }
-    if (workForm.Drawing_ID) {
-      data.Drawing_ID = Number(workForm.Drawing_ID)
-    }
-    if (workForm.Device_id) {
-      data.Device_id = Number(workForm.Device_id)
-    }
-    if (workForm.unit_id) {
-      data.unit_id = Number(workForm.unit_id)
-    }
-    if (workForm.sensor_id) {
-      data.sensor_id = Number(workForm.sensor_id)
-    }
+    };
 
-    let res: any
-    if (editingWorkId.value) {
-      res = await updateWorkApi(editingWorkId.value, data)
-    } else {
-      res = await createWorkApi(data)
-    }
+    const res: any = editingWorkId.value
+      ? await updateWorkApi(editingWorkId.value, payload)
+      : await createWorkApi(payload);
 
     if (res.code === 200) {
-      ElMessage.success(res.message || '保存成功')
-      workDialogVisible.value = false
-      fetchWorkList()
+      ElMessage.success(res.message || '保存成功');
+      workDialogVisible.value = false;
+      fetchWorkList();
     } else {
-      ElMessage.error(res.message || '保存失败')
+      ElMessage.error(res.message || '保存失败');
     }
   } catch (err: any) {
-    const msg = err?.response?.data?.detail || err?.message || '保存失败'
-    ElMessage.error(msg)
+    const msg = err?.response?.data?.detail || err?.message || '保存失败';
+    ElMessage.error(msg);
   } finally {
-    workSaving.value = false
+    workSaving.value = false;
   }
 }
 
 async function handleDeleteWork(row: WorkItem) {
   try {
-    const res = await deleteWorkApi(row.Work_ID)
+    const res = await deleteWorkApi(row.Work_ID);
     if (res.code === 200) {
-      ElMessage.success('删除成功')
-      fetchWorkList()
+      ElMessage.success('删除成功');
+      fetchWorkList();
     } else {
-      ElMessage.error(res.message || '删除失败')
+      ElMessage.error(res.message || '删除失败');
     }
   } catch (err: any) {
-    const msg = err?.response?.data?.detail || err?.message || '删除失败'
-    ElMessage.error(msg)
+    const msg = err?.response?.data?.detail || err?.message || '删除失败';
+    ElMessage.error(msg);
   }
 }
 
 async function fetchWorkList() {
-  workLoading.value = true
+  workLoading.value = true;
   try {
-    const res = await getWorkListApi()
+    const res = await getWorkListApi();
     if (res.code === 200) {
-      workList.value = res.data || []
+      workList.value = res.data || [];
     }
   } catch (err: any) {
-    const msg = err?.response?.data?.detail || err?.message || '获取工作列表失败'
-    ElMessage.error(msg)
+    const msg = err?.response?.data?.detail || err?.message || '获取工作列表失败';
+    ElMessage.error(msg);
   } finally {
-    workLoading.value = false
+    workLoading.value = false;
   }
 }
 
-// ==================== 工作流管理 ====================
-const workflowLoading = ref(false)
-const workflowList = ref<WorkflowItem[]>([])
-
-const workflowDialogVisible = ref(false)
-const workflowDialogTitle = ref('新建工作流')
-const workflowSaving = ref(false)
-const editingWorkflowId = ref<number | null>(null)
-
-const workflowForm = reactive({
-  Workflowname: '',
-  WorkflowDescript: '',
-  Notes: '',
-})
-
-const allWorksForSelect = ref<WorkItem[]>([])
-const selectedWorkIds = ref<number[]>([])
-const orderedWorks = ref<WorkItem[]>([])
-
 function resetWorkflowForm() {
-  workflowForm.Workflowname = ''
-  workflowForm.WorkflowDescript = ''
-  workflowForm.Notes = ''
-  selectedWorkIds.value = []
-  orderedWorks.value = []
-  editingWorkflowId.value = null
+  workflowForm.Workflowname = '';
+  workflowForm.WorkflowDescript = '';
+  workflowForm.Notes = '';
+  selectedWorkIds.value = [];
+  orderedWorks.value = [];
+  editingWorkflowId.value = null;
 }
 
 function openCreateWorkflowDialog() {
-  resetWorkflowForm()
-  workflowDialogTitle.value = '新建工作流'
-  fetchAllWorksForSelect()
-  workflowDialogVisible.value = true
+  resetWorkflowForm();
+  workflowDialogTitle.value = '新建工作流';
+  fetchAllWorksForSelect();
+  workflowDialogVisible.value = true;
 }
 
 function onWorkSelected(ids: number[]) {
-  const currentIds = orderedWorks.value.map(w => w.Work_ID)
-  const newIds = ids.filter(id => !currentIds.includes(id))
+  const currentIds = orderedWorks.value.map(w => w.Work_ID);
+  const newIds = ids.filter(id => !currentIds.includes(id));
   for (const id of newIds) {
-    const work = allWorksForSelect.value.find(w => w.Work_ID === id)
-    if (work) {
-      orderedWorks.value.push({ ...work })
-    }
+    const work = allWorksForSelect.value.find(w => w.Work_ID === id);
+    if (work) orderedWorks.value.push({ ...work });
   }
-  const keepIds = new Set(ids)
-  orderedWorks.value = orderedWorks.value.filter(w => keepIds.has(w.Work_ID))
+  const keepIds = new Set(ids);
+  orderedWorks.value = orderedWorks.value.filter(w => keepIds.has(w.Work_ID));
 }
 
 function moveUp(idx: number) {
-  if (idx <= 0) return
-  const arr = orderedWorks.value
-  const temp = arr[idx]
-  arr[idx] = arr[idx - 1]
-  arr[idx - 1] = temp
-  orderedWorks.value = [...arr]
+  if (idx <= 0) return;
+  const arr = orderedWorks.value;
+  const temp = arr[idx];
+  arr[idx] = arr[idx - 1];
+  arr[idx - 1] = temp;
+  orderedWorks.value = [...arr];
 }
 
 function moveDown(idx: number) {
-  if (idx >= orderedWorks.value.length - 1) return
-  const arr = orderedWorks.value
-  const temp = arr[idx]
-  arr[idx] = arr[idx + 1]
-  arr[idx + 1] = temp
-  orderedWorks.value = [...arr]
+  if (idx >= orderedWorks.value.length - 1) return;
+  const arr = orderedWorks.value;
+  const temp = arr[idx];
+  arr[idx] = arr[idx + 1];
+  arr[idx + 1] = temp;
+  orderedWorks.value = [...arr];
 }
 
 function removeWork(idx: number) {
-  const removed = orderedWorks.value[idx]
-  orderedWorks.value.splice(idx, 1)
-  selectedWorkIds.value = orderedWorks.value.map(w => w.Work_ID)
+  orderedWorks.value.splice(idx, 1);
+  selectedWorkIds.value = orderedWorks.value.map(w => w.Work_ID);
 }
 
 async function handleSaveWorkflow() {
   if (!workflowForm.Workflowname.trim()) {
-    ElMessage.warning('请输入工作流名称')
-    return
+    ElMessage.warning('请输入工作流名称');
+    return;
   }
   if (orderedWorks.value.length === 0) {
-    ElMessage.warning('请至少选择一个工作')
-    return
+    ElMessage.warning('请至少选择一个工作');
+    return;
   }
 
-  workflowSaving.value = true
+  workflowSaving.value = true;
   try {
-    const workIds = orderedWorks.value.map(w => w.Work_ID)
-    const data: any = {
+    const workIds = orderedWorks.value.map(w => w.Work_ID);
+    const payload = {
       Workflowname: workflowForm.Workflowname.trim(),
       WorkflowDescript: workflowForm.WorkflowDescript.trim(),
       Notes: workflowForm.Notes.trim(),
       work_ids: JSON.stringify(workIds),
-    }
+    };
 
-    let res: any
-    if (editingWorkflowId.value) {
-      res = await updateWorkflowApi(editingWorkflowId.value, data)
-    } else {
-      res = await createWorkflowApi(data)
-    }
+    const res: any = editingWorkflowId.value
+      ? await updateWorkflowApi(editingWorkflowId.value, payload)
+      : await createWorkflowApi(payload);
 
     if (res.code === 200) {
-      ElMessage.success(res.message || '保存成功')
-      workflowDialogVisible.value = false
-      fetchWorkflowList()
+      ElMessage.success(res.message || '保存成功');
+      workflowDialogVisible.value = false;
+      fetchWorkflowList();
     } else {
-      ElMessage.error(res.message || '保存失败')
+      ElMessage.error(res.message || '保存失败');
     }
   } catch (err: any) {
-    const msg = err?.response?.data?.detail || err?.message || '保存失败'
-    ElMessage.error(msg)
+    const msg = err?.response?.data?.detail || err?.message || '保存失败';
+    ElMessage.error(msg);
   } finally {
-    workflowSaving.value = false
+    workflowSaving.value = false;
   }
 }
 
 async function openEditWorkflowDialog(row: WorkflowItem) {
-  resetWorkflowForm()
-  workflowDialogTitle.value = '编辑工作流'
-  editingWorkflowId.value = row.Workflow_ID
-  workflowForm.Workflowname = row.Workflowname
-  workflowForm.WorkflowDescript = row.WorkflowDescript || ''
-  workflowForm.Notes = row.Notes || ''
+  resetWorkflowForm();
+  workflowDialogTitle.value = '编辑工作流';
+  editingWorkflowId.value = row.Workflow_ID;
+  workflowForm.Workflowname = row.Workflowname;
+  workflowForm.WorkflowDescript = row.WorkflowDescript || '';
+  workflowForm.Notes = row.Notes || '';
 
-  await fetchAllWorksForSelect()
+  await fetchAllWorksForSelect();
 
   try {
-    const res = await getWorkflowDetailApi(row.Workflow_ID)
+    const res = await getWorkflowDetailApi(row.Workflow_ID);
     if (res.code === 200) {
-      const detail = res.data
-      orderedWorks.value = (detail.works || []).map(w => ({
-        Work_ID: w.Work_ID,
-        Workname: w.Workname,
-        WorkDescript: w.WorkDescript || '',
-        Drawing_ID: w.Drawing_ID,
-        Device_id: w.Device_id,
-        unit_id: w.unit_id,
-        sensor_id: w.sensor_id,
-        data: w.data || '',
-        creater_id: w.creater_id,
-        Createtime: w.Createtime,
-        Modifytime: w.Modifytime,
-        del_flag: w.del_flag,
-        Notes: w.Notes || '',
-      }))
-      orderedWorks.value.sort((a, b) => {
-        const aSeq = (detail.works || []).find((dw: any) => dw.Work_ID === a.Work_ID)?.flow_seq || 0
-        const bSeq = (detail.works || []).find((dw: any) => dw.Work_ID === b.Work_ID)?.flow_seq || 0
-        return aSeq - bSeq
-      })
-      selectedWorkIds.value = orderedWorks.value.map(w => w.Work_ID)
+      const detail = res.data;
+      orderedWorks.value = (detail.works || []).map(w => ({ ...w }));
+      orderedWorks.value.sort((a: any, b: any) => (a.flow_seq || 0) - (b.flow_seq || 0));
+      selectedWorkIds.value = orderedWorks.value.map(w => w.Work_ID);
     }
   } catch {
-    // ignore
+    // Detail loading failure should not block editing base fields.
   }
 
-  workflowDialogVisible.value = true
+  workflowDialogVisible.value = true;
 }
 
 async function fetchAllWorksForSelect() {
   try {
-    const res = await getWorkListApi()
-    if (res.code === 200) {
-      allWorksForSelect.value = res.data || []
-    }
+    const res = await getWorkListApi();
+    if (res.code === 200) allWorksForSelect.value = res.data || [];
   } catch {
-    // ignore
+    // Ignore selector refresh errors; main table error handling covers the normal path.
   }
 }
 
 async function handleDeleteWorkflow(row: WorkflowItem) {
   try {
-    const res = await deleteWorkflowApi(row.Workflow_ID)
+    const res = await deleteWorkflowApi(row.Workflow_ID);
     if (res.code === 200) {
-      ElMessage.success('删除成功')
-      fetchWorkflowList()
+      ElMessage.success('删除成功');
+      fetchWorkflowList();
     } else {
-      ElMessage.error(res.message || '删除失败')
+      ElMessage.error(res.message || '删除失败');
     }
   } catch (err: any) {
-    const msg = err?.response?.data?.detail || err?.message || '删除失败'
-    ElMessage.error(msg)
+    const msg = err?.response?.data?.detail || err?.message || '删除失败';
+    ElMessage.error(msg);
   }
 }
 
 async function fetchWorkflowList() {
-  workflowLoading.value = true
+  workflowLoading.value = true;
   try {
-    const res = await getWorkflowListApi()
+    const res = await getWorkflowListApi();
     if (res.code === 200) {
-      workflowList.value = res.data || []
+      workflowList.value = res.data || [];
     }
   } catch (err: any) {
-    const msg = err?.response?.data?.detail || err?.message || '获取工作流列表失败'
-    ElMessage.error(msg)
+    const msg = err?.response?.data?.detail || err?.message || '获取工作流列表失败';
+    ElMessage.error(msg);
   } finally {
-    workflowLoading.value = false
+    workflowLoading.value = false;
   }
 }
-
-// ==================== 查看工作流详情 ====================
-const detailVisible = ref(false)
-const detailLoading = ref(false)
-const detailData = reactive<{
-  Workflowname: string
-  WorkflowDescript: string
-  Createtime: string
-  Notes: string
-  works: any[]
-}>({
-  Workflowname: '',
-  WorkflowDescript: '',
-  Createtime: '',
-  Notes: '',
-  works: [],
-})
 
 async function openViewWorkflowDialog(row: WorkflowItem) {
-  detailVisible.value = true
-  detailLoading.value = true
-  detailData.Workflowname = ''
-  detailData.WorkflowDescript = ''
-  detailData.Createtime = ''
-  detailData.Notes = ''
-  detailData.works = []
+  detailVisible.value = true;
+  detailLoading.value = true;
+  detailData.Workflowname = '';
+  detailData.WorkflowDescript = '';
+  detailData.Createtime = '';
+  detailData.Notes = '';
+  detailData.works = [];
 
   try {
-    const res = await getWorkflowDetailApi(row.Workflow_ID)
+    const res = await getWorkflowDetailApi(row.Workflow_ID);
     if (res.code === 200) {
-      const d = res.data
-      detailData.Workflowname = d.Workflowname
-      detailData.WorkflowDescript = d.WorkflowDescript || ''
-      detailData.Createtime = d.Createtime
-      detailData.Notes = d.Notes || ''
-      detailData.works = (d.works || []).sort((a: any, b: any) => a.flow_seq - b.flow_seq)
+      const d = res.data;
+      detailData.Workflowname = d.Workflowname;
+      detailData.WorkflowDescript = d.WorkflowDescript || '';
+      detailData.Createtime = d.Createtime;
+      detailData.Notes = d.Notes || '';
+      detailData.works = (d.works || []).sort((a: any, b: any) => a.flow_seq - b.flow_seq);
     }
   } catch (err: any) {
-    const msg = err?.response?.data?.detail || err?.message || '获取工作流详情失败'
-    ElMessage.error(msg)
+    const msg = err?.response?.data?.detail || err?.message || '获取工作流详情失败';
+    ElMessage.error(msg);
   } finally {
-    detailLoading.value = false
+    detailLoading.value = false;
   }
 }
 
-onMounted(() => {
-  fetchWorkList()
-  fetchWorkflowList()
-})
+onMounted(async () => {
+  await loadBaseOptions();
+  fetchWorkList();
+  fetchWorkflowList();
+});
 </script>
 
 <style scoped>
@@ -639,7 +836,7 @@ onMounted(() => {
 
 .seq-index {
   font-weight: bold;
-  min-width: 60px;
+  min-width: 70px;
   color: #409eff;
 }
 

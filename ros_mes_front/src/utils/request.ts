@@ -1,4 +1,4 @@
-import axios from "axios";
+﻿import axios from "axios";
 import qs from "qs";
 import router from "@/router";
 import { ElMessage } from "element-plus";
@@ -16,10 +16,10 @@ const whiteList = [
   "/register",
   "/send_ros",
   "/get_ros_status",
-  "/hardware",
   "/module",
   "/coordination",
   "/finetuning",
+  "/device",
 ];
 
 service.interceptors.request.use(
@@ -60,7 +60,8 @@ service.interceptors.response.use(
     const status = error.response?.status;
     const detail = error.response?.data?.detail;
     const message = error.response?.data?.message;
-
+    const method = (error.config?.method || "GET").toUpperCase();
+    const url = error.config?.url || "unknown";
     if (status === 401) {
       localStorage.removeItem("token");
       localStorage.removeItem("account");
@@ -69,12 +70,24 @@ service.interceptors.response.use(
       router.replace("/login");
     } else if (detail || message) {
       ElMessage.error(detail || message);
+    } else if (status) {
+      ElMessage.error(`请求失败：${method} ${url} 返回 ${status}`);
     } else {
       ElMessage.error("请求失败，请检查 API 服务是否启动");
     }
+
+    console.error("[API Error]", {
+      method,
+      url,
+      status,
+      detail,
+      message,
+      response: error.response?.data,
+    });
 
     return Promise.reject(error);
   }
 );
 
 export default service;
+

@@ -133,6 +133,7 @@ def create_tracing_record(
         operate_type=operate_type,
         Workflow_ID=workflow_id,
         operater_ID=operater_id,
+        operate_time=datetime.now(timezone.utc),
         Notes=notes,
     )
     db.add(record)

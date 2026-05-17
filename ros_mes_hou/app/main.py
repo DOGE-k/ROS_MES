@@ -15,6 +15,7 @@ from app.api.api import api_router
 from app.core.config import settings
 from app.db import models
 from app.db.database import engine
+from app.db.migrations import migrate_fine_tuning_device_fields
 
 app = FastAPI(title=settings.PROJECT_NAME, openapi_url=f"{settings.API_STR}/openapi.json")
 
@@ -37,3 +38,4 @@ app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
+    migrate_fine_tuning_device_fields(engine)

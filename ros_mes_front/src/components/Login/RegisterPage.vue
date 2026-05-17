@@ -50,7 +50,7 @@
           </el-form-item>
 
         <div class="toggle-action">
-          <el-link type="primary" :underline="false" @click="$router.push('/login')">
+          <el-link type="primary" :underline="false" @click="router.push('/login')">
             已有账号？去登录
           </el-link>
         </div>

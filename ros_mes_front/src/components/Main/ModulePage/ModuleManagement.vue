@@ -61,7 +61,7 @@
 import { ref, computed, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { useRouter } from "vue-router";
-import { createModule } from "@/api/rosApi";
+import { createModule, getDeviceListApi } from "@/api/rosApi";
 
 
 const router = useRouter();
@@ -164,11 +164,32 @@ const handleLockAndJump = async () => {
     return;
   }
 
+  let deviceId = 0;
+  try {
+    const deviceRes: any = await getDeviceListApi();
+    const devices = Array.isArray(deviceRes)
+      ? deviceRes
+      : Array.isArray(deviceRes.data)
+        ? deviceRes.data
+        : [];
+    const matchedDevice = devices.find(
+      (item: any) => Number(item.DeviceAddress) === Number(module_id)
+    );
+    if (!matchedDevice) {
+      ElMessage.warning("该坐标模块尚未在设备信息管理中登记，请先添加模块");
+      return;
+    }
+    deviceId = Number(matchedDevice.Device_ID);
+  } catch (err: any) {
+    ElMessage.error("获取模块设备信息失败，请检查后端服务");
+    return;
+  }
+
   const payload = {
     x,
     y,
     module_id,
-    device_id: 0,
+    device_id: deviceId,
     position: 0,
   };
 
@@ -186,6 +207,7 @@ const handleLockAndJump = async () => {
         name: "FineTuningPage",
         query: {
           module_id,
+          device_id: deviceId,
           x,
           y,
         },
