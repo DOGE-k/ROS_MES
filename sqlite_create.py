@@ -42,7 +42,6 @@ def create_database(db_path=DB_PATH):
             Modifytime DATETIME,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (Type_ID) REFERENCES Users(User_ID),
             FOREIGN KEY (Creator_ID) REFERENCES Users(User_ID)
         );
     """)
@@ -75,7 +74,7 @@ def create_database(db_path=DB_PATH):
             Creator_ID INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             Modifytime DATETIME,
-            NewVersion_ID INTEGER NOT NULL,
+            NewVersion_ID INTEGER,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
             FOREIGN KEY (Creator_ID) REFERENCES Users(User_ID),
@@ -287,6 +286,7 @@ def create_database(db_path=DB_PATH):
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
             FOREIGN KEY (Work_ID) REFERENCES works(Work_ID),
             FOREIGN KEY (model_id) REFERENCES Model(Model_ID),
+            FOREIGN KEY (Unit_ID) REFERENCES Unit(Unit_ID),
             FOREIGN KEY (device_ID) REFERENCES Device(Device_ID)
         );
     """)
@@ -307,8 +307,8 @@ def create_database(db_path=DB_PATH):
         );
     """)
 
-    # ----- 硬件表（Web后端补充）-----
-    # ----- 微调记录表（Web后端补充）-----
+
+    # ----- 微调记录表-----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning (
             id INTEGER PRIMARY KEY,
@@ -324,7 +324,7 @@ def create_database(db_path=DB_PATH):
         );
     """)
 
-    # ----- 微调配置表（Web后端补充）-----
+    # ----- 微调配置表-----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning_config (
             id INTEGER PRIMARY KEY,

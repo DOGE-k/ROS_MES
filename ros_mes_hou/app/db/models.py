@@ -10,7 +10,7 @@ class User(Base):
     User_ID = Column(Integer, primary_key=True, index=True, autoincrement=True)
     Username = Column(Text, nullable=False)
     Password = Column(Text, nullable=False)
-    Type_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False, default=2)
+    Type_ID = Column(Integer, nullable=False, default=2)
     Creator_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     Islock = Column(Boolean, nullable=False, default=False)
@@ -59,7 +59,7 @@ class Drawing(Base):
     Creator_ID = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     Createtime = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     Modifytime = Column(DateTime(timezone=True), nullable=True)
-    NewVersion_ID = Column(Integer, ForeignKey("DrawingsVersion.DrawingsVersion_ID"), nullable=False)
+    NewVersion_ID = Column(Integer, ForeignKey("DrawingsVersion.DrawingsVersion_ID"), nullable=True)
     del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
 

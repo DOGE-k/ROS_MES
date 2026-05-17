@@ -40,6 +40,9 @@ FEEDBACK_TOPICS: List[str] = [
     "/hardware/sensor_feedback",
 ]
 
+DRAWING_PATH_TOPIC = "/frontend_pointcloud_topic"
+DRAWING_PATH_MESSAGE_TYPE = "std_msgs/String"
+
 FEEDBACK_LABELS = {
     33: ("axis_encoder", "旋转轴编码器"),
     34: ("axis_encoder", "摆动轴编码器"),
@@ -77,6 +80,16 @@ def build_fine_tuning_publish_payload(parameter_name: str, position: float) -> D
     }
 
 
+def build_drawing_path_publish_payload(file_path: str) -> Dict[str, Any]:
+    return {
+        "topic": DRAWING_PATH_TOPIC,
+        "message_type": DRAWING_PATH_MESSAGE_TYPE,
+        "message": {
+            "data": json.dumps({"file_path": file_path}, ensure_ascii=False, separators=(",", ":")),
+        },
+    }
+
+
 def _position_value(value: Any) -> float:
     if isinstance(value, list):
         return float(value[0]) if value else 0.0
@@ -111,11 +124,11 @@ class RosbridgeDispatcher:
         self.timeout = timeout
 
     def dispatch(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if action != "fine_tuning":
+        if action not in {"fine_tuning", "drawing_path"}:
             raise RosbridgeError(f"unsupported rosbridge action: {action}")
-        return asyncio.run(self.publish(payload))
+        return asyncio.run(self.publish(action, payload))
 
-    async def publish(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def publish(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if websockets is None:
             raise RosbridgeError("missing websockets dependency")
 
@@ -142,7 +155,7 @@ class RosbridgeDispatcher:
             "sent": True,
             "mode": "rosbridge",
             "url": self.url,
-            "action": "fine_tuning",
+            "action": action,
             "payload": payload,
         }
 
