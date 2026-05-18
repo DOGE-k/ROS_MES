@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <el-dialog v-model="addDialogVisible" title="新增硬件" width="500px">
       <el-form
         :model="addForm"
@@ -31,7 +31,7 @@
       </el-form>
       <template #footer>
         <el-button @click="onClick">取消</el-button>
-        <el-button type="primary" @click="submitAdd">确认新增</el-button>
+        <el-button type="primary" @click="onClick">确认新增</el-button>
       </template>
     </el-dialog>
 </template>
@@ -97,7 +97,7 @@ const form: FormRules = {
     { required: true, message: "请输入硬件编号", trigger: "blur" },
     {
       validator: (rule, value, callback) => {
-        const exists = props.hardwares.some((item) => item.id === value);
+        const exists = (props.hardwares as Hardware[]).some((item) => item.id === value);
         if (exists) {
           callback(new Error("硬件编号已存在"));
         } else {

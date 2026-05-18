@@ -7,6 +7,7 @@ ROS 环境下 SQLite 数据库初始化脚本
 
 import sqlite3
 import os
+from passlib.context import CryptContext
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "ros_database.db")
 
@@ -41,7 +42,6 @@ def create_database(db_path=DB_PATH):
             Modifytime DATETIME,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (Type_ID) REFERENCES Users(User_ID),
             FOREIGN KEY (Creator_ID) REFERENCES Users(User_ID)
         );
     """)
@@ -74,7 +74,7 @@ def create_database(db_path=DB_PATH):
             Creator_ID INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             Modifytime DATETIME,
-            NewVersion_ID INTEGER NOT NULL,
+            NewVersion_ID INTEGER,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
             FOREIGN KEY (Creator_ID) REFERENCES Users(User_ID),
@@ -168,7 +168,8 @@ def create_database(db_path=DB_PATH):
     # ----- 机械臂单元表 -----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Unit (
-            Unit_ID INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Unit_ID INTEGER NOT NULL,
             UnitDescript TEXT,
             Device_ID INTEGER NOT NULL,
             creater_id INTEGER NOT NULL,
@@ -176,25 +177,35 @@ def create_database(db_path=DB_PATH):
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
             FOREIGN KEY (Device_ID) REFERENCES Device(Device_ID),
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
+            FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
+            UNIQUE(Device_ID, Unit_ID)
         );
     """)
 
     # ----- 传感器表 -----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sensors (
-            sensor_ID INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor_ID INTEGER NOT NULL,
             sensordescript TEXT,
             IsRead INTEGER NOT NULL,
+            Device_ID INTEGER NOT NULL,
             Unit_ID INTEGER NOT NULL,
+            unit_row_id INTEGER NOT NULL,
             Unit_address INTEGER NOT NULL,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (Unit_ID) REFERENCES Unit(Unit_ID),
+            FOREIGN KEY (Device_ID) REFERENCES Device(Device_ID),
+            FOREIGN KEY (unit_row_id) REFERENCES Unit(id),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
         );
+    """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_sensor_device_active
+        ON sensors (Device_ID, sensor_ID)
+        WHERE del_flag = 0;
     """)
 
     # ----- 工作表 -----
@@ -215,8 +226,8 @@ def create_database(db_path=DB_PATH):
             Notes TEXT,
             FOREIGN KEY (Drawing_ID) REFERENCES Drawings(Drawing_ID),
             FOREIGN KEY (Device_id) REFERENCES Device(Device_ID),
-            FOREIGN KEY (unit_id) REFERENCES Unit(Unit_ID),
-            FOREIGN KEY (sensor_id) REFERENCES sensors(sensor_ID),
+            FOREIGN KEY (unit_id) REFERENCES Unit(id),
+            FOREIGN KEY (sensor_id) REFERENCES sensors(id),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
         );
     """)
@@ -245,15 +256,15 @@ def create_database(db_path=DB_PATH):
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             creater_id INTEGER NOT NULL,
             Work_ID INTEGER NOT NULL,
-            sensor_ID INTEGER NOT NULL,
+            sensor_id INTEGER NOT NULL,
             isread INTEGER NOT NULL,
             data TEXT NOT NULL,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            PRIMARY KEY (Createtime, sensor_ID),
+            PRIMARY KEY (Createtime, sensor_id),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
             FOREIGN KEY (Work_ID) REFERENCES works(Work_ID),
-            FOREIGN KEY (sensor_ID) REFERENCES sensors(sensor_ID)
+            FOREIGN KEY (sensor_id) REFERENCES sensors(id)
         );
     """)
 
@@ -296,17 +307,50 @@ def create_database(db_path=DB_PATH):
         );
     """)
 
+
+    # ----- 微调记录表-----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fine_tuning (
+            id INTEGER PRIMARY KEY,
+            Device_ID INTEGER NOT NULL,
+            DeviceAddress INTEGER,
+            Devicedescript TEXT,
+            parameter_name TEXT NOT NULL,
+            old_value REAL,
+            new_value REAL NOT NULL,
+            adjusted_by TEXT,
+            adjusted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (Device_ID) REFERENCES Device(Device_ID)
+        );
+    """)
+
+    # ----- 微调配置表-----
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fine_tuning_config (
+            id INTEGER PRIMARY KEY,
+            module_id INTEGER NOT NULL,
+            device_id INTEGER NOT NULL,
+            config_json TEXT NOT NULL,
+            saved_by TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
     conn.commit()
     print("所有表创建成功！")
+
+    # 计算bcrypt哈希密码
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    hashed_password = pwd_context.hash("123456")
 
     # 插入系统初始管理员
     try:
         cursor.execute("SELECT User_ID FROM Users WHERE User_ID = 1")
         if cursor.fetchone() is None:
             cursor.execute("""
-                INSERT INTO Users (User_ID, Username, Password, Type_ID, Creator_ID, Createtime, Islock)
-                VALUES (1, 'admin', '123456', 1, 1, CURRENT_TIMESTAMP, 0)
-            """)
+                INSERT INTO Users (User_ID, Username, Password, Type_ID, Creator_ID, Createtime, Islock, del_flag)
+                VALUES (1, 'admin', ?, 1, 1, CURRENT_TIMESTAMP, 0, 0)
+            """, (hashed_password,))
             conn.commit()
             print("已插入默认管理员用户（admin）。")
     except Exception as e:
@@ -317,8 +361,8 @@ def create_database(db_path=DB_PATH):
         cursor.execute("SELECT Model_ID FROM Model WHERE Model_ID = 17")
         if cursor.fetchone() is None:
             cursor.execute("""
-                INSERT INTO Model (Model_ID, Modelname, creater_id, Createtime)
-                VALUES (17, '一号', 1, CURRENT_TIMESTAMP)
+                INSERT INTO Model (Model_ID, Modelname, creater_id, Createtime, del_flag)
+                VALUES (17, '一号', 1, CURRENT_TIMESTAMP, 0)
             """)
             print("已插入 Model_ID=17")
         conn.commit()
@@ -326,76 +370,110 @@ def create_database(db_path=DB_PATH):
         cursor.execute("SELECT Device_ID FROM Device WHERE Device_ID = 1")
         if cursor.fetchone() is None:
             cursor.execute("""
-                INSERT INTO Device (Device_ID, Model_ID, DeviceAddress, creater_id, Createtime)
-                VALUES (1, 17, 00010001, 1, CURRENT_TIMESTAMP)
+                INSERT INTO Device (Device_ID, Model_ID, DeviceAddress, creater_id, Createtime, del_flag)
+                VALUES (1, 17, 17, 1, CURRENT_TIMESTAMP, 0)
             """)
             print("已插入 Device_ID=1")
         conn.commit()
 
-        unit_list = [
-            (32, '一号机械臂'),
-            (64, '二号机械臂'),
-            (96, '三号机械臂'),
+        unit_sensor_data = [
+            (32, '一号机械臂', [
+                (33, '旋转电机', 1, 32, 1),
+                (34, '摆动电机', 1, 32, 2),
+                (35, '伸缩电机', 1, 32, 3),
+                (41, '旋转编码器', 1, 32, 1),
+                (42, '偏转编码器', 1, 32, 2),
+                (43, '伸缩编码器', 1, 32, 3),
+                (49, '压力传感器', 1, 32, 0),
+                (50, '陀螺仪传感器', 1, 32, 4),
+            ]),
+            (64, '二号机械臂', [
+                (65, '旋转电机', 1, 64, 1),
+                (66, '摆动电机', 1, 64, 2),
+                (67, '伸缩电机', 1, 64, 3),
+                (73, '旋转编码器', 1, 64, 1),
+                (74, '偏转编码器', 1, 64, 2),
+                (75, '伸缩编码器', 1, 64, 3),
+                (81, '压力传感器', 1, 64, 0),
+                (82, '陀螺仪传感器', 1, 64, 4),
+            ]),
+            (96, '三号机械臂', [
+                (97, '旋转电机', 1, 96, 1),
+                (98, '摆动电机', 1, 96, 2),
+                (99, '伸缩电机', 1, 96, 3),
+                (105, '旋转编码器', 1, 96, 1),
+                (106, '偏转编码器', 1, 96, 2),
+                (107, '伸缩编码器', 1, 96, 3),
+                (113, '压力传感器', 1, 96, 0),
+                (114, '陀螺仪传感器', 1, 96, 4),
+            ]),
         ]
-        for unit_id, desc in unit_list:
-            cursor.execute("SELECT Unit_ID FROM Unit WHERE Unit_ID = ?", (unit_id,))
-            if cursor.fetchone() is None:
+        for unit_id, desc, sensor_list in unit_sensor_data:
+            cursor.execute("SELECT id FROM Unit WHERE Device_ID = ? AND Unit_ID = ?", (1, unit_id))
+            row = cursor.fetchone()
+            if row is None:
                 cursor.execute("""
-                    INSERT INTO Unit (Unit_ID, UnitDescript, Device_ID, creater_id, Createtime)
-                    VALUES (?, ?, 1, 1, CURRENT_TIMESTAMP)
+                    INSERT INTO Unit (Unit_ID, UnitDescript, Device_ID, creater_id, Createtime, del_flag)
+                    VALUES (?, ?, 1, 1, CURRENT_TIMESTAMP, 0)
                 """, (unit_id, desc))
+                unit_row_id = cursor.lastrowid
                 print(f"已插入 Unit_ID={unit_id}")
-        conn.commit()
+            else:
+                unit_row_id = row[0]
+            conn.commit()
 
-        sensor_list = [
-            # 一号机械臂传感器 (Unit_ID=32)
-            (33, '一号机械臂的旋转电机', 1, 32, 1),
-            (34, '一号机械臂的摆动电机', 1, 32, 2),
-            (35, '一号机械臂的伸缩电机', 1, 32, 3),
-            (41, '一号机械臂的旋转编码器', 1, 32, 1),
-            (42, '一号机械臂的偏转编码器', 1, 32, 2),
-            (43, '一号机械臂的伸缩编码器', 1, 32, 3),
-            (49, '一号机械臂的压力传感器', 1, 32, 0),
-            (50, '一号机械臂的陀螺仪传感器', 1, 32, 4),
-            # 二号机械臂传感器 (Unit_ID=64)
-            (65, '二号机械臂的旋转电机', 1, 64, 1),
-            (66, '二号机械臂的摆动电机', 1, 64, 2),
-            (67, '二号机械臂的伸缩电机', 1, 64, 3),
-            (73, '二号机械臂的旋转编码器', 1, 64, 1),
-            (74, '二号机械臂的偏转编码器', 1, 64, 2),
-            (75, '二号机械臂的伸缩编码器', 1, 64, 3),
-            (81, '二号机械臂的压力传感器', 1, 64, 0),
-            (82, '二号机械臂的陀螺仪传感器', 1, 64, 4),
-            # 三号机械臂传感器 (Unit_ID=96)
-            (97, '三号机械臂的旋转电机', 1, 96, 1),
-            (98, '三号机械臂的摆动电机', 1, 96, 2),
-            (99, '三号机械臂的伸缩电机', 1, 96, 3),
-            (105, '三号机械臂的旋转编码器', 1, 96, 1),
-            (106, '三号机械臂的偏转编码器', 1, 96, 2),
-            (107, '三号机械臂的伸缩编码器', 1, 96, 3),
-            (113, '三号机械臂的压力传感器', 1, 96, 0),
-            (114, '三号机械臂的陀螺仪传感器', 1, 96, 4),
-        ]
-        for sensor_id, desc, isread, unit_id, unit_addr in sensor_list:
-            cursor.execute("SELECT sensor_ID FROM sensors WHERE sensor_ID = ?", (sensor_id,))
-            if cursor.fetchone() is None:
-                cursor.execute("""
-                    INSERT INTO sensors (sensor_ID, sensordescript, IsRead, Unit_ID, Unit_address, creater_id, Createtime)
-                    VALUES (?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                """, (sensor_id, desc, isread, unit_id, unit_addr))
-                print(f"已插入 sensor_ID={sensor_id}")
-        conn.commit()
+            for sensor_id, s_desc, isread, s_unit_id, unit_addr in sensor_list:
+                cursor.execute(
+                    "SELECT id FROM sensors WHERE unit_row_id = ? AND sensor_ID = ?",
+                    (unit_row_id, sensor_id),
+                )
+                sensor_row = cursor.fetchone()
+                if sensor_row is None:
+                    cursor.execute("""
+                        INSERT INTO sensors (sensor_ID, sensordescript, IsRead, Device_ID, Unit_ID, Unit_address, unit_row_id, creater_id, Createtime, del_flag)
+                        VALUES (?, ?, ?, 1, ?, ?, ?, 1, CURRENT_TIMESTAMP, 0)
+                    """, (sensor_id, s_desc, isread, s_unit_id, unit_addr, unit_row_id))
+                    sensor_row_id = cursor.lastrowid
+                    print(f"已插入 sensor_ID={sensor_id}")
+                else:
+                    sensor_row_id = sensor_row[0]
+                    cursor.execute("""
+                        UPDATE sensors
+                        SET sensordescript = ?, IsRead = ?, Unit_ID = ?, Unit_address = ?, del_flag = 0
+                        WHERE id = ?
+                    """, (s_desc, isread, s_unit_id, unit_addr, sensor_row_id))
+            conn.commit()
 
         cursor.execute("SELECT Work_ID FROM works WHERE Work_ID = 1")
         if cursor.fetchone() is None:
+            cursor.execute("SELECT id FROM Unit WHERE Device_ID = ? AND Unit_ID = ?", (1, 32))
+            initial_unit = cursor.fetchone()
             cursor.execute("""
-                INSERT INTO works (Work_ID, Workname, Device_id, unit_id, sensor_id, creater_id, Createtime)
-                VALUES (1, '初始工作', 1, 32, 33, 1, CURRENT_TIMESTAMP)
-            """)
+                SELECT s.id
+                FROM sensors AS s
+                JOIN Unit AS u ON u.id = s.unit_row_id
+                WHERE u.Device_ID = ? AND u.Unit_ID = ? AND s.sensor_ID = ?
+            """, (1, 32, 33))
+            initial_sensor = cursor.fetchone()
+            if initial_unit is None or initial_sensor is None:
+                raise RuntimeError("初始工作引用的机械臂或传感器不存在")
+            cursor.execute("""
+                INSERT INTO works (Work_ID, Workname, Device_id, unit_id, sensor_id, creater_id, Createtime, del_flag)
+                VALUES (1, '初始工作', 1, ?, ?, 1, CURRENT_TIMESTAMP, 0)
+            """, (initial_unit[0], initial_sensor[0]))
             print("已插入 Work_ID=1")
         conn.commit()
 
         print("所有初始数据插入完成！")
+
+        # 向后兼容：修复可能存在的 del_flag=NULL 数据
+        tables_with_del_flag = ['Model', 'Device', 'Unit', 'sensors', 'works', 'workflows', 'work_flow_relations',
+                                'sensor_log', 'calculation', 'point_data', 'Users', 'Drawings',
+                                'DrawingsVersion', 'Tasks']
+        for tbl in tables_with_del_flag:
+            cursor.execute(f"UPDATE {tbl} SET del_flag = 0 WHERE del_flag IS NULL")
+        conn.commit()
+        print("已修复所有 del_flag=NULL 的数据。")
     except Exception as e:
         print(f"插入初始数据时出现异常：{e}")
 

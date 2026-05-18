@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="task-manage">
     <el-card class="header-card">
       <div class="header-row">
@@ -144,12 +144,12 @@
     </el-card>
 
     <el-dialog v-model="formVisible" :title="isEditing ? '编辑任务' : '新建任务'" width="700px" destroy-on-close>
-      <el-form :model="taskForm" label-width="100px" ref="formRef">
+      <el-form :model="taskForm" label-width="100px">
         <el-form-item label="任务名称" required>
           <el-input v-model="taskForm.Taskname" placeholder="请输入任务名称" />
         </el-form-item>
         <el-form-item label="任务描述">
-          <el-input v-model="taskForm.Taskdescripte" type="textarea" :rows="2" placeholder="请输入任务描述（可选）" />
+          <el-input v-model="taskForm.Taskdescripte" type="textarea" :rows="2" placeholder="请输入任务描述" />
         </el-form-item>
         <el-form-item label="绑定工作流">
           <el-select v-model="taskForm.Workflow_ID" placeholder="请选择工作流" clearable style="width: 100%" @change="onWorkflowChange">
@@ -158,7 +158,7 @@
         </el-form-item>
         <el-form-item v-if="selectedWorks.length > 0" label="工作子集">
           <div class="works-subset-panel">
-            <div class="works-subset-header">该工作流包含以下工作（共 {{ selectedWorks.length }} 项）</div>
+            <div class="works-subset-header">该工作流包含以下工作，共 {{ selectedWorks.length }} 项</div>
             <el-table :data="selectedWorks" border stripe size="small" max-height="200">
               <el-table-column type="index" label="序号" width="50" />
               <el-table-column prop="flow_seq" label="执行顺序" width="80" />
@@ -178,7 +178,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="taskForm.Notes" type="textarea" :rows="3" placeholder="备注信息（可选）" />
+          <el-input v-model="taskForm.Notes" type="textarea" :rows="3" placeholder="备注信息" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -267,7 +267,7 @@
                 </el-row>
               </el-form-item>
               <el-form-item label="机械臂轨迹">
-                <el-input v-model="pieceForm.robot_track" placeholder="轨迹数据或文件路径（可选）" />
+                <el-input v-model="pieceForm.robot_track" placeholder="轨迹数据或文件路径" />
               </el-form-item>
               <el-form-item label="操作人员">
                 <el-input v-model="pieceForm.operator" placeholder="操作人员姓名" />
@@ -280,7 +280,7 @@
         </div>
 
         <div class="section-block">
-          <h4 class="section-title">任务跟踪记录</h4>
+          <h4 class="section-title">任务追踪记录</h4>
           <el-table :data="tracingList" border stripe v-loading="tracingLoading" max-height="400">
             <el-table-column prop="operate_time" label="操作时间" width="170" />
             <el-table-column label="操作类型" width="120">
@@ -476,15 +476,28 @@ function calcStats() {
   stats.finished = list.filter(t => t.Status === '3').length
 }
 
+function mergeTaskRow(updated: Partial<TaskItem> & { Task_ID: number }) {
+  const index = taskList.value.findIndex(t => t.Task_ID === updated.Task_ID)
+  if (index === -1) return
+  taskList.value[index] = {
+    ...taskList.value[index],
+    ...updated,
+  }
+  taskList.value = [...taskList.value]
+  calcStats()
+}
+
+function setTaskStatus(taskId: number, status: string) {
+  mergeTaskRow({ Task_ID: taskId, Status: status } as TaskItem)
+}
+
 async function fetchDrawings() {
   try {
     const res = await getDrawingListApi()
     if (res.code === 200) {
       drawingOptions.value = res.data || []
     }
-  } catch {
-    // TODO: 图纸接口不可用时使用普通输入框
-  }
+  } catch {}
 }
 
 async function fetchWorkflows() {
@@ -493,9 +506,7 @@ async function fetchWorkflows() {
     if (res.code === 200) {
       workflowOptions.value = res.data || []
     }
-  } catch {
-    // TODO: 工作流接口不可用时使用普通输入框
-  }
+  } catch {}
 }
 
 async function fetchUsers() {
@@ -504,9 +515,7 @@ async function fetchUsers() {
     if (res.code === 200) {
       userOptions.value = res.data || []
     }
-  } catch {
-    // TODO: 用户列表接口不可用时使用普通输入框
-  }
+  } catch {}
 }
 
 function handleSearch() {
@@ -526,7 +535,6 @@ async function onWorkflowChange(workflowId: number | null) {
   if (!workflowId) return
   try {
     const res = await getWorkflowListApi()
-    // TODO: 如果有工作流详情接口返回工作子集，改为使用详情接口
     const workflowDetail = res.data?.find((w: any) => w.Workflow_ID === workflowId)
     if (workflowDetail && (workflowDetail as any).works) {
       selectedWorks.value = (workflowDetail as any).works.map((w: any) => ({
@@ -536,9 +544,7 @@ async function onWorkflowChange(workflowId: number | null) {
         flow_seq: w.flow_seq || 0,
       }))
     }
-  } catch {
-    // 工作流详情接口不可用时静默处理
-  }
+  } catch {}
 }
 
 function resetPieceForm() {
@@ -620,6 +626,7 @@ async function handleStart(row: TaskItem) {
     const res = await startTaskApi(row.Task_ID)
     if (res.code === 200) {
       ElMessage.success('任务已启动')
+      mergeTaskRow({ ...res.data, Task_ID: row.Task_ID, Status: '1' })
       fetchTaskList()
     }
   } catch (err: any) {
@@ -632,6 +639,7 @@ async function handlePause(row: TaskItem) {
     const res = await pauseTaskApi(row.Task_ID)
     if (res.code === 200) {
       ElMessage.success('任务已暂停')
+      mergeTaskRow({ ...res.data, Task_ID: row.Task_ID, Status: '2' })
       fetchTaskList()
     }
   } catch (err: any) {
@@ -644,6 +652,7 @@ async function handleResume(row: TaskItem) {
     const res = await resumeTaskApi(row.Task_ID)
     if (res.code === 200) {
       ElMessage.success('任务已唤醒')
+      mergeTaskRow({ ...res.data, Task_ID: row.Task_ID, Status: '1' })
       fetchTaskList()
     }
   } catch (err: any) {
@@ -656,6 +665,7 @@ async function handleFinish(row: TaskItem) {
     const res = await finishTaskApi(row.Task_ID)
     if (res.code === 200) {
       ElMessage.success('任务已结束')
+      mergeTaskRow({ ...res.data, Task_ID: row.Task_ID, Status: '3' })
       fetchTaskList()
     }
   } catch (err: any) {
@@ -750,10 +760,15 @@ async function handleDispatch(row: TaskItem) {
 async function confirmDispatch() {
   dispatching.value = true
   try {
+    const previousRunning = taskList.value.find(t => t.Status === '1')
     const res = await dispatchTaskApi(dispatchTaskId.value)
     if (res.code === 200) {
       ElMessage.success('任务调度成功')
       dispatchVisible.value = false
+      if (previousRunning && previousRunning.Task_ID !== dispatchTaskId.value) {
+        setTaskStatus(previousRunning.Task_ID, '2')
+      }
+      mergeTaskRow({ ...res.data, Task_ID: dispatchTaskId.value, Status: '1' })
       fetchTaskList()
     }
   } catch (err: any) {
@@ -875,3 +890,7 @@ onMounted(() => {
   margin: 0;
 }
 </style>
+
+
+
+

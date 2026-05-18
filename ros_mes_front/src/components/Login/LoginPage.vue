@@ -43,7 +43,7 @@
         </el-form-item>
 
         <div class="toggle-action">
-          <el-link type="info" underline="never" @click="$router.push('/register')"
+          <el-link type="info" underline="never" @click="router.push('/register')"
             >没有账号？申请注册</el-link
           >
         </div>

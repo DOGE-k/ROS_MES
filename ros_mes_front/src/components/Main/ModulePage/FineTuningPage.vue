@@ -1,6 +1,6 @@
-<template>
+﻿<template>
   <div class="fine-tuning-container">
-    <!-- 顶部静态文字和按钮 -->
+    <!-- 顶部标题和返回按钮 -->
     <el-card class="header-card">
       <div class="header-row">
         <div class="header-left">
@@ -16,7 +16,7 @@
         <template #header>
           <div class="card-header">
             <span class="header-text"
-              >核心机械臂控制单元 - 设备 {{ armList.id }}</span
+              >核心机械臂控制单元 - 机械臂 {{ armList.id }}</span
             >
             <el-button type="success" @click="handleSaveConfig"
               >保存配置</el-button
@@ -28,7 +28,7 @@
             <div class="label-box">
               <div class="input-box">
                 <span class="label-title"
-                  >{{ armList.device[0].label }}(°)</span
+                  >{{ armList.device[0].label }}(度)</span
                 >
                 <el-input-number
                   v-model="armList.device[0].adjust"
@@ -54,7 +54,7 @@
             <div class="label-box">
               <div class="input-box">
                 <span class="label-title"
-                  >{{ armList.device[1].label }}(°)</span
+                  >{{ armList.device[1].label }}(度)</span
                 >
                 <el-input-number
                   v-model="armList.device[1].adjust"
@@ -115,90 +115,82 @@
 
     <el-dialog
       v-model="initDialogVisible"
-      title="目标坐标下发"
+      title="目标图纸下发"
       width="450px"
       :close-on-click-modal="false"
       :close-on-press-escape="false"
       :show-close="false"
     >
       <el-form label-width="100px">
-        <el-form-item label="设备编号" required>
-        <el-select
-          v-model="initConfig.deviceId"
-          placeholder="请选择机械臂"
-          style="width: 100%"
-        >
-          <el-option
-            v-for="item in armIdList"
-            :key="item"
-            :label="item"
-            :value="item"
-          />
-        </el-select>
-      </el-form-item>
-        <el-form-item label="X 坐标" required>
-          <el-input-number
-            v-model="initConfig.x"
-            :step="10"
-            controls-position="right"
-            style="width: 100%"
-            :disabled="coordinateDisable"
-          />
+        <el-form-item label="已选模块">
+          <el-input :model-value="moduleDisplay" disabled />
         </el-form-item>
-        <el-form-item label="Y 坐标" required>
-          <el-input-number
-            v-model="initConfig.y"
-            :step="10"
-            controls-position="right"
+        <el-form-item label="机械臂" required>
+          <el-select
+            v-model="initConfig.unitRowId"
+            placeholder="请选择机械臂"
             style="width: 100%"
-          />
+          >
+            <el-option
+              v-for="item in armIdList"
+              :key="item.id"
+              :label="formatUnitOption(item)"
+              :value="item.id"
+            />
+          </el-select>
         </el-form-item>
-        <el-form-item label="Z 坐标" required>
-          <el-input-number
-            v-model="initConfig.z"
-            :step="10"
-            controls-position="right"
+        <el-form-item label="图纸" required>
+          <el-select
+            v-model="initConfig.drawingId"
+            placeholder="请选择图纸"
             style="width: 100%"
-          />
+          >
+            <el-option
+              v-for="item in drawingList"
+              :key="item.drawingId"
+              :label="item.drawingName"
+              :value="item.drawingId"
+            />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button type="primary" @click="confirmInitConfig"
-          >确定并关闭</el-button
-        >
+        <el-button type="primary" @click="confirmInitConfig">确定并关闭</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import {
-  getHardwareList,
+  getDrawingListApi,
+  getUnitsByDeviceApi,
   sendCoordination,
   sendFineTuning,
   saveFineTuningConfig,
 } from "@/api/rosApi";
 
 const router = useRouter();
-const coordinateDisable = ref(false)
 
-// ========== 新增：初始化强制弹窗逻辑 ==========
-const initDialogVisible = ref(true); // 默认 true，页面一进来就弹
+// 页面进入后强制先完成目标图纸下发配置
+const initDialogVisible = ref(true);
 const initConfig = reactive({
   deviceId: 0,
-  x: 0,
-  y: 0,
-  z: 0,
+  unitId: 0,
+  unitRowId: 0,
+  drawingId: 0,
 });
 
 var loading = ref(false);
-const armIdList = ref<number[]>([]); // 从后端获取的机械臂编号列表
-// ========== 1. 路由参数获取 ==========
+let feedbackSocket: WebSocket | null = null;
+const armIdList = ref<any[]>([]);
+const drawingList = ref<any[]>([]);
 const route = useRoute();
-const moduleId = ref<number>(0); // 当前操作的模块编号
+const moduleId = ref<number>(0);
+const moduleDisplay = ref("");
 const armList = reactive({
   id: 0,
   device: [
@@ -209,67 +201,134 @@ const armList = reactive({
   ],
 });
 
-const confirmInitConfig = async () => {
-  if (
-    initConfig.deviceId === null ||
-    initConfig.deviceId === undefined ||
-    initConfig.deviceId === ""
-  ) {
-    ElMessage.warning("必须选择一个设备编号才能继续");
+const formatUnitOption = (item: any) => {
+  const desc = item.UnitDescript ? ` - ${item.UnitDescript}` : "";
+  return `机械臂 ${item.Unit_ID}${desc}`;
+};
+
+const adjustmentKeys = ["rotation", "swing", "telescopic"];
+const feedbackDeviceIndex: Record<number, number> = {
+  33: 0,
+  34: 1,
+  35: 2,
+};
+
+const getFeedbackWsUrl = () => {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/control/feedback/ws`;
+};
+
+const applyFeedback = (feedback: any) => {
+  if (!feedback || feedback.data_type === "error") {
+    if (feedback?.message) {
+      console.warn("ROS 反馈订阅异常：", feedback.message);
+    }
     return;
   }
 
-  coordinateDisable.value = true;
+  const position = Number(feedback.position);
+  if (!Number.isFinite(position)) {
+    return;
+  }
+
+  if (feedback.data_type === "axis_encoder") {
+    const index = feedbackDeviceIndex[Number(feedback.device_id)];
+    if (index !== undefined) {
+      armList.device[index].current = position;
+      loading.value = true;
+    }
+    return;
+  }
+
+  if (feedback.data_type === "pressure_sensor") {
+    armList.device[3].current = position;
+    loading.value = true;
+  }
+};
+
+const connectFeedbackSocket = () => {
+  if (feedbackSocket) {
+    feedbackSocket.close();
+  }
+
+  feedbackSocket = new WebSocket(getFeedbackWsUrl());
+  feedbackSocket.onmessage = (event) => {
+    try {
+      applyFeedback(JSON.parse(event.data));
+    } catch (err) {
+      console.warn("ROS 反馈解析失败：", err);
+    }
+  };
+  feedbackSocket.onclose = () => {
+    feedbackSocket = null;
+  };
+};
+
+const confirmInitConfig = async () => {
+  const selectedUnit = armIdList.value.find(
+    (item: any) => Number(item.id) === Number(initConfig.unitRowId)
+  );
+
+  if (!selectedUnit) {
+    ElMessage.warning("必须选择一个机械臂才能继续");
+    return;
+  }
+
+  if (!initConfig.drawingId) {
+    ElMessage.warning("必须选择一张图纸才能继续");
+    return;
+  }
+
+  initConfig.unitId = Number(selectedUnit.Unit_ID);
 
   const payload = {
     device_id: Number(initConfig.deviceId),
     module_id: Number(moduleId.value),
-    x: Number(initConfig.x),
-    y: Number(initConfig.y),
-    z: Number(initConfig.z),
+    unit_id: Number(selectedUnit.Unit_ID),
+    unit_row_id: Number(selectedUnit.id),
+    drawing_id: Number(initConfig.drawingId),
   };
 
-  console.log("坐标下发提交数据：", payload);
+  console.log("目标图纸下发提交数据：", payload);
 
   try {
-  const res: any = await sendCoordination(payload);
+    const res: any = await sendCoordination(payload);
 
-  console.log("坐标下发返回：", res);
+    console.log("目标图纸下发返回：", res);
 
-  if (res && res.code === 200) {
-    ElMessage.success("初始参数下发成功！");
-    initDialogVisible.value = false;
-    armList.id = initConfig.deviceId;
-
-    loading.value = true;
-    coordinateDisable.value = false;
-  } else {
-    ElMessage.error(res?.message || res?.msg || "初始参数下发失败");
-    coordinateDisable.value = false;
+    if (res && res.code === 200) {
+      ElMessage.success("目标图纸下发成功");
+      initDialogVisible.value = false;
+      armList.id = initConfig.unitId;
+      loading.value = true;
+    } else {
+      ElMessage.error(res?.message || res?.msg || "目标图纸下发失败");
+    }
+  } catch (err: any) {
+    console.error("目标图纸下发失败：", err.response?.data || err);
+    ElMessage.error(
+      err.response?.data?.detail ||
+        err.response?.data?.message ||
+        "目标图纸下发失败，请检查后端服务"
+    );
   }
-} catch (err: any) {
-  console.error("初始参数下发失败：", err.response?.data || err);
-  ElMessage.error(
-    err.response?.data?.detail ||
-      err.response?.data?.message ||
-      "初始参数下发失败，请检查后端服务"
-  );
-}
 };
-
-// ========== 3. 单个机械臂微调（核心接口） ==========
+// 单个机械臂微调：不改变 Unit_ID，只记录参数名和调整值
 const sendSingleAdjust = async (value: number) => {
   const adjustValue = Number(armList.device[value].adjust);
 
   console.log("微调值：", adjustValue);
   loading.value = false;
 
-  const adjustid = Number(initConfig.deviceId) + value + 1;
+  const parameterName = adjustmentKeys[value] || `adjust_${value}`;
 
   try {
     const res: any = await sendFineTuning({
       module_id: Number(moduleId.value),
-      device_id: adjustid,
+      device_id: Number(initConfig.deviceId),
+      unit_id: Number(initConfig.unitId),
+      unit_row_id: Number(initConfig.unitRowId),
+      parameter_name: parameterName,
       position: adjustValue,
     });
 
@@ -278,10 +337,9 @@ const sendSingleAdjust = async (value: number) => {
     if (res && res.code === 200) {
       ElMessage.success(`机械臂 ${armList.id} 微调成功`);
 
-      // 情况 1：后端返回数组，例如多个设备当前位置
       if (Array.isArray(res.data)) {
         for (const i of res.data) {
-          if (Number(i.device_id) === adjustid) {
+          if (i.parameter_name === parameterName || Number(i.device_id) === Number(initConfig.deviceId)) {
             armList.device[value].current = Number(i.position);
           } else {
             armList.device[3].current = Number(i.position);
@@ -290,17 +348,14 @@ const sendSingleAdjust = async (value: number) => {
         }
       }
 
-      // 情况 2：mock 或后端返回对象，例如 { position: 1 }
       else if (res.data && res.data.position !== undefined) {
         armList.device[value].current = Number(res.data.position);
       }
 
-      // 情况 3：mock 没有返回当前位置，就直接用当前输入值作为当前位置
       else {
         armList.device[value].current = adjustValue;
       }
 
-      // 不再强制回到 0，而是同步到最新值
       armList.device[value].adjust = Number(armList.device[value].current);
     } else {
       ElMessage.error(res?.message || res?.msg || "微调失败");
@@ -318,10 +373,9 @@ const sendSingleAdjust = async (value: number) => {
 const handleSaveConfig = async () => {
   if (
     initConfig.deviceId === null ||
-    initConfig.deviceId === undefined ||
-    initConfig.deviceId === ""
+    initConfig.deviceId === undefined
   ) {
-    ElMessage.warning("请先选择设备并完成初始坐标下发");
+    ElMessage.warning("请先选择机械臂并完成目标图纸下发");
     return;
   }
 
@@ -329,11 +383,14 @@ const handleSaveConfig = async () => {
     const payload = {
       module_id: Number(moduleId.value),
       device_id: Number(initConfig.deviceId),
-      x: Number(initConfig.x),
-      y: Number(initConfig.y),
-      z: Number(initConfig.z),
+      unit_id: Number(initConfig.unitId),
+      unit_row_id: Number(initConfig.unitRowId),
+      drawing_id: Number(initConfig.drawingId),
       devices: armList.device.map((item: any, index: number) => ({
-        device_id: index === 3 ? -1 : Number(initConfig.deviceId) + index + 1,
+        device_id: Number(initConfig.deviceId),
+        unit_id: Number(initConfig.unitId),
+        unit_row_id: Number(initConfig.unitRowId),
+        parameter_name: index === 3 ? "pressure" : adjustmentKeys[index],
         label: item.label || "压力传感器",
         initial: Number(item.initial || 0),
         adjust: Number(item.adjust || 0),
@@ -365,6 +422,9 @@ const goBack = () => {
 // ========== 6. 页面初始化 ==========
 onMounted(async () => {
   const qModuleId = route.query.module_id;
+  const qDeviceId = route.query.device_id ?? route.query.Device_ID;
+  const qX = route.query.x;
+  const qY = route.query.y;
 
   if (qModuleId) {
     moduleId.value = parseInt(qModuleId as string);
@@ -374,42 +434,59 @@ onMounted(async () => {
     return;
   }
 
+  const lockedDeviceId = qDeviceId ? Number(qDeviceId) : Number(moduleId.value);
+  initConfig.deviceId = lockedDeviceId;
+  moduleDisplay.value = qX && qY
+    ? `模块 ${moduleId.value} (${qX},${qY})`
+    : `模块 ${moduleId.value}`;
+
   try {
-    const res: any = await getHardwareList();
+    const [unitRes, drawingRes]: any[] = await Promise.all([
+      getUnitsByDeviceApi(lockedDeviceId),
+      getDrawingListApi(),
+    ]);
 
-    console.log("微调页获取设备列表返回：", res);
-
-    const list = Array.isArray(res)
-      ? res
-      : Array.isArray(res.data)
-        ? res.data
+    const units = Array.isArray(unitRes)
+      ? unitRes
+      : Array.isArray(unitRes.data)
+        ? unitRes.data
+        : [];
+    const drawings = Array.isArray(drawingRes)
+      ? drawingRes
+      : Array.isArray(drawingRes.data)
+        ? drawingRes.data
         : [];
 
-    if (list.length === 0) {
-      ElMessage.warning("未获取到设备编号列表，请先添加机械臂信息");
-      router.push("/HardWorkPage");
-      return;
-    }
-
-    armIdList.value = list
-      .map((item: any) =>
-        Number(item.device_id ?? item.hardware_id ?? item.id)
-      )
-      .filter((id: number) => !Number.isNaN(id));
+    armIdList.value = units.filter((item: any) => Number.isFinite(Number(item.id)));
+    drawingList.value = drawings.filter((item: any) => Number.isFinite(Number(item.drawingId)));
 
     if (armIdList.value.length === 0) {
-      ElMessage.warning("设备列表中没有可用的设备编号");
+      ElMessage.warning("当前模块下没有可用机械臂，请先在设备信息管理中添加机械臂");
       router.push("/HardWorkPage");
       return;
     }
 
-    initConfig.deviceId = armIdList.value[0];
-    armList.id = initConfig.deviceId;
+    if (drawingList.value.length === 0) {
+      ElMessage.warning("暂无可用图纸，请先在图纸管理中导入图纸");
+      router.push("/drawingManage");
+      return;
+    }
 
-    console.log("微调页设备编号列表：", armIdList.value);
+    initConfig.unitRowId = Number(armIdList.value[0].id);
+    initConfig.unitId = Number(armIdList.value[0].Unit_ID);
+    initConfig.drawingId = Number(drawingList.value[0].drawingId);
+    armList.id = initConfig.unitId;
+    connectFeedbackSocket();
   } catch (err: any) {
-    console.error("请求设备编号列表失败：", err.response?.data || err);
-    ElMessage.error("请求设备编号列表失败");
+    console.error("初始化机械臂或图纸列表失败：", err.response?.data || err);
+    ElMessage.error("初始化机械臂或图纸列表失败");
+  }
+});
+
+onBeforeUnmount(() => {
+  if (feedbackSocket) {
+    feedbackSocket.close();
+    feedbackSocket = null;
   }
 });
 </script>
@@ -467,7 +544,7 @@ onMounted(async () => {
   gap: 10px;
 }
 
-/* ========== 卡片美化样式 ========== */
+/* ========== 卡片样式 ========== */
 .arm-list {
   display: flex;
   justify-content: center;
@@ -533,7 +610,7 @@ onMounted(async () => {
   gap: 10px;
 }
 
-/* 压力传感器黑盒样式 */
+/* 压力传感器面板 */
 .sensor-panel {
   margin-top: 40px;
   background: #2b3243;
@@ -595,3 +672,8 @@ onMounted(async () => {
   justify-content: center;
 }
 </style>
+
+
+
+
+
