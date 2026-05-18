@@ -128,7 +128,7 @@ class STM32Bridge:
         try:
             h = (pos >> 8) & 0xFF
             l = pos & 0xFF
-            buf = bytes([mid, did, h, l])
+            buf = bytes([mid, did, h, l, mid])  # 5字节：module_id, device_id, h, l, module_id
             with self.serial_lock:
                 if self.ser is None or not self.ser.is_open: return
                 self.ser.write(buf)
