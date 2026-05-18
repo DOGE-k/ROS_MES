@@ -1,31 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-节点A：最优托举点计算（含数据库存储 - 按模块存一条记录）
+节点A：最优托举点计算（不包含运动学解算）
 发布话题：/arm_alpha_beta
-数据库：ros_database.db → calculation 表（device_ID, Unit_id 为 NULL）
 """
 
 import rospy
 import json
 import numpy as np
 import time
-import sqlite3
-import os
 import open3d as o3d
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from scipy.spatial import KDTree
 from std_msgs.msg import String
 
-# ===================== 在这里加入下面这段 =====================
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROS_MES_DIR = os.path.dirname(SCRIPT_DIR)
-ROS_MES_DIR = os.path.dirname(ROS_MES_DIR)
-DB_FILE = os.path.join(ROS_MES_DIR, "ros_database.db")
-# ==============================================================
-
-# =============== 性能监控装饰器 ===============
+# =============== 性能监控装饰器（可继承自原代码） ===============
 def timeit(func):
     def wrapper(*args, **kwargs):
         start = time.time()
@@ -40,7 +29,7 @@ def timeit(func):
 class Config:
     VOXEL_SIZE = 0.1
     MAX_WORKERS = 4
-    MAX_SWING_ANGLE = 20.0
+    MAX_SWING_ANGLE = 20.0      # 此处虽用不到，但保留便于后续统一配置
     ARM_MIN_EXTEND = 1.0
     ARM_MAX_EXTEND = 60.0
     VERTICAL_CHECK_RADIUS = 1.0
@@ -56,7 +45,7 @@ class Config:
     DISTANCE_WEIGHT = 0.6
     ANGLE_WEIGHT = 0.4
 
-# =============== 工具函数 ===============
+# =============== 工具函数（仅点云处理，无运动学） ===============
 @timeit
 def extract_surface_points(points, k=Config.SURFACE_EXTRACT_K, angle_thresh=Config.SURFACE_ANGLE_THRESH):
     if len(points) < k:
@@ -117,7 +106,7 @@ def is_horizontal_plane(points):
     z_std = np.std(points[:, 2])
     return (angle < Config.HORIZONTAL_ANGLE_THRESH) and (z_std < Config.HORIZONTAL_Z_STD), normal
 
-# =============== 点选择与策略控制器 ===============
+# =============== 点选择与策略控制器（无运动学） ===============
 class FusionPointSelector:
     def __init__(self):
         self.stats = {"vertical": 0, "horizontal": 0, "surface": 0}
@@ -156,7 +145,7 @@ class FusionPointSelector:
         elif Config.POINT_SELECT_STRATEGY == "min_distance":
             self.strategy_used = "min_distance"
             return points[np.argmin(r)]
-        else:
+        else:  # balanced
             self.strategy_used = "balanced"
             r_score = (r - np.min(r)) / (np.max(r) - np.min(r) + 1e-6)
             phi_score = phi / np.max(phi) if np.max(phi) > 0 else 0
@@ -168,16 +157,20 @@ class FusionPointSelector:
                 return points[np.argmin(combined)]
 
     def process_arm(self, arm_base, points):
+        """返回 (alpha, beta, strategy) 三元组，无角度"""
         points = self.downsample_points(points)
         if len(points) == 0:
             return self._create_default_result(arm_base)
 
+        # 垂直策略
         res = self._try_vertical_strategy(arm_base, points)
         if res:
             return res
+        # 水平策略
         res = self._try_horizontal_strategy(arm_base, points)
         if res:
             return res
+        # 曲面策略
         return self._surface_strategy(arm_base, points)
 
     def _try_vertical_strategy(self, arm_base, points):
@@ -223,7 +216,7 @@ class FusionPointSelector:
         alpha = np.array([cx, cy, cz + Config.DEFAULT_HEIGHT])
         return alpha, np.array([0, 0, -1]), "default"
 
-# =============== ROS节点A（统一数据库） ===============
+# =============== ROS节点A ===============
 class PointSelectorNode:
     def __init__(self):
         rospy.init_node("arm_point_selector")
@@ -235,34 +228,7 @@ class PointSelectorNode:
         self.stats_pub = rospy.Publisher("/arm_fusion_stats", String, queue_size=1)
         rospy.Timer(rospy.Duration(10), self.publish_stats)
 
-        # 数据库
-        db_path = DB_FILE
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._create_table()
-        rospy.loginfo("✅ 节点A 数据库已连接，路径: %s", db_path)
-
-    def _create_table(self):
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS calculation (
-                Createtime DATETIME NOT NULL PRIMARY KEY,
-                creator_id INTEGER,
-                Work_ID    INTEGER,
-                device_ID  INTEGER,
-                isread     INTEGER,
-                coord      TEXT,
-                position   TEXT,
-                del_flag   INTEGER DEFAULT 0,
-                Notes      TEXT,
-                model_id   INTEGER,
-                Unit_id    INTEGER
-            )
-        """)
-        self.conn.commit()
-
-    @staticmethod
-    def arm_to_ids(arm_id):
-        mapping = {1: 32, 2: 64, 3: 96}
-        return mapping.get(arm_id, 0)
+        rospy.loginfo("节点A（最优点选取）启动")
 
     def task_callback(self, msg):
         try:
@@ -274,57 +240,11 @@ class PointSelectorNode:
                 res = future.result()
                 if res:
                     out.append(res)
-
             if out:
                 self.pub_alpha_beta.publish(json.dumps(out, ensure_ascii=False))
-
-                # 按模块写一条记录
-                for mod in out:
-                    module_id = mod["module_id"]
-                    coord_dict = {}
-                    position_dict = {}
-                    for arm in mod["alpha_beta"]:
-                        arm_id = arm["arm_id"]
-                        unit = self.arm_to_ids(arm_id)
-                        coord_dict[str(unit)] = {
-                            "alpha": arm["alpha"],
-                            "arm_id": arm_id,
-                            "base": arm["base"],
-                            "strategy": arm["strategy"]
-                        }
-                        position_dict[str(unit)] = arm["beta"]
-
-                    self._save_module_record(module_id, coord_dict, position_dict)
-
-            rospy.loginfo(f"节点A 发送 {len(out)} 个模块，写入 {len(out)} 条记录 | 耗时 {round((time.time()-start_time)*1000,2)}ms")
+            rospy.loginfo(f"节点A 发送 {len(out)} 个模块 | 耗时 {round((time.time()-start_time)*1000,2)}ms")
         except Exception as e:
             rospy.logerr(f"节点A处理异常: {str(e)}", exc_info=True)
-
-    def _save_module_record(self, module_id, coord_dict, position_dict):
-        import random
-        now = datetime.now()
-        createtime = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}-{random.randint(0,9999):04d}"
-        try:
-            self.conn.execute("""
-                INSERT INTO calculation
-                (Createtime, creator_id, Work_ID, device_ID, isread, coord, position, del_flag, Notes, model_id, Unit_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                createtime,
-                1,
-                1,
-                None,
-                2,
-                json.dumps(coord_dict),
-                json.dumps(position_dict),
-                0,
-                None,
-                module_id,
-                None
-            ))
-            self.conn.commit()
-        except Exception as e:
-            rospy.logerr(f"数据库写入失败: {e}")
 
     def process_module(self, mod):
         try:
@@ -358,13 +278,9 @@ class PointSelectorNode:
         total = sum(stats.values())
         self.stats_pub.publish(json.dumps({"total": total, **stats}))
 
-    def shutdown_hook(self):
-        self.conn.close()
-
 if __name__ == "__main__":
     try:
-        node = PointSelectorNode()
-        rospy.on_shutdown(node.shutdown_hook)
+        PointSelectorNode()
         rospy.spin()
     except rospy.ROSInterruptException:
         pass

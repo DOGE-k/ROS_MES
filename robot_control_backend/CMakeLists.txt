@@ -57,6 +57,7 @@ find_package(catkin REQUIRED COMPONENTS
  Kinematics.msg
  IntCmd.msg
  GyroFeedback.msg
+ tuo_luo_yi.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -190,6 +191,21 @@ include_directories(
 #   FILES_MATCHING PATTERN "*.h"
 #   PATTERN ".svn" EXCLUDE
 # )
+
+## 安装 Python 节点（关键！）
+catkin_install_python(PROGRAMS
+  scripts/kinematics_node.py
+  scripts/calculation_node.py
+  scripts/feedback_node.py
+  scripts/module_confirme_node.py
+  scripts/data_process_node.py
+  scripts/sensor_control_node.py
+  scripts/rotation_node.py
+  scripts/swing_node.py
+  scripts/telescopic_node.py
+  scripts/hardware_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 ## Mark other files for installation (e.g. launch and bag files, etc.)
 install(FILES

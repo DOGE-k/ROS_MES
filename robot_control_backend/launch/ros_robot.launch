@@ -35,7 +35,7 @@
   <node
     name="pointcloud_processor_node"
     pkg="robot_control_backend"
-    type="date_process_node.py"
+    type="data_process_node.py"
     output="screen"
   />
 
