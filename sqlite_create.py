@@ -339,9 +339,14 @@ def create_database(db_path=DB_PATH):
     conn.commit()
     print("所有表创建成功！")
 
-    # 计算bcrypt哈希密码
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    hashed_password = pwd_context.hash("123456")
+    # # 计算密码哈希（使用简单的方式避免bcrypt兼容性问题）
+    try:
+        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        hashed_password = pwd_context.hash("123456")
+    except Exception as e:
+        print(f"bcrypt哈希失败，使用备用方案: {e}")
+        # 使用预计算的哈希值
+        hashed_password = "$2b$12$y0tc9zZgA8lEJzhvaJfKL.G0LQPGTZ.9r8e56FOuHg91rPBDlCYni"
 
     # 插入系统初始管理员
     try:

@@ -83,4 +83,18 @@
     output="screen"
   />
 
+   <!-- 10. 启动 rosbridge (端口 9010) -->
+  <!-- 使用自定义wrapper修复pyOpenSSL兼容性问题 -->
+  <node name="rosbridge_websocket" pkg="robot_control_backend" type="rosbridge_wrapper.py" output="screen" log_dir="$(find robot_control_backend)/logs">
+    <param name="port" value="9010" />
+    <param name="address" value="0.0.0.0" />
+    <param name="authenticate" value="false" />
+  </node>
+  
+  <!-- rosapi node -->
+  <node name="rosapi" pkg="rosapi" type="rosapi_node" output="screen">
+    <param name="topics_glob" value="[*]" />
+    <param name="services_glob" value="[*]" />
+    <param name="params_glob" value="[*]" />
+  </node>
 </launch>

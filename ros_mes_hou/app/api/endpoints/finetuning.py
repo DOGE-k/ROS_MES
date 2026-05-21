@@ -1,6 +1,6 @@
 # app/api/endpoints/finetuning.py
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -55,7 +55,7 @@ def create_record(
 def read_records(
     skip: int = 0,
     limit: int = 100,
-    device_id: int | None = Query(None),
+    device_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
 ):
     """

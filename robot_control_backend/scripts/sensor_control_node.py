@@ -68,7 +68,7 @@ class PressureSensorControlNode:
         cmd1.header.stamp = rospy.Time.now()
         cmd1.module_id = module_id
         cmd1.device_id = self.DEV_SENSOR
-        cmd1.position = 0
+        cmd1.position = [0]
         self.pub_sensor_cmd.publish(cmd1)
         rospy.loginfo(f"压力传感器指令1: module={module_id}, pos=0")
 
@@ -81,7 +81,7 @@ class PressureSensorControlNode:
         cmd2.header.stamp = rospy.Time.now()
         cmd2.module_id = module_id
         cmd2.device_id = self.DEV_SENSOR
-        cmd2.position = 1
+        cmd2.position = [1]
         self.pub_sensor_cmd.publish(cmd2)
         rospy.loginfo(f"压力传感器指令2: module={module_id}, pos=1")
 

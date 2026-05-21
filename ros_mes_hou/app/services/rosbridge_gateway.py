@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover - depends on deployment environment
     websockets = None
 
 
-ROSBRIDGE_URL = os.getenv("ROSBRIDGE_URL", "ws://192.168.0.105:9090")
+ROSBRIDGE_URL = os.getenv("ROSBRIDGE_URL", "ws://192.168.0.105:9010")
 ROS_COMM_MODULE_ID = 17
 
 FINE_TUNING_TOPIC_MAP: Dict[str, Dict[str, Any]] = {

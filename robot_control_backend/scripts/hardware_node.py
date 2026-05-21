@@ -74,6 +74,11 @@ class STM32Bridge:
         self.parse_timer = rospy.Timer(rospy.Duration(0.01), self.parse_frames)
 
     # -------------------------------------------------------------------------
+    def start_read_thread(self):
+        self.read_thread = threading.Thread(target=self.read_serial_thread)
+        self.read_thread.daemon = True
+        self.read_thread.start()
+    # -------------------------------------------------------------------------
     def init_database(self):
         """初始化数据库表"""
         with self.db_lock:

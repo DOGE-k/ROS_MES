@@ -1,3 +1,4 @@
+from typing import Set
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -12,7 +13,7 @@ def _table_exists(conn, table_name: str) -> bool:
     )
 
 
-def _columns(conn, table_name: str) -> set[str]:
+def _columns(conn, table_name: str) -> Set[str]:
     return {row[1] for row in conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()}
 
 
