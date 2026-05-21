@@ -62,7 +62,6 @@ class STM32Bridge:
         self.realtime_data = {}
 
         # 数据库初始化
-        self.db_lock = threading.Lock()
         self.db_path = os.path.join(os.path.expanduser('~'), "robot_hardware_data.db")
         self.db_conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.db_cursor = self.db_conn.cursor()
@@ -284,7 +283,11 @@ class STM32Bridge:
         if hasattr(self, 'db_conn'):
             with self.db_lock:
                 self.db_conn.close()
-
+    def start_read_thread(self):
+        self.read_thread = threading.Thread(target=self.read_serial_thread)
+        self.read_thread.daemon = True
+        self.read_thread.start()
+        
 if __name__ == "__main__":
     rospy.init_node("stm32_bridge")
     bridge = STM32Bridge()  # 参数从环境变量读取
