@@ -137,10 +137,10 @@ def create_database(db_path=DB_PATH):
 
     # ----- 自适应工装型号表 -----
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Model (
-            Model_ID INTEGER PRIMARY KEY,
-            Modelname TEXT NOT NULL,
-            Modeldescripte TEXT,
+        CREATE TABLE IF NOT EXISTS Type (
+            Type_ID INTEGER PRIMARY KEY,
+            Typename TEXT NOT NULL,
+            Typedescripte TEXT,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
@@ -149,18 +149,18 @@ def create_database(db_path=DB_PATH):
         );
     """)
 
-    # ----- 设备表 -----
+    # ----- 模块表 -----
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS Device (
-            Device_ID INTEGER PRIMARY KEY,
-            Model_ID INTEGER NOT NULL,
-            Devicedescript TEXT,
-            DeviceAddress INTEGER NOT NULL,
+        CREATE TABLE IF NOT EXISTS  Model (
+            Model_ID INTEGER PRIMARY KEY,
+            Type_ID INTEGER NOT NULL,
+            Modeldescript TEXT,
+            ModelAddress TEXT NOT NULL,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (Model_ID) REFERENCES Model(Model_ID),
+            FOREIGN KEY (Type_ID) REFERENCES Type(Type_ID),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
         );
     """)
@@ -171,14 +171,14 @@ def create_database(db_path=DB_PATH):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             Unit_ID INTEGER NOT NULL,
             UnitDescript TEXT,
-            Device_ID INTEGER NOT NULL,
+            Model_ID INTEGER NOT NULL,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (Device_ID) REFERENCES Device(Device_ID),
+            FOREIGN KEY (Model_ID) REFERENCES Model(Model_ID),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
-            UNIQUE(Device_ID, Unit_ID)
+            UNIQUE(Model_ID, Unit_ID)
         );
     """)
 
@@ -189,7 +189,7 @@ def create_database(db_path=DB_PATH):
             sensor_ID INTEGER NOT NULL,
             sensordescript TEXT,
             IsRead INTEGER NOT NULL,
-            Device_ID INTEGER NOT NULL,
+            Model_ID INTEGER NOT NULL,
             Unit_ID INTEGER NOT NULL,
             unit_row_id INTEGER NOT NULL,
             Unit_address INTEGER NOT NULL,
@@ -197,15 +197,10 @@ def create_database(db_path=DB_PATH):
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (Device_ID) REFERENCES Device(Device_ID),
+            FOREIGN KEY (Model_ID) REFERENCES Model(Model_ID),
             FOREIGN KEY (unit_row_id) REFERENCES Unit(id),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
         );
-    """)
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_sensor_device_active
-        ON sensors (Device_ID, sensor_ID)
-        WHERE del_flag = 0;
     """)
 
     # ----- 工作表 -----
@@ -268,13 +263,13 @@ def create_database(db_path=DB_PATH):
         );
     """)
 
-    # ----- 图纸计算数据日志表 -----
+    # ----- 计算解析数据日志表 -----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS calculation (
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             creater_id INTEGER NOT NULL,
             Work_ID INTEGER NOT NULL,
-            model_id INTEGER,
+            Model_ID INTEGER,
             Unit_ID INTEGER,
             device_ID INTEGER,
             isread INTEGER,
@@ -285,9 +280,9 @@ def create_database(db_path=DB_PATH):
             PRIMARY KEY (Createtime),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
             FOREIGN KEY (Work_ID) REFERENCES works(Work_ID),
-            FOREIGN KEY (model_id) REFERENCES Model(Model_ID),
+            FOREIGN KEY (Model_ID) REFERENCES Model(Model_ID),
             FOREIGN KEY (Unit_ID) REFERENCES Unit(Unit_ID),
-            FOREIGN KEY (device_ID) REFERENCES Device(Device_ID)
+            FOREIGN KEY (device_ID) REFERENCES sensor(sensor_ID)
         );
     """)
 
@@ -312,15 +307,17 @@ def create_database(db_path=DB_PATH):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning (
             id INTEGER PRIMARY KEY,
-            Device_ID INTEGER NOT NULL,
-            DeviceAddress INTEGER,
-            Devicedescript TEXT,
+            Model_ID INTEGER NOT NULL,
+            ModelDeviceAddress TEXT,
+            Modeldescript TEXT,
             parameter_name TEXT NOT NULL,
             old_value REAL,
             new_value REAL NOT NULL,
             adjusted_by TEXT,
             adjusted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (Device_ID) REFERENCES Device(Device_ID)
+            del_flag BOOLEAN DEFAULT 0,
+            Notes TEXT,
+            FOREIGN KEY (Model_ID) REFERENCES Model(Model_ID)
         );
     """)
 
@@ -328,11 +325,17 @@ def create_database(db_path=DB_PATH):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning_config (
             id INTEGER PRIMARY KEY,
-            module_id INTEGER NOT NULL,
+            Model_id INTEGER NOT NULL,
             device_id INTEGER NOT NULL,
             config_json TEXT NOT NULL,
             saved_by TEXT,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            creater_id INTEGER,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            del_flag BOOLEAN DEFAULT 0,
+            Notes TEXT,
+            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
+            FOREIGN KEY (Model_ID) REFERENCES Model(Model_ID)
+            FOREIGN KEY (device_ID) REFERENCES sensors(sensor_ID)
         );
     """)
 
@@ -363,22 +366,22 @@ def create_database(db_path=DB_PATH):
 
     # 插入初始数据
     try:
+        cursor.execute("SELECT Type_ID FROM Type WHERE Type_ID = 1")
+        if cursor.fetchone() is None:
+            cursor.execute("""
+                INSERT INTO Type (Type_ID, Typename, Typedescripte, creater_id, Createtime, del_flag)
+                VALUES (1, '自适应工装型号', '自适应工装型号描述', 1, CURRENT_TIMESTAMP, 0)
+            """)
+            print("已插入 Type_ID=1")
+        conn.commit()
+
         cursor.execute("SELECT Model_ID FROM Model WHERE Model_ID = 17")
         if cursor.fetchone() is None:
             cursor.execute("""
-                INSERT INTO Model (Model_ID, Modelname, creater_id, Createtime, del_flag)
-                VALUES (17, '一号', 1, CURRENT_TIMESTAMP, 0)
+                INSERT INTO Model (Model_ID, Type_ID, Modeldescript, ModelAddress, creater_id, Createtime, del_flag)
+                VALUES (17, 1, '一号模块', '17', 1, CURRENT_TIMESTAMP, 0)
             """)
             print("已插入 Model_ID=17")
-        conn.commit()
-
-        cursor.execute("SELECT Device_ID FROM Device WHERE Device_ID = 1")
-        if cursor.fetchone() is None:
-            cursor.execute("""
-                INSERT INTO Device (Device_ID, Model_ID, DeviceAddress, creater_id, Createtime, del_flag)
-                VALUES (1, 17, 17, 1, CURRENT_TIMESTAMP, 0)
-            """)
-            print("已插入 Device_ID=1")
         conn.commit()
 
         unit_sensor_data = [
@@ -414,12 +417,12 @@ def create_database(db_path=DB_PATH):
             ]),
         ]
         for unit_id, desc, sensor_list in unit_sensor_data:
-            cursor.execute("SELECT id FROM Unit WHERE Device_ID = ? AND Unit_ID = ?", (1, unit_id))
+            cursor.execute("SELECT id FROM Unit WHERE Model_ID = ? AND Unit_ID = ?", (17, unit_id))
             row = cursor.fetchone()
             if row is None:
                 cursor.execute("""
-                    INSERT INTO Unit (Unit_ID, UnitDescript, Device_ID, creater_id, Createtime, del_flag)
-                    VALUES (?, ?, 1, 1, CURRENT_TIMESTAMP, 0)
+                    INSERT INTO Unit (Unit_ID, UnitDescript, Model_ID, creater_id, Createtime, del_flag)
+                    VALUES (?, ?, 17, 1, CURRENT_TIMESTAMP, 0)
                 """, (unit_id, desc))
                 unit_row_id = cursor.lastrowid
                 print(f"已插入 Unit_ID={unit_id}")
@@ -435,9 +438,9 @@ def create_database(db_path=DB_PATH):
                 sensor_row = cursor.fetchone()
                 if sensor_row is None:
                     cursor.execute("""
-                        INSERT INTO sensors (sensor_ID, sensordescript, IsRead, Device_ID, Unit_ID, Unit_address, unit_row_id, creater_id, Createtime, del_flag)
-                        VALUES (?, ?, ?, 1, ?, ?, ?, 1, CURRENT_TIMESTAMP, 0)
-                    """, (sensor_id, s_desc, isread, s_unit_id, unit_addr, unit_row_id))
+                        INSERT INTO sensors (sensor_ID, sensordescript, IsRead, Model_ID, Unit_ID, unit_row_id, Unit_address, creater_id, Createtime, del_flag)
+                        VALUES (?, ?, ?, 17, ?, ?, ?, 1, CURRENT_TIMESTAMP, 0)
+                    """, (sensor_id, s_desc, isread, s_unit_id, unit_row_id, unit_addr))
                     sensor_row_id = cursor.lastrowid
                     print(f"已插入 sensor_ID={sensor_id}")
                 else:
@@ -472,7 +475,7 @@ def create_database(db_path=DB_PATH):
         print("所有初始数据插入完成！")
 
         # 向后兼容：修复可能存在的 del_flag=NULL 数据
-        tables_with_del_flag = ['Model', 'Device', 'Unit', 'sensors', 'works', 'workflows', 'work_flow_relations',
+        tables_with_del_flag = ['Model', 'Type', 'Unit', 'sensors', 'works', 'workflows', 'work_flow_relations',
                                 'sensor_log', 'calculation', 'point_data', 'Users', 'Drawings',
                                 'DrawingsVersion', 'Tasks']
         for tbl in tables_with_del_flag:
