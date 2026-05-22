@@ -1,0 +1,39 @@
+[rospy.client][INFO] 2026-05-18 08:12:18,703: init_node, name[/pressure_sensor_control_node], pid[24]
+[xmlrpc][INFO] 2026-05-18 08:12:18,704: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:18,705: Started XML-RPC server [http://localhost:39377/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:18,706: _ready: http://localhost:39377/
+[rospy.init][INFO] 2026-05-18 08:12:18,719: ROS Slave URI: [http://localhost:39377/]
+[rospy.registration][INFO] 2026-05-18 08:12:18,725: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:18,726: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:18,820: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:18,820: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:18,830: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:18,837: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:18,847: 压力传感器控制节点已启动 | 延迟: 7.0s
+[rospy.internal][INFO] 2026-05-18 08:12:18,878: topic[/control/sensor_cmd] adding connection to [http://localhost:39933/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,895: topic[/control/sensor_cmd] adding connection to [http://localhost:36717/], count 1
+[rospy.internal][INFO] 2026-05-18 08:12:19,031: topic[/control/sensor_cmd] adding connection to [http://localhost:45947/], count 2
+[rospy.internal][INFO] 2026-05-18 08:12:19,101: topic[/arm/cmd_vel] adding connection to [/stm32_bridge], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,117: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,523: topic[/arm/cmd_vel] removing connection to /stm32_bridge
+[rospy.internal][INFO] 2026-05-18 08:13:14,913: topic[/arm/cmd_vel] adding connection to [/full_workflow_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:18,079: topic[/arm/cmd_vel] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:14:08,166: topic[/arm/cmd_vel] adding connection to [/full_workflow_test_node], count 0
+[rosout][INFO] 2026-05-18 08:14:15,240: 📡 收到传感器触发指令，module_id=17
+[rosout][INFO] 2026-05-18 08:14:15,251: ⏳ 将在 7.0s 后发送压力传感器指令
+[rosout][INFO] 2026-05-18 08:14:22,263: 🔌 发送压力传感器指令序列
+[rosout][INFO] 2026-05-18 08:14:22,267: 压力传感器指令1: module=17, pos=0
+[rosout][INFO] 2026-05-18 08:14:22,774: 压力传感器指令2: module=17, pos=1
+[rosout][INFO] 2026-05-18 08:14:22,780: ✅ 压力传感器指令序列发送完成
+[rospy.internal][INFO] 2026-05-18 08:14:25,649: topic[/arm/cmd_vel] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:15:35,444: topic[/arm/cmd_vel] adding connection to [/stm32_bridge], count 0
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:36,576: external shutdown request from [/master]: [/pressure_sensor_control_node] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:36,577: signal_shutdown [external shutdown request from [/master]: [[/pressure_sensor_control_node] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:36,581: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:15:36,584: topic[/arm/cmd_vel] removing connection to /stm32_bridge
+[rospy.internal][INFO] 2026-05-18 08:15:36,598: topic[/control/sensor_cmd] removing connection to http://localhost:39933/
+[rospy.internal][INFO] 2026-05-18 08:15:36,598: topic[/control/sensor_cmd] removing connection to http://localhost:39933/
+[rospy.internal][INFO] 2026-05-18 08:15:36,599: topic[/control/sensor_cmd] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:15:36,599: topic[/control/sensor_cmd] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:15:36,600: topic[/control/sensor_cmd] removing connection to http://localhost:45947/
+[rospy.core][INFO] 2026-05-18 08:15:36,654: signal_shutdown [atexit]

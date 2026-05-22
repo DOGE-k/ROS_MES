@@ -1,0 +1,108 @@
+[rospy.client][INFO] 2026-05-18 08:08:32,728: init_node, name[/telescope_simple_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:08:32,729: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:08:32,730: Started XML-RPC server [http://localhost:46843/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:08:32,731: _ready: http://localhost:46843/
+[rospy.registration][INFO] 2026-05-18 08:08:32,732: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:08:32,732: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:08:32,734: ROS Slave URI: [http://localhost:46843/]
+[rospy.init][INFO] 2026-05-18 08:08:32,735: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:08:32,735: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:08:32,745: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:08:32,747: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:08:32,752: 伸缩轴节点启动
+[rosout][INFO] 2026-05-18 08:08:32,754: 参数：1mm ≈ 41208.79 编码，长度限位 0.0-150.0mm
+[rospy.internal][INFO] 2026-05-18 08:08:33,034: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:08:44,666: topic[/control/sensor_cmd] adding connection to [/pressure_sensor_control_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:08:55,807: topic[/control/sensor_cmd] adding connection to [/communication_test_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:08:55,809: topic[/hardware/telescope_output] adding connection to [/communication_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:08:55,831: topic[/control/adjust_telescopic_cmd] adding connection to [http://localhost:35149/], count 0
+[rospy.topics][ERROR] 2026-05-18 08:08:58,817: Traceback (most recent call last):
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 92, in serialize
+    length = len(self.position)
+TypeError: object of type 'int' has no len()
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 882, in publish
+    self.impl.publish(data)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 1066, in publish
+    serialize_message(b, self.seq, message)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/msg.py", line 152, in serialize_message
+    msg.serialize(b)
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 97, in serialize
+    except TypeError as te: self._check_types(ValueError("%s: '%s' when writing '%s'" % (type(te), str(te), str(locals().get('_x', self)))))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 392, in _check_types
+    check_type(n, t, getattr(self, n))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 311, in check_type
+    raise SerializationError('field %s must be a list or tuple type' % field_name)
+genpy.message.SerializationError: field position must be a list or tuple type
+
+[rosout][ERROR] 2026-05-18 08:08:58,818: bad callback: <bound method TelescopeSimple.cmd_callback of <__main__.TelescopeSimple object at 0x7fdd9f7d66d0>>
+Traceback (most recent call last):
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 92, in serialize
+    length = len(self.position)
+TypeError: object of type 'int' has no len()
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 882, in publish
+    self.impl.publish(data)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 1066, in publish
+    serialize_message(b, self.seq, message)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/msg.py", line 152, in serialize_message
+    msg.serialize(b)
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 97, in serialize
+    except TypeError as te: self._check_types(ValueError("%s: '%s' when writing '%s'" % (type(te), str(te), str(locals().get('_x', self)))))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 392, in _check_types
+    check_type(n, t, getattr(self, n))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 311, in check_type
+    raise SerializationError('field %s must be a list or tuple type' % field_name)
+genpy.message.SerializationError: field position must be a list or tuple type
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 750, in _invoke_callback
+    cb(msg)
+  File "/home/yang/workspaces/robot_ws/src/ROS_MES/robot_control_backend/scripts/telescopic_node.py", line 101, in cmd_callback
+    self.sensor_trigger_pub.publish(trigger_msg)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 886, in publish
+    raise ROSSerializationException(str(e))
+rospy.exceptions.ROSSerializationException: field position must be a list or tuple type
+
+[rospy.internal][INFO] 2026-05-18 08:09:08,830: topic[/control/adjust_telescopic_cmd] removing connection to http://localhost:35149/
+[rospy.internal][INFO] 2026-05-18 08:09:08,845: topic[/hardware/telescope_output] removing connection to /communication_test_node
+[rospy.internal][INFO] 2026-05-18 08:09:08,846: topic[/control/sensor_cmd] removing connection to /communication_test_node
+[rospy.client][INFO] 2026-05-18 08:09:43,408: init_node, name[/telescope_simple_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:09:43,409: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:09:43,410: Started XML-RPC server [http://localhost:43443/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:09:43,411: _ready: http://localhost:43443/
+[rospy.registration][INFO] 2026-05-18 08:09:43,412: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:09:43,412: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:09:43,418: ROS Slave URI: [http://localhost:43443/]
+[rospy.init][INFO] 2026-05-18 08:09:43,419: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:09:43,419: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:09:43,435: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:09:43,437: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:09:43,440: 伸缩轴节点启动
+[rosout][INFO] 2026-05-18 08:09:43,443: 参数：1mm ≈ 41208.79 编码，长度限位 0.0-150.0mm
+[rospy.internal][INFO] 2026-05-18 08:09:43,532: topic[/control/sensor_cmd] adding connection to [/pressure_sensor_control_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:09:43,726: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:09:53,651: topic[/hardware/telescope_output] adding connection to [/communication_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:09:53,653: topic[/control/sensor_cmd] adding connection to [/communication_test_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:09:53,678: topic[/control/adjust_telescopic_cmd] adding connection to [http://localhost:36327/], count 0
+[rosout][INFO] 2026-05-18 08:09:56,668: 伸缩轴微调：+10.00mm → 下发编码：29420
+[rospy.internal][INFO] 2026-05-18 08:10:06,688: topic[/hardware/telescope_output] removing connection to /communication_test_node
+[rospy.internal][INFO] 2026-05-18 08:10:06,692: topic[/control/adjust_telescopic_cmd] removing connection to http://localhost:36327/
+[rospy.internal][INFO] 2026-05-18 08:10:07,192: topic[/control/sensor_cmd] removing connection to /communication_test_node
+[rospy.internal][INFO] 2026-05-18 08:10:30,717: topic[/control/sensor_cmd] removing connection to /pressure_sensor_control_node
+[rospy.internal][INFO] 2026-05-18 08:10:40,684: topic[/control/sensor_cmd] adding connection to [/pressure_sensor_control_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:10:49,532: topic[/hardware/telescope_output] adding connection to [/communication_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:10:49,533: topic[/control/sensor_cmd] adding connection to [/communication_test_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:10:49,587: topic[/control/adjust_telescopic_cmd] adding connection to [http://localhost:39065/], count 0
+[rosout][INFO] 2026-05-18 08:10:52,552: 伸缩轴微调：+10.00mm → 下发编码：29420
+[rospy.internal][INFO] 2026-05-18 08:11:02,560: topic[/control/adjust_telescopic_cmd] removing connection to http://localhost:39065/
+[rospy.internal][INFO] 2026-05-18 08:11:02,600: topic[/hardware/telescope_output] removing connection to /communication_test_node
+[rospy.internal][INFO] 2026-05-18 08:11:02,601: topic[/control/sensor_cmd] removing connection to /communication_test_node

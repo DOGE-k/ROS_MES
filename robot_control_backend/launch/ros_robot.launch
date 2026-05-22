@@ -83,7 +83,23 @@
     output="screen"
   />
 
-   <!-- 10. 启动 rosbridge (端口 9010) -->
+  <!-- 10. 急停节点 -->
+  <node
+    name="softstop_node"
+    pkg="robot_control_backend"
+    type="softstop.node.py"
+    output="screen"
+  />
+
+  <!-- 11. IMU姿态节点：陀螺仪数据融合 + 末端坐标计算 -->
+  <node
+    name="imu_angle_publisher"
+    pkg="robot_control_backend"
+    type="tuo_luo_yi.py"
+    output="screen"
+  />
+
+   <!-- 12. 启动 rosbridge (端口 9010) -->
   <!-- 使用自定义wrapper修复pyOpenSSL兼容性问题 -->
   <node name="rosbridge_websocket" pkg="robot_control_backend" type="rosbridge_wrapper.py" output="screen" log_dir="$(find robot_control_backend)/logs">
     <param name="port" value="9010" />

@@ -1,0 +1,27 @@
+[rospy.client][INFO] 2026-05-18 08:12:17,549: init_node, name[/stm32_bridge], pid[13]
+[xmlrpc][INFO] 2026-05-18 08:12:17,592: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:17,628: Started XML-RPC server [http://localhost:45205/]
+[rospy.init][INFO] 2026-05-18 08:12:17,629: ROS Slave URI: [http://localhost:45205/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:17,629: _ready: http://localhost:45205/
+[rospy.registration][INFO] 2026-05-18 08:12:17,631: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:17,654: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:17,734: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:17,735: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:17,787: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:17,805: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:17,833: ✅ 已从 rob_arm.env 加载配置
+[rospy.internal][INFO] 2026-05-18 08:12:17,903: topic[/arm/cmd_vel] adding connection to [http://localhost:36383/], count 0
+[rosout][INFO] 2026-05-18 08:12:17,879: ✅ 数据库已连接，路径: /home/yang/robot_hardware_data.db
+[rosout][ERROR] 2026-05-18 08:12:17,907: ❌ 串口失败: [Errno 2] could not open port /dev/ttyUSB0: [Errno 2] No such file or directory: '/dev/ttyUSB0'
+[rospy.internal][INFO] 2026-05-18 08:12:18,098: topic[/arm/cmd_vel] adding connection to [http://localhost:44769/], count 1
+[rospy.internal][INFO] 2026-05-18 08:12:18,153: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,248: topic[/hardware/all_feedback] adding connection to [/feedback_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,074: topic[/arm/cmd_vel] adding connection to [http://localhost:39377/], count 2
+[rospy.core][INFO] 2026-05-18 08:12:19,405: signal_shutdown [atexit]
+[rospy.internal][INFO] 2026-05-18 08:12:19,414: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:12:19,416: topic[/hardware/all_feedback] removing connection to /feedback_node
+[rospy.internal][INFO] 2026-05-18 08:12:19,416: topic[/arm/cmd_vel] removing connection to http://localhost:36383/
+[rospy.internal][INFO] 2026-05-18 08:12:19,417: topic[/arm/cmd_vel] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:12:19,424: topic[/arm/cmd_vel] removing connection to http://localhost:39377/
+[rospy.internal][INFO] 2026-05-18 08:12:19,425: topic[/arm/cmd_vel] removing connection to http://localhost:39377/
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:19,428: atexit

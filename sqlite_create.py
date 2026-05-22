@@ -155,7 +155,7 @@ def create_database(db_path=DB_PATH):
             Device_ID INTEGER PRIMARY KEY,
             Model_ID INTEGER NOT NULL,
             Devicedescript TEXT,
-            DeviceAddress TEXT NOT NULL,
+            DeviceAddress INTEGER NOT NULL,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
@@ -213,10 +213,9 @@ def create_database(db_path=DB_PATH):
         CREATE TABLE IF NOT EXISTS works (
             Work_ID INTEGER PRIMARY KEY,
             Workname TEXT NOT NULL,
-            WorkDescr TEXT,
             WorkDescript TEXT,
             Drawing_ID INTEGER,
-            Model_ID INTEGER,
+            Device_id INTEGER,
             unit_id INTEGER,
             sensor_id INTEGER,
             data TEXT,
@@ -226,7 +225,7 @@ def create_database(db_path=DB_PATH):
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
             FOREIGN KEY (Drawing_ID) REFERENCES Drawings(Drawing_ID),
-            FOREIGN KEY (Model_ID) REFERENCES Model(Model_ID),
+            FOREIGN KEY (Device_id) REFERENCES Device(Device_ID),
             FOREIGN KEY (unit_id) REFERENCES Unit(id),
             FOREIGN KEY (sensor_id) REFERENCES sensors(id),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
@@ -314,15 +313,13 @@ def create_database(db_path=DB_PATH):
         CREATE TABLE IF NOT EXISTS fine_tuning (
             id INTEGER PRIMARY KEY,
             Device_ID INTEGER NOT NULL,
-            DeviceAddress TEXT,
+            DeviceAddress INTEGER,
             Devicedescript TEXT,
             parameter_name TEXT NOT NULL,
             old_value REAL,
             new_value REAL NOT NULL,
             adjusted_by TEXT,
             adjusted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            del_flag BOOLEAN DEFAULT 0,
-            Notes TEXT,
             FOREIGN KEY (Device_ID) REFERENCES Device(Device_ID)
         );
     """)
@@ -335,11 +332,7 @@ def create_database(db_path=DB_PATH):
             device_id INTEGER NOT NULL,
             config_json TEXT NOT NULL,
             saved_by TEXT,
-            creater_id INTEGER,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            del_flag BOOLEAN DEFAULT 0,
-            Notes TEXT,
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
     """)
 
@@ -365,15 +358,6 @@ def create_database(db_path=DB_PATH):
             """, (hashed_password,))
             conn.commit()
             print("已插入默认管理员用户（admin）。")
-
-        cursor.execute("SELECT User_ID FROM Users WHERE User_ID = 2")
-        if cursor.fetchone() is None:
-            cursor.execute("""
-                INSERT INTO Users (User_ID, Username, Password, Type_ID, Creator_ID, Createtime, Islock, del_flag)
-                VALUES (2, 'system', ?, 1, 1, CURRENT_TIMESTAMP, 0, 0)
-            """, (hashed_password,))
-            conn.commit()
-            print("已插入默认系统用户（system）。")
     except Exception as e:
         print(f"插入初始管理员时出现异常：{e}")
 
@@ -392,7 +376,7 @@ def create_database(db_path=DB_PATH):
         if cursor.fetchone() is None:
             cursor.execute("""
                 INSERT INTO Device (Device_ID, Model_ID, DeviceAddress, creater_id, Createtime, del_flag)
-                VALUES (1, 17, '17', 1, CURRENT_TIMESTAMP, 0)
+                VALUES (1, 17, 17, 1, CURRENT_TIMESTAMP, 0)
             """)
             print("已插入 Device_ID=1")
         conn.commit()
@@ -467,10 +451,21 @@ def create_database(db_path=DB_PATH):
 
         cursor.execute("SELECT Work_ID FROM works WHERE Work_ID = 1")
         if cursor.fetchone() is None:
+            cursor.execute("SELECT id FROM Unit WHERE Device_ID = ? AND Unit_ID = ?", (1, 32))
+            initial_unit = cursor.fetchone()
             cursor.execute("""
-                INSERT INTO works (Work_ID, Workname, Model_ID, unit_id, sensor_id, creater_id, Createtime, del_flag)
-                VALUES (1, '初始工作', 17, 1, 1, 1, CURRENT_TIMESTAMP, 0)
-            """)
+                SELECT s.id
+                FROM sensors AS s
+                JOIN Unit AS u ON u.id = s.unit_row_id
+                WHERE u.Device_ID = ? AND u.Unit_ID = ? AND s.sensor_ID = ?
+            """, (1, 32, 33))
+            initial_sensor = cursor.fetchone()
+            if initial_unit is None or initial_sensor is None:
+                raise RuntimeError("初始工作引用的机械臂或传感器不存在")
+            cursor.execute("""
+                INSERT INTO works (Work_ID, Workname, Device_id, unit_id, sensor_id, creater_id, Createtime, del_flag)
+                VALUES (1, '初始工作', 1, ?, ?, 1, CURRENT_TIMESTAMP, 0)
+            """, (initial_unit[0], initial_sensor[0]))
             print("已插入 Work_ID=1")
         conn.commit()
 
@@ -479,7 +474,7 @@ def create_database(db_path=DB_PATH):
         # 向后兼容：修复可能存在的 del_flag=NULL 数据
         tables_with_del_flag = ['Model', 'Device', 'Unit', 'sensors', 'works', 'workflows', 'work_flow_relations',
                                 'sensor_log', 'calculation', 'point_data', 'Users', 'Drawings',
-                                'DrawingsVersion', 'Tasks', 'fine_tuning', 'fine_tuning_config']
+                                'DrawingsVersion', 'Tasks']
         for tbl in tables_with_del_flag:
             cursor.execute(f"UPDATE {tbl} SET del_flag = 0 WHERE del_flag IS NULL")
         conn.commit()

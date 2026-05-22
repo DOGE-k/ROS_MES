@@ -1,0 +1,54 @@
+[rospy.client][INFO] 2026-05-18 08:12:17,301: init_node, name[/feedback_node], pid[12]
+[xmlrpc][INFO] 2026-05-18 08:12:17,323: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:17,324: Started XML-RPC server [http://localhost:44769/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:17,324: _ready: http://localhost:44769/
+[rospy.init][INFO] 2026-05-18 08:12:17,324: ROS Slave URI: [http://localhost:44769/]
+[rospy.registration][INFO] 2026-05-18 08:12:17,325: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:17,330: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:17,425: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:17,425: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:17,474: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:17,476: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:17,499: ============================================================
+[rosout][INFO] 2026-05-18 08:12:17,506: ✅ 反馈节点已启动（带完整调试日志）
+[rosout][INFO] 2026-05-18 08:12:17,524: ============================================================
+[rospy.internal][INFO] 2026-05-18 08:12:17,674: topic[/hardware/module_cmd] adding connection to [/module_confirme_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:17,750: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,138: topic[/hardware/all_feedback] adding connection to [http://localhost:45205/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,153: topic[/arm/cmd_vel] adding connection to [/stm32_bridge], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,244: topic[/hardware/rotation_feedback] adding connection to [/arm_kinematics], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,272: topic[/hardware/swing_feedback] adding connection to [/arm_kinematics], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,291: topic[/hardware/telescope_feedback] adding connection to [/arm_kinematics], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,394: topic[/hardware/rotation_feedback] adding connection to [/rotation_simple_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:12:18,401: topic[/hardware/rotation_output] adding connection to [http://localhost:39933/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,708: topic[/hardware/swing_feedback] adding connection to [/swing_simple_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:12:18,719: topic[/hardware/swing_output] adding connection to [http://localhost:36717/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,928: topic[/hardware/telescope_output] adding connection to [http://localhost:45947/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,027: topic[/hardware/telescope_feedback] adding connection to [/telescope_simple_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:12:19,416: topic[/hardware/all_feedback] removing connection to http://localhost:45205/
+[rospy.internal][INFO] 2026-05-18 08:12:19,423: topic[/arm/cmd_vel] removing connection to /stm32_bridge
+[rospy.internal][INFO] 2026-05-18 08:13:14,903: topic[/arm/cmd_vel] adding connection to [/full_workflow_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:18,033: topic[/arm/cmd_vel] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:14:08,183: topic[/arm/cmd_vel] adding connection to [/full_workflow_test_node], count 0
+[rosout][INFO] 2026-05-18 08:14:11,172: [指令转发] 旋转轴 → /arm/cmd_vel | 编码: 17404
+[rosout][INFO] 2026-05-18 08:14:13,192: [指令转发] 摆动轴 → /arm/cmd_vel | 编码: 16202
+[rosout][INFO] 2026-05-18 08:14:15,239: [指令转发] 伸缩轴 → /arm/cmd_vel | 编码: 29420
+[rospy.internal][INFO] 2026-05-18 08:14:25,644: topic[/arm/cmd_vel] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:15:33,634: topic[/hardware/module_cmd] adding connection to [/module_confirme_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:15:33,634: topic[/hardware/module_cmd] removing connection to /module_confirme_node
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:34,496: external shutdown request from [/master]: [/feedback_node] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:34,497: signal_shutdown [external shutdown request from [/master]: [[/feedback_node] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:34,500: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:15:34,551: topic[/hardware/rotation_feedback] removing connection to /arm_kinematics
+[rospy.internal][INFO] 2026-05-18 08:15:34,552: topic[/hardware/rotation_feedback] removing connection to /rotation_simple_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,552: topic[/hardware/swing_feedback] removing connection to /arm_kinematics
+[rospy.internal][INFO] 2026-05-18 08:15:34,567: topic[/hardware/swing_feedback] removing connection to /swing_simple_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,568: topic[/hardware/telescope_feedback] removing connection to /arm_kinematics
+[rospy.internal][INFO] 2026-05-18 08:15:34,578: topic[/hardware/telescope_feedback] removing connection to /telescope_simple_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,584: topic[/hardware/module_cmd] removing connection to /module_confirme_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,584: topic[/hardware/rotation_output] removing connection to http://localhost:39933/
+[rospy.internal][INFO] 2026-05-18 08:15:34,585: topic[/hardware/swing_output] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:15:34,585: topic[/hardware/swing_output] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:15:34,603: topic[/hardware/telescope_output] removing connection to http://localhost:45947/
+[rospy.internal][INFO] 2026-05-18 08:15:34,604: topic[/hardware/telescope_output] removing connection to http://localhost:45947/
+[rospy.core][INFO] 2026-05-18 08:15:34,893: signal_shutdown [atexit]

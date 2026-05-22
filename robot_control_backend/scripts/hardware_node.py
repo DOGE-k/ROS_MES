@@ -62,6 +62,7 @@ class STM32Bridge:
         self.realtime_data = {}
 
         # 数据库初始化
+        self.db_lock = threading.Lock()
         self.db_path = os.path.join(os.path.expanduser('~'), "robot_hardware_data.db")
         self.db_conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.db_cursor = self.db_conn.cursor()
@@ -123,21 +124,23 @@ class STM32Bridge:
 
     # -------------------------------------------------------------------------
     def on_cmd_received(self, msg):
-        # 此处省略下发代码，与原版保持一致
         mid = msg.module_id
         did = msg.device_id
-        pos = int(msg.position[0])
-        key = (mid, did, pos)
-        if key == self.last_sent_data: return
+        if not msg.position:
+            buf = bytes([mid, did, 0x00, 0x00, mid])
+            rospy.loginfo(f"急停下发: mid={mid}, did={did}, pos=0")
+        else:
+            pos = int(msg.position[0])
+            buf = bytes([mid, did, (pos >> 8) & 0xFF, pos & 0xFF, mid])
+            rospy.loginfo(f"下发: mid={mid}, did={did}, pos={pos}")
+        key = (mid, did)
+        if key == getattr(self, '_last_cmd_key', None): return
         try:
-            h = (pos >> 8) & 0xFF
-            l = pos & 0xFF
-            buf = bytes([mid, did, h, l, mid])  # 5字节：module_id, device_id, h, l, module_id
             with self.serial_lock:
                 if self.ser is None or not self.ser.is_open: return
                 self.ser.write(buf)
                 self.ser.flush()
-            self.last_sent_data = key
+            self._last_cmd_key = key
         except Exception as e:
             self.connected = False
 
@@ -283,11 +286,7 @@ class STM32Bridge:
         if hasattr(self, 'db_conn'):
             with self.db_lock:
                 self.db_conn.close()
-    def start_read_thread(self):
-        self.read_thread = threading.Thread(target=self.read_serial_thread)
-        self.read_thread.daemon = True
-        self.read_thread.start()
-        
+
 if __name__ == "__main__":
     rospy.init_node("stm32_bridge")
     bridge = STM32Bridge()  # 参数从环境变量读取

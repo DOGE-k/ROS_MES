@@ -1,0 +1,3 @@
+logging to /home/yang/workspaces/robot_ws/src/ROS_MES/robot_control_backend/ros_logs/c0f83fc8-533e-11f1-9894-05c75969825d/rosout.log
+re-publishing aggregated messages to /rosout_agg
+subscribed to /rosout

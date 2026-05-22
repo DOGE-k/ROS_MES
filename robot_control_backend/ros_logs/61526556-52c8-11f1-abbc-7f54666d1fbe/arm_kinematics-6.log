@@ -1,0 +1,40 @@
+[rospy.client][INFO] 2026-05-18 08:12:17,943: init_node, name[/arm_kinematics], pid[16]
+[xmlrpc][INFO] 2026-05-18 08:12:17,946: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:17,947: Started XML-RPC server [http://localhost:42879/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:17,947: _ready: http://localhost:42879/
+[rospy.init][INFO] 2026-05-18 08:12:17,963: ROS Slave URI: [http://localhost:42879/]
+[rospy.registration][INFO] 2026-05-18 08:12:17,965: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:17,965: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:18,064: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:18,065: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:18,080: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:18,087: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rospy.internal][INFO] 2026-05-18 08:12:18,165: topic[/hardware/rotation_feedback] adding connection to [http://localhost:44769/], count 0
+[rosout][INFO] 2026-05-18 08:12:18,209: 节点B（增量模式）启动 | 周期间隔: 8.0s
+[rospy.internal][INFO] 2026-05-18 08:12:18,231: topic[/hardware/swing_feedback] adding connection to [http://localhost:44769/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,278: topic[/hardware/telescope_feedback] adding connection to [http://localhost:44769/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,413: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,415: topic[/control/kinematics_rotation_cmd] adding connection to [/rotation_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,690: topic[/control/kinematics_swing_cmd] adding connection to [/swing_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,029: topic[/control/kinematics_telescopic_cmd] adding connection to [/telescope_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:24,834: topic[/arm_alpha_beta] adding connection to [http://localhost:44333/], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:34,553: topic[/hardware/rotation_feedback] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:15:34,556: topic[/hardware/swing_feedback] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:15:34,574: topic[/hardware/telescope_feedback] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:15:34,809: topic[/hardware/rotation_feedback] adding connection to [http://localhost:45311/], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:34,915: topic[/hardware/swing_feedback] adding connection to [http://localhost:45311/], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:35,072: topic[/hardware/telescope_feedback] adding connection to [http://localhost:45311/], count 0
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:35,799: external shutdown request from [/master]: [/arm_kinematics] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:35,799: signal_shutdown [external shutdown request from [/master]: [[/arm_kinematics] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:35,825: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:15:35,830: topic[/control/kinematics_rotation_cmd] removing connection to /rotation_simple_node
+[rospy.internal][INFO] 2026-05-18 08:15:35,831: topic[/control/kinematics_swing_cmd] removing connection to /swing_simple_node
+[rospy.internal][INFO] 2026-05-18 08:15:35,838: topic[/control/kinematics_telescopic_cmd] removing connection to /telescope_simple_node
+[rospy.internal][INFO] 2026-05-18 08:15:35,847: topic[/arm_alpha_beta] removing connection to http://localhost:44333/
+[rospy.internal][INFO] 2026-05-18 08:15:35,851: topic[/arm_alpha_beta] removing connection to http://localhost:44333/
+[rospy.internal][INFO] 2026-05-18 08:15:35,858: topic[/hardware/rotation_feedback] removing connection to http://localhost:45311/
+[rospy.internal][INFO] 2026-05-18 08:15:35,860: topic[/hardware/swing_feedback] removing connection to http://localhost:45311/
+[rospy.internal][INFO] 2026-05-18 08:15:35,862: topic[/hardware/swing_feedback] removing connection to http://localhost:45311/
+[rospy.internal][INFO] 2026-05-18 08:15:35,863: topic[/hardware/telescope_feedback] removing connection to http://localhost:45311/
+[rospy.internal][INFO] 2026-05-18 08:15:35,864: topic[/hardware/telescope_feedback] removing connection to http://localhost:45311/
+[rospy.core][INFO] 2026-05-18 08:15:36,018: signal_shutdown [atexit]

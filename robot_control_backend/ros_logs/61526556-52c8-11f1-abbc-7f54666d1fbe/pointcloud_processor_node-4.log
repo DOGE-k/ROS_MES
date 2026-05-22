@@ -1,0 +1,23 @@
+[rospy.client][INFO] 2026-05-18 08:12:25,830: init_node, name[/pointcloud_processor_node], pid[14]
+[xmlrpc][INFO] 2026-05-18 08:12:25,833: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:25,837: Started XML-RPC server [http://localhost:35237/]
+[rospy.init][INFO] 2026-05-18 08:12:25,839: ROS Slave URI: [http://localhost:35237/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:25,841: _ready: http://localhost:35237/
+[rospy.registration][INFO] 2026-05-18 08:12:25,845: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:25,846: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:25,941: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:25,942: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:25,970: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:25,973: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:25,987: 🚀 ROS点云处理节点已启动（PCA摆正 + 统计滤波 + 智能全覆盖切块 + 十六进制编号）
+[rosout][INFO] 2026-05-18 08:12:26,007: 🌐 Flask服务运行在 5000 端口
+[werkzeug][INFO] 2026-05-18 08:12:26,027: [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.0.125:5000
+[werkzeug][INFO] 2026-05-18 08:12:26,028: [33mPress CTRL+C to quit[0m
+[rospy.internal][INFO] 2026-05-18 08:12:26,243: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:45,482: external shutdown request from [/master]: [/pointcloud_processor_node] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:45,483: signal_shutdown [external shutdown request from [/master]: [[/pointcloud_processor_node] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:45,489: topic[/rosout] removing connection to /rosout
+[rospy.core][INFO] 2026-05-18 08:15:45,864: signal_shutdown [atexit]

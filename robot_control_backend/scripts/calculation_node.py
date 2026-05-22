@@ -233,7 +233,9 @@ class PointSelectorNode:
     def task_callback(self, msg):
         try:
             start_time = time.time()
+            rospy.loginfo(f"🔔 节点A收到模块数据: {msg.data[:200]}..." if len(msg.data) > 200 else f"🔔 节点A收到模块数据: {msg.data}")
             modules = json.loads(msg.data)
+            rospy.loginfo(f"📦 解析到 {len(modules)} 个模块")
             out = []
             futures = [self.executor.submit(self.process_module, mod) for mod in modules]
             for future in futures:

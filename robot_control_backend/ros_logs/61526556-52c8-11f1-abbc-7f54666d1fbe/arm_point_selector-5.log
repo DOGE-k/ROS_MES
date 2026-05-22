@@ -1,0 +1,21 @@
+[rospy.client][INFO] 2026-05-18 08:12:24,607: init_node, name[/arm_point_selector], pid[15]
+[xmlrpc][INFO] 2026-05-18 08:12:24,612: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:24,617: Started XML-RPC server [http://localhost:44333/]
+[rospy.init][INFO] 2026-05-18 08:12:24,618: ROS Slave URI: [http://localhost:44333/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:24,620: _ready: http://localhost:44333/
+[rospy.registration][INFO] 2026-05-18 08:12:24,624: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:24,624: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:24,721: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:24,721: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:24,740: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:24,742: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:24,768: 节点A（最优点选取）启动
+[rospy.internal][INFO] 2026-05-18 08:12:24,843: topic[/arm_alpha_beta] adding connection to [/arm_kinematics], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:24,929: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:35,976: topic[/arm_alpha_beta] removing connection to /arm_kinematics
+[rospy.internal][INFO] 2026-05-18 08:15:36,203: topic[/arm_alpha_beta] adding connection to [/arm_kinematics], count 0
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:45,029: external shutdown request from [/master]: [/arm_point_selector] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:45,030: signal_shutdown [external shutdown request from [/master]: [[/arm_point_selector] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:45,035: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:15:45,037: topic[/arm_alpha_beta] removing connection to /arm_kinematics
+[rospy.core][INFO] 2026-05-18 08:15:45,134: signal_shutdown [atexit]

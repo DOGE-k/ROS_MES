@@ -1,0 +1,125 @@
+[rospy.client][INFO] 2026-05-18 08:13:14,592: init_node, name[/full_workflow_test_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:13:14,593: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:13:14,597: Started XML-RPC server [http://localhost:42261/]
+[rospy.init][INFO] 2026-05-18 08:13:14,597: ROS Slave URI: [http://localhost:42261/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:13:14,597: _ready: http://localhost:42261/
+[rospy.registration][INFO] 2026-05-18 08:13:14,600: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:13:14,601: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:13:14,698: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:13:14,699: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:13:14,715: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:13:14,717: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rospy.internal][INFO] 2026-05-18 08:13:14,779: topic[/control/adjust_rotation_cmd] adding connection to [/rotation_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,808: topic[/control/adjust_telescopic_cmd] adding connection to [/telescope_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,813: topic[/control/adjust_swing_cmd] adding connection to [/swing_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,820: topic[/hardware/rotation_output] adding connection to [http://localhost:39933/], count 0
+[rosout][INFO] 2026-05-18 08:13:14,819: 🚀 全流程测试节点已启动
+[rospy.internal][INFO] 2026-05-18 08:13:14,848: topic[/hardware/swing_output] adding connection to [http://localhost:36717/], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,864: topic[/arm/cmd_vel] adding connection to [http://localhost:36383/], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,883: topic[/arm/cmd_vel] adding connection to [http://localhost:39377/], count 1
+[rospy.internal][INFO] 2026-05-18 08:13:14,897: topic[/arm/cmd_vel] adding connection to [http://localhost:44769/], count 2
+[rospy.internal][INFO] 2026-05-18 08:13:14,905: topic[/hardware/telescope_output] adding connection to [http://localhost:45947/], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,950: topic[/rosout] adding connection to [/rosout], count 0
+[rosout][INFO] 2026-05-18 08:13:16,830: 
+==================================================
+[rosout][INFO] 2026-05-18 08:13:16,833: 开始ROS与下位机全流程测试
+[rosout][INFO] 2026-05-18 08:13:16,836: ==================================================
+[rosout][INFO] 2026-05-18 08:13:16,839: 
+=== 测试1: 模块确认 ===
+[rosout][INFO] 2026-05-18 08:13:16,842: 发送模块确认信号
+[rosout][INFO] 2026-05-18 08:13:17,848: 
+=== 测试2: 旋转轴控制 ===
+[rosout][ERROR] 2026-05-18 08:13:17,852: 测试异常: 'RotationCmd' object has no attribute 'angle'
+[rospy.core][INFO] 2026-05-18 08:13:17,854: signal_shutdown [atexit]
+[rospy.internal][INFO] 2026-05-18 08:13:17,861: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:13:17,872: topic[/control/adjust_rotation_cmd] removing connection to /rotation_simple_node
+[rospy.internal][INFO] 2026-05-18 08:13:17,877: topic[/control/adjust_swing_cmd] removing connection to /swing_simple_node
+[rospy.internal][INFO] 2026-05-18 08:13:17,879: topic[/control/adjust_telescopic_cmd] removing connection to /telescope_simple_node
+[rospy.internal][INFO] 2026-05-18 08:13:17,881: topic[/hardware/rotation_output] removing connection to http://localhost:39933/
+[rospy.internal][INFO] 2026-05-18 08:13:17,881: topic[/hardware/rotation_output] removing connection to http://localhost:39933/
+[rospy.internal][INFO] 2026-05-18 08:13:17,883: topic[/hardware/swing_output] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:13:17,883: topic[/hardware/swing_output] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:13:17,887: topic[/hardware/telescope_output] removing connection to http://localhost:45947/
+[rospy.internal][INFO] 2026-05-18 08:13:17,887: topic[/hardware/telescope_output] removing connection to http://localhost:45947/
+[rospy.internal][INFO] 2026-05-18 08:13:17,888: topic[/arm/cmd_vel] removing connection to http://localhost:36383/
+[rospy.internal][INFO] 2026-05-18 08:13:17,888: topic[/arm/cmd_vel] removing connection to http://localhost:36383/
+[rospy.internal][INFO] 2026-05-18 08:13:17,889: topic[/arm/cmd_vel] removing connection to http://localhost:39377/
+[rospy.internal][INFO] 2026-05-18 08:13:17,889: topic[/arm/cmd_vel] removing connection to http://localhost:39377/
+[rospy.internal][INFO] 2026-05-18 08:13:17,889: topic[/arm/cmd_vel] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:13:17,892: topic[/arm/cmd_vel] removing connection to http://localhost:44769/
+[rospy.impl.masterslave][INFO] 2026-05-18 08:13:17,893: atexit
+[rospy.client][INFO] 2026-05-18 08:14:07,924: init_node, name[/full_workflow_test_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:14:07,925: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:14:07,927: Started XML-RPC server [http://localhost:43019/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:14:07,927: _ready: http://localhost:43019/
+[rospy.init][INFO] 2026-05-18 08:14:07,930: ROS Slave URI: [http://localhost:43019/]
+[rospy.registration][INFO] 2026-05-18 08:14:07,935: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:14:07,935: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:14:08,034: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:14:08,035: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:14:08,061: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:14:08,063: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rospy.internal][INFO] 2026-05-18 08:14:08,100: topic[/hardware/rotation_output] adding connection to [http://localhost:39933/], count 0
+[rospy.internal][INFO] 2026-05-18 08:14:08,125: topic[/hardware/swing_output] adding connection to [http://localhost:36717/], count 0
+[rospy.internal][INFO] 2026-05-18 08:14:08,143: topic[/hardware/telescope_output] adding connection to [http://localhost:45947/], count 0
+[rospy.internal][INFO] 2026-05-18 08:14:08,144: topic[/arm/cmd_vel] adding connection to [http://localhost:36383/], count 0
+[rosout][INFO] 2026-05-18 08:14:08,130: 🚀 全流程测试节点已启动
+[rospy.internal][INFO] 2026-05-18 08:14:08,160: topic[/arm/cmd_vel] adding connection to [http://localhost:39377/], count 1
+[rospy.internal][INFO] 2026-05-18 08:14:08,166: topic[/arm/cmd_vel] adding connection to [http://localhost:44769/], count 2
+[rospy.internal][INFO] 2026-05-18 08:14:08,201: topic[/control/adjust_rotation_cmd] adding connection to [/rotation_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:14:08,209: topic[/control/adjust_swing_cmd] adding connection to [/swing_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:14:08,215: topic[/control/adjust_telescopic_cmd] adding connection to [/telescope_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:14:08,280: topic[/rosout] adding connection to [/rosout], count 0
+[rosout][INFO] 2026-05-18 08:14:10,146: 
+==================================================
+[rosout][INFO] 2026-05-18 08:14:10,149: 开始ROS与下位机全流程测试
+[rosout][INFO] 2026-05-18 08:14:10,152: ==================================================
+[rosout][INFO] 2026-05-18 08:14:10,154: 
+=== 测试1: 模块确认 ===
+[rosout][INFO] 2026-05-18 08:14:10,156: 发送模块确认信号
+[rosout][INFO] 2026-05-18 08:14:11,162: 
+=== 测试2: 旋转轴控制 ===
+[rosout][INFO] 2026-05-18 08:14:11,167: 发送旋转指令: +30度
+[rosout][INFO] 2026-05-18 08:14:11,169: 🔄 旋转轴输出: module=17, device=33, pos=(17404,)
+[rosout][INFO] 2026-05-18 08:14:11,177: ⚡ 硬件指令: module=17, device=33, pos=(17404,)
+[rosout][INFO] 2026-05-18 08:14:13,186: 
+=== 测试3: 摆动轴控制 ===
+[rosout][INFO] 2026-05-18 08:14:13,189: 发送摆动指令: +15度
+[rosout][INFO] 2026-05-18 08:14:13,202: 🔀 摆动轴输出: module=17, device=34, pos=(16202,)
+[rosout][INFO] 2026-05-18 08:14:13,213: ⚡ 硬件指令: module=17, device=34, pos=(16202,)
+[rosout][INFO] 2026-05-18 08:14:15,231: 
+=== 测试4: 伸缩轴控制 + 压力传感器 ===
+[rosout][INFO] 2026-05-18 08:14:15,236: 发送伸缩指令: +15mm (将触发压力传感器)
+[rosout][INFO] 2026-05-18 08:14:15,252: ⚡ 硬件指令: module=17, device=35, pos=(29420,)
+[rosout][INFO] 2026-05-18 08:14:15,256: 📏 伸缩轴输出: module=17, device=35, pos=(29420,)
+[rosout][INFO] 2026-05-18 08:14:22,268: ⚡ 硬件指令: module=17, device=49, pos=(0,)
+[rosout][INFO] 2026-05-18 08:14:22,775: ⚡ 硬件指令: module=17, device=49, pos=(1,)
+[rosout][INFO] 2026-05-18 08:14:25,270: 
+==================================================
+[rosout][INFO] 2026-05-18 08:14:25,274: 测试完成！
+[rosout][INFO] 2026-05-18 08:14:25,279: ==================================================
+[rosout][INFO] 2026-05-18 08:14:25,285: 
+测试结果汇总:
+[rosout][INFO] 2026-05-18 08:14:25,291: 1. 旋转轴输出: pos=(17404,)
+[rosout][INFO] 2026-05-18 08:14:25,298: 2. 硬件指令: device=33, pos=(17404,)
+[rosout][INFO] 2026-05-18 08:14:25,301: 3. 摆动轴输出: pos=(16202,)
+[rosout][INFO] 2026-05-18 08:14:25,306: 4. 硬件指令: device=34, pos=(16202,)
+[rosout][INFO] 2026-05-18 08:14:25,310: 5. 硬件指令: device=35, pos=(29420,)
+[rosout][INFO] 2026-05-18 08:14:25,314: 6. 伸缩轴输出: pos=(29420,)
+[rosout][INFO] 2026-05-18 08:14:25,318: 7. 硬件指令: device=49, pos=(0,)
+[rosout][INFO] 2026-05-18 08:14:25,321: 8. 硬件指令: device=49, pos=(1,)
+[rospy.core][INFO] 2026-05-18 08:14:25,325: signal_shutdown [atexit]
+[rospy.internal][INFO] 2026-05-18 08:14:25,335: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:14:25,335: topic[/control/adjust_rotation_cmd] removing connection to /rotation_simple_node
+[rospy.internal][INFO] 2026-05-18 08:14:25,337: topic[/control/adjust_swing_cmd] removing connection to /swing_simple_node
+[rospy.internal][INFO] 2026-05-18 08:14:25,338: topic[/control/adjust_telescopic_cmd] removing connection to /telescope_simple_node
+[rospy.internal][INFO] 2026-05-18 08:14:25,341: topic[/hardware/rotation_output] removing connection to http://localhost:39933/
+[rospy.internal][INFO] 2026-05-18 08:14:25,341: topic[/hardware/rotation_output] removing connection to http://localhost:39933/
+[rospy.internal][INFO] 2026-05-18 08:14:25,342: topic[/hardware/swing_output] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:14:25,343: topic[/hardware/swing_output] removing connection to http://localhost:36717/
+[rospy.internal][INFO] 2026-05-18 08:14:25,344: topic[/hardware/telescope_output] removing connection to http://localhost:45947/
+[rospy.internal][INFO] 2026-05-18 08:14:25,346: topic[/arm/cmd_vel] removing connection to http://localhost:36383/
+[rospy.internal][INFO] 2026-05-18 08:14:25,347: topic[/arm/cmd_vel] removing connection to http://localhost:36383/
+[rospy.internal][INFO] 2026-05-18 08:14:25,350: topic[/arm/cmd_vel] removing connection to http://localhost:39377/
+[rospy.internal][INFO] 2026-05-18 08:14:25,351: topic[/arm/cmd_vel] removing connection to http://localhost:44769/
+[rospy.impl.masterslave][INFO] 2026-05-18 08:14:25,351: atexit

@@ -1,0 +1,27 @@
+[rosmaster.main][INFO] 2026-05-18 21:53:45,485: initialization complete, waiting for shutdown
+[rosmaster.main][INFO] 2026-05-18 21:53:45,486: Starting ROS Master Node
+[xmlrpc][INFO] 2026-05-18 21:53:45,494: XML-RPC server binding to 127.0.0.1:11311
+[xmlrpc][INFO] 2026-05-18 21:53:45,496: Started XML-RPC server [http://localhost:11311/]
+[rosmaster.master][INFO] 2026-05-18 21:53:45,497: Master initialized: port[11311], uri[http://localhost:11311/]
+[xmlrpc][INFO] 2026-05-18 21:53:45,497: xml rpc node: starting XML-RPC server
+[rosmaster.master][INFO] 2026-05-18 21:53:45,577: +PARAM [/run_id] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:45,579: +PARAM [/roslaunch/uris/host_localhost__45487] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,118: +PARAM [/rosversion] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,118: +PARAM [/rosdistro] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,118: +PARAM [/rosbridge_websocket/port] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,119: +PARAM [/rosbridge_websocket/address] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,119: +PARAM [/rosbridge_websocket/authenticate] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,119: +PARAM [/rosapi/topics_glob] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,119: +PARAM [/rosapi/services_glob] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,119: +PARAM [/rosapi/params_glob] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:53:46,231: +SERVICE [/rosout/get_loggers] /rosout http://localhost:41367/
+[rosmaster.master][INFO] 2026-05-18 21:53:46,233: +SERVICE [/rosout/set_logger_level] /rosout http://localhost:41367/
+[rosmaster.master][INFO] 2026-05-18 21:53:46,238: +PUB [/rosout_agg] /rosout http://localhost:41367/
+[rosmaster.master][INFO] 2026-05-18 21:53:46,254: +SUB [/rosout] /rosout http://localhost:41367/
+[rosmaster.master][INFO] 2026-05-18 21:53:50,146: -PUB [/rosout_agg] /rosout http://localhost:41367/
+[rosmaster.master][INFO] 2026-05-18 21:53:50,147: -SUB [/rosout] /rosout http://localhost:41367/
+[rosmaster.master][INFO] 2026-05-18 21:53:50,149: -SERVICE [/rosout/get_loggers] /rosout rosrpc://localhost:55861
+[rosmaster.master][INFO] 2026-05-18 21:53:50,150: -SERVICE [/rosout/set_logger_level] /rosout rosrpc://localhost:55861
+[rosmaster.main][INFO] 2026-05-18 21:53:50,235: keyboard interrupt, will exit
+[rosmaster.main][INFO] 2026-05-18 21:53:50,235: stopping master...
+[rospy.core][INFO] 2026-05-18 21:53:50,236: signal_shutdown [atexit]
