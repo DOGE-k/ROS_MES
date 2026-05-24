@@ -1,0 +1,128 @@
+[rospy.client][INFO] 2026-05-18 08:08:06,908: init_node, name[/communication_test_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:08:06,909: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:08:06,910: Started XML-RPC server [http://localhost:45231/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:08:06,910: _ready: http://localhost:45231/
+[rospy.registration][INFO] 2026-05-18 08:08:06,912: Registering with master node http://localhost:11311/
+[rospy.init][INFO] 2026-05-18 08:08:06,915: ROS Slave URI: [http://localhost:45231/]
+[rospy.init][INFO] 2026-05-18 08:08:06,916: registered with master
+[xmlrpc][INFO] 2026-05-18 08:08:06,916: xml rpc node: starting XML-RPC server
+[rospy.rosout][INFO] 2026-05-18 08:08:06,917: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:08:06,933: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:08:06,935: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:08:06,958: 🔧 通信测试节点已启动
+[rosout][INFO] 2026-05-18 08:08:06,962: 等待其他节点启动...
+[rospy.internal][INFO] 2026-05-18 08:08:07,146: topic[/rosout] adding connection to [/rosout], count 0
+[rosout][INFO] 2026-05-18 08:08:09,967: 
+=== 发送测试指令 ===
+[rosout][INFO] 2026-05-18 08:08:09,969: 发送伸缩轴指令: +10mm
+[rosout][INFO] 2026-05-18 08:08:09,973: 等待流程执行...
+[rosout][INFO] 2026-05-18 08:08:19,986: 
+=== 测试完成 ===
+[rospy.core][INFO] 2026-05-18 08:08:19,989: signal_shutdown [atexit]
+[rospy.internal][INFO] 2026-05-18 08:08:19,998: topic[/rosout] removing connection to /rosout
+[rospy.impl.masterslave][INFO] 2026-05-18 08:08:19,998: atexit
+[rospy.client][INFO] 2026-05-18 08:08:55,621: init_node, name[/communication_test_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:08:55,623: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:08:55,627: Started XML-RPC server [http://localhost:35149/]
+[rospy.init][INFO] 2026-05-18 08:08:55,628: ROS Slave URI: [http://localhost:35149/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:08:55,629: _ready: http://localhost:35149/
+[rospy.registration][INFO] 2026-05-18 08:08:55,632: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:08:55,633: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:08:55,731: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:08:55,731: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:08:55,741: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:08:55,743: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rospy.internal][INFO] 2026-05-18 08:08:55,764: topic[/hardware/telescope_output] adding connection to [http://localhost:46843/], count 0
+[rosout][INFO] 2026-05-18 08:08:55,771: 🔧 通信测试节点已启动
+[rospy.internal][INFO] 2026-05-18 08:08:55,791: topic[/control/sensor_cmd] adding connection to [http://localhost:46843/], count 0
+[rosout][INFO] 2026-05-18 08:08:55,779: 等待其他节点启动...
+[rospy.internal][INFO] 2026-05-18 08:08:55,806: topic[/arm/cmd_vel] adding connection to [http://localhost:36877/], count 0
+[rospy.internal][INFO] 2026-05-18 08:08:55,844: topic[/control/adjust_telescopic_cmd] adding connection to [/telescope_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:08:56,028: topic[/rosout] adding connection to [/rosout], count 0
+[rosout][INFO] 2026-05-18 08:08:58,798: 
+=== 发送测试指令 ===
+[rosout][INFO] 2026-05-18 08:08:58,801: 发送伸缩轴指令: +10mm
+[rosout][INFO] 2026-05-18 08:08:58,803: 等待流程执行...
+[rosout][INFO] 2026-05-18 08:08:58,805: ✅ 伸缩轴节点输出: module_id=17, device_id=35, position=(29420,)
+[rosout][INFO] 2026-05-18 08:09:08,816: 
+=== 测试完成 ===
+[rospy.core][INFO] 2026-05-18 08:09:08,819: signal_shutdown [atexit]
+[rospy.internal][INFO] 2026-05-18 08:09:08,825: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:09:08,828: topic[/control/adjust_telescopic_cmd] removing connection to /telescope_simple_node
+[rospy.internal][INFO] 2026-05-18 08:09:08,831: topic[/hardware/telescope_output] removing connection to http://localhost:46843/
+[rospy.internal][INFO] 2026-05-18 08:09:08,832: topic[/hardware/telescope_output] removing connection to http://localhost:46843/
+[rospy.internal][INFO] 2026-05-18 08:09:08,835: topic[/control/sensor_cmd] removing connection to http://localhost:46843/
+[rospy.internal][INFO] 2026-05-18 08:09:08,836: topic[/arm/cmd_vel] removing connection to http://localhost:36877/
+[rospy.internal][INFO] 2026-05-18 08:09:08,836: topic[/arm/cmd_vel] removing connection to http://localhost:36877/
+[rospy.impl.masterslave][INFO] 2026-05-18 08:09:08,838: atexit
+[rospy.client][INFO] 2026-05-18 08:09:53,477: init_node, name[/communication_test_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:09:53,480: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:09:53,484: Started XML-RPC server [http://localhost:36327/]
+[rospy.init][INFO] 2026-05-18 08:09:53,484: ROS Slave URI: [http://localhost:36327/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:09:53,484: _ready: http://localhost:36327/
+[rospy.registration][INFO] 2026-05-18 08:09:53,486: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:09:53,487: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:09:53,585: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:09:53,586: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:09:53,595: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:09:53,598: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rospy.internal][INFO] 2026-05-18 08:09:53,619: topic[/hardware/telescope_output] adding connection to [http://localhost:43443/], count 0
+[rosout][INFO] 2026-05-18 08:09:53,629: 🔧 通信测试节点已启动
+[rospy.internal][INFO] 2026-05-18 08:09:53,643: topic[/control/sensor_cmd] adding connection to [http://localhost:43443/], count 0
+[rospy.internal][INFO] 2026-05-18 08:09:53,647: topic[/arm/cmd_vel] adding connection to [http://localhost:36877/], count 0
+[rosout][INFO] 2026-05-18 08:09:53,642: 等待其他节点启动...
+[rospy.internal][INFO] 2026-05-18 08:09:53,694: topic[/control/adjust_telescopic_cmd] adding connection to [/telescope_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:09:53,879: topic[/rosout] adding connection to [/rosout], count 0
+[rosout][INFO] 2026-05-18 08:09:56,658: 
+=== 发送测试指令 ===
+[rosout][INFO] 2026-05-18 08:09:56,662: 发送伸缩轴指令: +10mm
+[rosout][INFO] 2026-05-18 08:09:56,664: 等待流程执行...
+[rosout][INFO] 2026-05-18 08:09:56,668: ✅ 伸缩轴节点输出: module_id=17, device_id=35, position=(29420,)
+[rosout][INFO] 2026-05-18 08:09:56,669: ✅ 传感器触发信号: module_id=17, device_id=0, position=(0,)
+[rosout][INFO] 2026-05-18 08:10:06,675: 
+=== 测试完成 ===
+[rospy.core][INFO] 2026-05-18 08:10:06,678: signal_shutdown [atexit]
+[rospy.internal][INFO] 2026-05-18 08:10:06,684: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:10:06,685: topic[/control/adjust_telescopic_cmd] removing connection to /telescope_simple_node
+[rospy.internal][INFO] 2026-05-18 08:10:06,688: topic[/hardware/telescope_output] removing connection to http://localhost:43443/
+[rospy.internal][INFO] 2026-05-18 08:10:06,691: topic[/hardware/telescope_output] removing connection to http://localhost:43443/
+[rospy.internal][INFO] 2026-05-18 08:10:06,692: topic[/control/sensor_cmd] removing connection to http://localhost:43443/
+[rospy.internal][INFO] 2026-05-18 08:10:06,693: topic[/control/sensor_cmd] removing connection to http://localhost:43443/
+[rospy.internal][INFO] 2026-05-18 08:10:06,697: topic[/arm/cmd_vel] removing connection to http://localhost:36877/
+[rospy.internal][INFO] 2026-05-18 08:10:06,697: topic[/arm/cmd_vel] removing connection to http://localhost:36877/
+[rospy.impl.masterslave][INFO] 2026-05-18 08:10:06,698: atexit
+[rospy.client][INFO] 2026-05-18 08:10:49,349: init_node, name[/communication_test_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:10:49,353: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:10:49,357: Started XML-RPC server [http://localhost:39065/]
+[rospy.init][INFO] 2026-05-18 08:10:49,357: ROS Slave URI: [http://localhost:39065/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:10:49,358: _ready: http://localhost:39065/
+[rospy.registration][INFO] 2026-05-18 08:10:49,359: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:10:49,359: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:10:49,458: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:10:49,459: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:10:49,469: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:10:49,470: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rospy.internal][INFO] 2026-05-18 08:10:49,495: topic[/hardware/telescope_output] adding connection to [http://localhost:43443/], count 0
+[rospy.internal][INFO] 2026-05-18 08:10:49,503: topic[/control/sensor_cmd] adding connection to [http://localhost:43443/], count 0
+[rosout][INFO] 2026-05-18 08:10:49,512: 🔧 通信测试节点已启动
+[rospy.internal][INFO] 2026-05-18 08:10:49,532: topic[/arm/cmd_vel] adding connection to [http://localhost:44689/], count 0
+[rosout][INFO] 2026-05-18 08:10:49,523: 等待其他节点启动...
+[rospy.internal][INFO] 2026-05-18 08:10:49,593: topic[/control/adjust_telescopic_cmd] adding connection to [/telescope_simple_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:10:49,687: topic[/rosout] adding connection to [/rosout], count 0
+[rosout][INFO] 2026-05-18 08:10:52,536: 
+=== 发送测试指令 ===
+[rosout][INFO] 2026-05-18 08:10:52,538: 发送伸缩轴指令: +10mm
+[rosout][INFO] 2026-05-18 08:10:52,540: 等待流程执行...
+[rosout][INFO] 2026-05-18 08:10:52,547: ✅ 伸缩轴节点输出: module_id=17, device_id=35, position=(29420,)
+[rosout][INFO] 2026-05-18 08:10:52,548: ✅ 传感器触发信号: module_id=17, device_id=0, position=(0,)
+[rosout][INFO] 2026-05-18 08:10:59,569: ✅ 硬件指令: module_id=17, device_id=49, position=(0,)
+[rosout][INFO] 2026-05-18 08:11:00,075: ✅ 硬件指令: module_id=17, device_id=49, position=(1,)
+[rosout][INFO] 2026-05-18 08:11:02,551: 
+=== 测试完成 ===
+[rospy.core][INFO] 2026-05-18 08:11:02,554: signal_shutdown [atexit]
+[rospy.internal][INFO] 2026-05-18 08:11:02,559: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:11:02,559: topic[/control/adjust_telescopic_cmd] removing connection to /telescope_simple_node
+[rospy.internal][INFO] 2026-05-18 08:11:02,560: topic[/hardware/telescope_output] removing connection to http://localhost:43443/
+[rospy.internal][INFO] 2026-05-18 08:11:02,560: topic[/control/sensor_cmd] removing connection to http://localhost:43443/
+[rospy.internal][INFO] 2026-05-18 08:11:02,561: topic[/arm/cmd_vel] removing connection to http://localhost:44689/
+[rospy.impl.masterslave][INFO] 2026-05-18 08:11:02,561: atexit

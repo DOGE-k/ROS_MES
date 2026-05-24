@@ -1,0 +1,20 @@
+[rosmaster.main][INFO] 2026-05-18 21:54:03,587: initialization complete, waiting for shutdown
+[rosmaster.main][INFO] 2026-05-18 21:54:03,588: Starting ROS Master Node
+[xmlrpc][INFO] 2026-05-18 21:54:03,591: XML-RPC server binding to 127.0.0.1:11311
+[xmlrpc][INFO] 2026-05-18 21:54:03,594: Started XML-RPC server [http://localhost:11311/]
+[rosmaster.master][INFO] 2026-05-18 21:54:03,597: Master initialized: port[11311], uri[http://localhost:11311/]
+[xmlrpc][INFO] 2026-05-18 21:54:03,598: xml rpc node: starting XML-RPC server
+[rosmaster.master][INFO] 2026-05-18 21:54:03,635: +PARAM [/run_id] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:03,643: +PARAM [/roslaunch/uris/host_localhost__38211] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,274: +PARAM [/rosversion] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,274: +PARAM [/rosdistro] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,274: +PARAM [/rosbridge_websocket/port] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,275: +PARAM [/rosbridge_websocket/address] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,275: +PARAM [/rosbridge_websocket/authenticate] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,275: +PARAM [/rosapi/topics_glob] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,275: +PARAM [/rosapi/services_glob] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,275: +PARAM [/rosapi/params_glob] by /roslaunch
+[rosmaster.master][INFO] 2026-05-18 21:54:04,290: +SERVICE [/rosout/get_loggers] /rosout http://localhost:42215/
+[rosmaster.master][INFO] 2026-05-18 21:54:04,291: +SERVICE [/rosout/set_logger_level] /rosout http://localhost:42215/
+[rosmaster.master][INFO] 2026-05-18 21:54:04,293: +PUB [/rosout_agg] /rosout http://localhost:42215/
+[rosmaster.master][INFO] 2026-05-18 21:54:04,302: +SUB [/rosout] /rosout http://localhost:42215/

@@ -1,0 +1,26 @@
+[rospy.client][INFO] 2026-05-18 08:12:17,208: init_node, name[/module_confirme_node], pid[11]
+[xmlrpc][INFO] 2026-05-18 08:12:17,210: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:17,211: Started XML-RPC server [http://localhost:36383/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:17,211: _ready: http://localhost:36383/
+[rospy.init][INFO] 2026-05-18 08:12:17,240: ROS Slave URI: [http://localhost:36383/]
+[rospy.registration][INFO] 2026-05-18 08:12:17,241: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:17,241: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:17,341: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:17,341: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:17,348: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:17,354: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:17,370: ✅ 模块确认节点已启动
+[rospy.internal][INFO] 2026-05-18 08:12:17,626: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:17,644: topic[/hardware/module_cmd] adding connection to [http://localhost:44769/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,146: topic[/arm/cmd_vel] adding connection to [/stm32_bridge], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,639: topic[/arm/cmd_vel] removing connection to /stm32_bridge
+[rospy.internal][INFO] 2026-05-18 08:13:14,891: topic[/arm/cmd_vel] adding connection to [/full_workflow_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:18,202: topic[/arm/cmd_vel] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:14:08,153: topic[/arm/cmd_vel] adding connection to [/full_workflow_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:14:25,773: topic[/arm/cmd_vel] removing connection to /full_workflow_test_node
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:33,333: external shutdown request from [/master]: [/module_confirme_node] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:33,333: signal_shutdown [external shutdown request from [/master]: [[/module_confirme_node] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:33,343: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:15:33,419: topic[/hardware/module_cmd] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:15:33,419: topic[/hardware/module_cmd] removing connection to http://localhost:44769/
+[rospy.core][INFO] 2026-05-18 08:15:33,689: signal_shutdown [atexit]

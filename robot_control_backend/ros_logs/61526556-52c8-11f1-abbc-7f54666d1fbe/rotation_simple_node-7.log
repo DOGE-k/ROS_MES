@@ -1,0 +1,99 @@
+[rospy.client][INFO] 2026-05-18 08:12:18,097: init_node, name[/rotation_simple_node], pid[18]
+[xmlrpc][INFO] 2026-05-18 08:12:18,119: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:18,120: Started XML-RPC server [http://localhost:39933/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:18,120: _ready: http://localhost:39933/
+[rospy.init][INFO] 2026-05-18 08:12:18,121: ROS Slave URI: [http://localhost:39933/]
+[rospy.registration][INFO] 2026-05-18 08:12:18,122: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:18,134: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:18,221: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:18,221: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:18,235: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:18,245: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:18,270: 旋转轴节点启动
+[rospy.internal][INFO] 2026-05-18 08:12:18,346: topic[/control/kinematics_rotation_cmd] adding connection to [http://localhost:42879/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,373: topic[/hardware/rotation_feedback] adding connection to [http://localhost:44769/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,425: topic[/hardware/rotation_output] adding connection to [/feedback_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,529: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,961: topic[/control/sensor_cmd] adding connection to [/pressure_sensor_control_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,775: topic[/control/adjust_rotation_cmd] adding connection to [http://localhost:42261/], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,876: topic[/hardware/rotation_output] adding connection to [/full_workflow_test_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:13:17,872: topic[/control/adjust_rotation_cmd] removing connection to http://localhost:42261/
+[rospy.internal][INFO] 2026-05-18 08:13:18,250: topic[/hardware/rotation_output] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:14:08,113: topic[/hardware/rotation_output] adding connection to [/full_workflow_test_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:14:08,188: topic[/control/adjust_rotation_cmd] adding connection to [http://localhost:43019/], count 0
+[rospy.topics][ERROR] 2026-05-18 08:14:11,174: Traceback (most recent call last):
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 92, in serialize
+    length = len(self.position)
+TypeError: object of type 'int' has no len()
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 882, in publish
+    self.impl.publish(data)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 1066, in publish
+    serialize_message(b, self.seq, message)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/msg.py", line 152, in serialize_message
+    msg.serialize(b)
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 97, in serialize
+    except TypeError as te: self._check_types(ValueError("%s: '%s' when writing '%s'" % (type(te), str(te), str(locals().get('_x', self)))))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 392, in _check_types
+    check_type(n, t, getattr(self, n))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 311, in check_type
+    raise SerializationError('field %s must be a list or tuple type' % field_name)
+genpy.message.SerializationError: field position must be a list or tuple type
+
+[rosout][ERROR] 2026-05-18 08:14:11,177: bad callback: <bound method RotationSimple.cmd_callback of <__main__.RotationSimple object at 0x7f58d50ec040>>
+Traceback (most recent call last):
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 92, in serialize
+    length = len(self.position)
+TypeError: object of type 'int' has no len()
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 882, in publish
+    self.impl.publish(data)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 1066, in publish
+    serialize_message(b, self.seq, message)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/msg.py", line 152, in serialize_message
+    msg.serialize(b)
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 97, in serialize
+    except TypeError as te: self._check_types(ValueError("%s: '%s' when writing '%s'" % (type(te), str(te), str(locals().get('_x', self)))))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 392, in _check_types
+    check_type(n, t, getattr(self, n))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 311, in check_type
+    raise SerializationError('field %s must be a list or tuple type' % field_name)
+genpy.message.SerializationError: field position must be a list or tuple type
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 750, in _invoke_callback
+    cb(msg)
+  File "/home/yang/workspaces/robot_ws/src/ROS_MES/robot_control_backend/scripts/rotation_node.py", line 86, in cmd_callback
+    self.sensor_trigger_pub.publish(trigger_msg)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 886, in publish
+    raise ROSSerializationException(str(e))
+rospy.exceptions.ROSSerializationException: field position must be a list or tuple type
+
+[rospy.internal][INFO] 2026-05-18 08:14:25,336: topic[/control/adjust_rotation_cmd] removing connection to http://localhost:43019/
+[rospy.internal][INFO] 2026-05-18 08:14:25,693: topic[/hardware/rotation_output] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,554: topic[/hardware/rotation_feedback] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:15:34,715: topic[/hardware/rotation_output] removing connection to /feedback_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,868: topic[/hardware/rotation_feedback] adding connection to [http://localhost:45311/], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:35,068: topic[/hardware/rotation_output] adding connection to [/feedback_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:35,826: topic[/control/kinematics_rotation_cmd] removing connection to http://localhost:42879/
+[rospy.internal][INFO] 2026-05-18 08:15:36,027: topic[/control/kinematics_rotation_cmd] adding connection to [http://localhost:37531/], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:36,783: topic[/control/sensor_cmd] adding connection to [/pressure_sensor_control_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:15:36,783: topic[/control/sensor_cmd] removing connection to /pressure_sensor_control_node
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:37,056: external shutdown request from [/master]: [/rotation_simple_node] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:37,056: signal_shutdown [external shutdown request from [/master]: [[/rotation_simple_node] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:37,063: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:15:37,065: topic[/hardware/rotation_output] removing connection to /feedback_node
+[rospy.internal][INFO] 2026-05-18 08:15:37,073: topic[/control/sensor_cmd] removing connection to /pressure_sensor_control_node
+[rospy.internal][INFO] 2026-05-18 08:15:37,080: topic[/control/kinematics_rotation_cmd] removing connection to http://localhost:37531/
+[rospy.internal][INFO] 2026-05-18 08:15:37,081: topic[/control/kinematics_rotation_cmd] removing connection to http://localhost:37531/
+[rospy.internal][INFO] 2026-05-18 08:15:37,084: topic[/hardware/rotation_feedback] removing connection to http://localhost:45311/
+[rospy.internal][INFO] 2026-05-18 08:15:37,084: topic[/hardware/rotation_feedback] removing connection to http://localhost:45311/
+[rospy.core][INFO] 2026-05-18 08:15:37,164: signal_shutdown [atexit]

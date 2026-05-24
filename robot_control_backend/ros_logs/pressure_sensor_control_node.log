@@ -1,0 +1,68 @@
+[rospy.client][INFO] 2026-05-18 08:08:44,609: init_node, name[/pressure_sensor_control_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:08:44,611: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:08:44,612: Started XML-RPC server [http://localhost:36877/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:08:44,613: _ready: http://localhost:36877/
+[rospy.registration][INFO] 2026-05-18 08:08:44,614: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:08:44,614: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:08:44,615: ROS Slave URI: [http://localhost:36877/]
+[rospy.init][INFO] 2026-05-18 08:08:44,616: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:08:44,617: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:08:44,629: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:08:44,631: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:08:44,639: 压力传感器控制节点已启动 | 延迟: 7.0s
+[rospy.internal][INFO] 2026-05-18 08:08:44,658: topic[/control/sensor_cmd] adding connection to [http://localhost:46843/], count 0
+[rospy.internal][INFO] 2026-05-18 08:08:44,887: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:08:55,811: topic[/arm/cmd_vel] adding connection to [/communication_test_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:09:09,173: topic[/arm/cmd_vel] removing connection to /communication_test_node
+[rospy.internal][INFO] 2026-05-18 08:09:36,003: topic[/control/sensor_cmd] removing connection to http://localhost:46843/
+[rospy.internal][INFO] 2026-05-18 08:09:43,528: topic[/control/sensor_cmd] adding connection to [http://localhost:43443/], count 0
+[rospy.internal][INFO] 2026-05-18 08:09:53,658: topic[/arm/cmd_vel] adding connection to [/communication_test_node], count 0
+[rosout][INFO] 2026-05-18 08:09:56,670: 📡 收到传感器触发指令，module_id=17
+[rosout][INFO] 2026-05-18 08:09:56,672: ⏳ 将在 7.0s 后发送压力传感器指令
+[rosout][INFO] 2026-05-18 08:10:03,687: 🔌 发送压力传感器指令序列
+[rospy.topics][ERROR] 2026-05-18 08:10:03,694: Traceback (most recent call last):
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 92, in serialize
+    length = len(self.position)
+TypeError: object of type 'int' has no len()
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 882, in publish
+    self.impl.publish(data)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/topics.py", line 1066, in publish
+    serialize_message(b, self.seq, message)
+  File "/opt/ros/noetic/lib/python3/dist-packages/rospy/msg.py", line 152, in serialize_message
+    msg.serialize(b)
+  File "/home/yang/workspaces/robot_ws/devel/lib/python3/dist-packages/robot_control_backend/msg/_IntCmd.py", line 97, in serialize
+    except TypeError as te: self._check_types(ValueError("%s: '%s' when writing '%s'" % (type(te), str(te), str(locals().get('_x', self)))))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 392, in _check_types
+    check_type(n, t, getattr(self, n))
+  File "/opt/ros/noetic/lib/python3/dist-packages/genpy/message.py", line 311, in check_type
+    raise SerializationError('field %s must be a list or tuple type' % field_name)
+genpy.message.SerializationError: field position must be a list or tuple type
+
+[rospy.internal][INFO] 2026-05-18 08:10:07,048: topic[/arm/cmd_vel] removing connection to /communication_test_node
+[rospy.client][INFO] 2026-05-18 08:10:40,622: init_node, name[/pressure_sensor_control_node], pid[2]
+[xmlrpc][INFO] 2026-05-18 08:10:40,624: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:10:40,626: Started XML-RPC server [http://localhost:44689/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:10:40,626: _ready: http://localhost:44689/
+[rospy.registration][INFO] 2026-05-18 08:10:40,628: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:10:40,629: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:10:40,630: ROS Slave URI: [http://localhost:44689/]
+[rospy.init][INFO] 2026-05-18 08:10:40,633: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:10:40,634: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:10:40,648: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:10:40,651: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:10:40,657: 压力传感器控制节点已启动 | 延迟: 7.0s
+[rospy.internal][INFO] 2026-05-18 08:10:40,673: topic[/control/sensor_cmd] adding connection to [http://localhost:43443/], count 0
+[rospy.internal][INFO] 2026-05-18 08:10:40,951: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:10:49,539: topic[/arm/cmd_vel] adding connection to [/communication_test_node], count 0
+[rosout][INFO] 2026-05-18 08:10:52,546: 📡 收到传感器触发指令，module_id=17
+[rosout][INFO] 2026-05-18 08:10:52,549: ⏳ 将在 7.0s 后发送压力传感器指令
+[rosout][INFO] 2026-05-18 08:10:59,565: 🔌 发送压力传感器指令序列
+[rosout][INFO] 2026-05-18 08:10:59,569: 压力传感器指令1: module=17, pos=0
+[rosout][INFO] 2026-05-18 08:11:00,075: 压力传感器指令2: module=17, pos=1
+[rosout][INFO] 2026-05-18 08:11:00,079: ✅ 压力传感器指令序列发送完成
+[rospy.internal][INFO] 2026-05-18 08:11:02,692: topic[/arm/cmd_vel] removing connection to /communication_test_node
+[rospy.internal][INFO] 2026-05-18 08:12:04,201: topic[/control/sensor_cmd] removing connection to http://localhost:43443/

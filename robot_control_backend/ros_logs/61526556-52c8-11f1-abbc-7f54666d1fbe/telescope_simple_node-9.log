@@ -1,0 +1,43 @@
+[rospy.client][INFO] 2026-05-18 08:12:18,637: init_node, name[/telescope_simple_node], pid[23]
+[xmlrpc][INFO] 2026-05-18 08:12:18,655: XML-RPC server binding to 127.0.0.1:0
+[xmlrpc][INFO] 2026-05-18 08:12:18,655: Started XML-RPC server [http://localhost:45947/]
+[rospy.impl.masterslave][INFO] 2026-05-18 08:12:18,656: _ready: http://localhost:45947/
+[rospy.registration][INFO] 2026-05-18 08:12:18,657: Registering with master node http://localhost:11311/
+[xmlrpc][INFO] 2026-05-18 08:12:18,657: xml rpc node: starting XML-RPC server
+[rospy.init][INFO] 2026-05-18 08:12:18,662: ROS Slave URI: [http://localhost:45947/]
+[rospy.init][INFO] 2026-05-18 08:12:18,663: registered with master
+[rospy.rosout][INFO] 2026-05-18 08:12:18,663: initializing /rosout core topic
+[rospy.rosout][INFO] 2026-05-18 08:12:18,771: connected to core topic /rosout
+[rospy.simtime][INFO] 2026-05-18 08:12:18,790: /use_sim_time is not set, will not subscribe to simulated time [/clock] topic
+[rosout][INFO] 2026-05-18 08:12:18,829: 伸缩轴节点启动
+[rosout][INFO] 2026-05-18 08:12:18,831: 参数：1mm ≈ 41208.79 编码，长度限位 0.0-150.0mm
+[rospy.internal][INFO] 2026-05-18 08:12:18,904: topic[/rosout] adding connection to [/rosout], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,945: topic[/hardware/telescope_output] adding connection to [/feedback_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:18,956: topic[/hardware/telescope_feedback] adding connection to [http://localhost:44769/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,002: topic[/control/kinematics_telescopic_cmd] adding connection to [http://localhost:42879/], count 0
+[rospy.internal][INFO] 2026-05-18 08:12:19,034: topic[/control/sensor_cmd] adding connection to [/pressure_sensor_control_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,790: topic[/control/adjust_telescopic_cmd] adding connection to [http://localhost:42261/], count 0
+[rospy.internal][INFO] 2026-05-18 08:13:14,915: topic[/hardware/telescope_output] adding connection to [/full_workflow_test_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:13:17,879: topic[/control/adjust_telescopic_cmd] removing connection to http://localhost:42261/
+[rospy.internal][INFO] 2026-05-18 08:13:18,265: topic[/hardware/telescope_output] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:14:08,161: topic[/hardware/telescope_output] adding connection to [/full_workflow_test_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:14:08,201: topic[/control/adjust_telescopic_cmd] adding connection to [http://localhost:43019/], count 0
+[rosout][INFO] 2026-05-18 08:14:15,240: 伸缩轴微调：+15.00mm → 下发编码：29420
+[rospy.internal][INFO] 2026-05-18 08:14:25,341: topic[/control/adjust_telescopic_cmd] removing connection to http://localhost:43019/
+[rospy.internal][INFO] 2026-05-18 08:14:25,699: topic[/hardware/telescope_output] removing connection to /full_workflow_test_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,569: topic[/hardware/telescope_feedback] removing connection to http://localhost:44769/
+[rospy.internal][INFO] 2026-05-18 08:15:34,762: topic[/hardware/telescope_output] removing connection to /feedback_node
+[rospy.internal][INFO] 2026-05-18 08:15:34,981: topic[/hardware/telescope_feedback] adding connection to [http://localhost:45311/], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:35,095: topic[/hardware/telescope_output] adding connection to [/feedback_node], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:35,831: topic[/control/kinematics_telescopic_cmd] removing connection to http://localhost:42879/
+[rospy.internal][INFO] 2026-05-18 08:15:36,249: topic[/control/kinematics_telescopic_cmd] adding connection to [http://localhost:37531/], count 0
+[rospy.internal][INFO] 2026-05-18 08:15:36,803: topic[/control/sensor_cmd] adding connection to [/pressure_sensor_control_node], count 1
+[rospy.internal][INFO] 2026-05-18 08:15:36,804: topic[/control/sensor_cmd] removing connection to /pressure_sensor_control_node
+[rospy.impl.masterslave][INFO] 2026-05-18 08:15:37,083: external shutdown request from [/master]: [/telescope_simple_node] Reason: new node registered with same name
+[rospy.core][INFO] 2026-05-18 08:15:37,083: signal_shutdown [external shutdown request from [/master]: [[/telescope_simple_node] Reason: new node registered with same name]]
+[rospy.internal][INFO] 2026-05-18 08:15:37,093: topic[/rosout] removing connection to /rosout
+[rospy.internal][INFO] 2026-05-18 08:15:37,094: topic[/hardware/telescope_output] removing connection to /feedback_node
+[rospy.internal][INFO] 2026-05-18 08:15:37,095: topic[/control/sensor_cmd] removing connection to /pressure_sensor_control_node
+[rospy.internal][INFO] 2026-05-18 08:15:37,095: topic[/control/kinematics_telescopic_cmd] removing connection to http://localhost:37531/
+[rospy.internal][INFO] 2026-05-18 08:15:37,095: topic[/hardware/telescope_feedback] removing connection to http://localhost:45311/
+[rospy.core][INFO] 2026-05-18 08:15:37,198: signal_shutdown [atexit]
