@@ -61,9 +61,12 @@ def send_coordination(
 
     ros_payload = build_drawing_path_publish_payload(drawing.Drawingfile)
     ros_payload["business"] = dispatch_payload
+    print(f"[Coordination] 图纸文件: {drawing.Drawingfile}")
+    print(f"[Coordination] ROS Payload: {ros_payload}")
 
     try:
         dispatch_result = dispatcher.dispatch("drawing_path", ros_payload)
+        print(f"[Coordination] dispatch_result: {dispatch_result}")
     except RosbridgeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

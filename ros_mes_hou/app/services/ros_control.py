@@ -72,23 +72,29 @@ async def get_hardware_status() -> dict:
 
 async def trigger_emergency_stop() -> bool:
     """
-    通过 WebSocket 向 web_data_node 发送 rosbridge 格式的急停指令
-    data="000000" 表示急停
+    通过 WebSocket 向 rosbridge 发送急停指令
+    话题: /control/softstop (softstop_node 订阅的话题)
     """
     if websockets is None:
         print("[紧急故障] websockets 库未安装，无法发送急停指令")
         return False
 
+    ROSBRIDGE_URL = "ws://localhost:9010"
     emergency_msg = json.dumps({
         "op": "publish",
-        "topic": "/emergency_stop",
-        "msg": {"data": "000000"}
+        "topic": "/control/softstop",
+        "msg": {
+            "header": {"stamp": {"secs": 0, "nsecs": 0}, "frame_id": ""},
+            "module_id": 17,
+            "device_id": 0,
+            "position": []
+        }
     }, ensure_ascii=False)
 
     try:
-        async with websockets.connect(WEBSOCKET_URI, close_timeout=1) as ws:
+        async with websockets.connect(ROSBRIDGE_URL, close_timeout=1) as ws:
             await asyncio.wait_for(ws.send(emergency_msg), timeout=2.0)
-        print("[急停] rosbridge 指令已发送: " + emergency_msg)
+        print("[急停] 指令已发送: /control/softstop")
         return True
     except asyncio.TimeoutError:
         print("[紧急故障] 急停 WebSocket 发送超时")

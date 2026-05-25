@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover - depends on deployment environment
     websockets = None
 
 
-ROSBRIDGE_URL = os.getenv("ROSBRIDGE_URL", "ws://192.168.0.105:9010")
+ROSBRIDGE_URL = os.getenv("ROSBRIDGE_URL", "ws://localhost:9010")
 ROS_COMM_MODULE_ID = 17
 
 FINE_TUNING_TOPIC_MAP: Dict[str, Dict[str, Any]] = {
@@ -130,7 +130,7 @@ class RosbridgeDispatcher:
 
     async def publish(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if websockets is None:
-            raise RosbridgeError("missing websockets dependency")
+            raise RosbridgeError("缺少 websockets 依赖，请安装 websockets 库")
 
         topic = payload["topic"]
         advertise = {
@@ -144,12 +144,25 @@ class RosbridgeDispatcher:
             "msg": payload["message"],
         }
 
+        advertise_json = json.dumps(advertise, ensure_ascii=False)
+        publish_json = json.dumps(publish, ensure_ascii=False)
+        print(f"[Rosbridge] 准备发送 - URL: {self.url}")
+        print(f"[Rosbridge] advertise: {advertise_json}")
+        print(f"[Rosbridge] publish: {publish_json}")
+
         try:
             async with websockets.connect(self.url, close_timeout=1) as ws:
-                await asyncio.wait_for(ws.send(json.dumps(advertise, ensure_ascii=False)), self.timeout)
-                await asyncio.wait_for(ws.send(json.dumps(publish, ensure_ascii=False)), self.timeout)
+                await asyncio.wait_for(ws.send(advertise_json), self.timeout)
+                print(f"[Rosbridge] advertise 发送成功")
+                await asyncio.sleep(0.1)
+                await asyncio.wait_for(ws.send(publish_json), self.timeout)
+                print(f"[Rosbridge] publish 发送成功")
+        except ConnectionRefusedError:
+            raise RosbridgeError(f"无法连接到 rosbridge 服务，请检查服务是否启动。URL: {self.url}")
+        except asyncio.TimeoutError:
+            raise RosbridgeError(f"连接 rosbridge 超时，请检查网络连接和服务状态。URL: {self.url}")
         except Exception as exc:
-            raise RosbridgeError(f"rosbridge publish failed: {exc}") from exc
+            raise RosbridgeError(f"rosbridge 发布失败: {exc}。URL: {self.url}") from exc
 
         return {
             "sent": True,

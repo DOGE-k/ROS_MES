@@ -150,19 +150,54 @@ def publish_all_modules(modules):
 # ===================== JSON 回调处理 =====================
 def json_callback(msg):
     global point_cloud_data
+    rospy.loginfo(f"🔔 收到消息: {msg.data[:100]}..." if len(msg.data) > 100 else f"🔔 收到消息: {msg.data}")
     try:
         json_data = json.loads(msg.data)
-        if "points" not in json_data:
-            rospy.logerr("缺少 points 字段")
+
+        file_path = json_data.get("file_path")
+        if file_path:
+            rospy.loginfo(f"📂 收到图纸路径: {file_path}")
+            if not os.path.exists(file_path):
+                rospy.logerr(f"❌ 图纸文件不存在: {file_path}")
+                return
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    drawing_json = json.load(f)
+                parts = drawing_json.get("虚拟部件列表", [])
+                points_list = []
+                for part in parts:
+                    for coord in part.get("坐标列表", []):
+                        x = coord.get("全局X(mm)", 0)
+                        y = coord.get("全局Y(mm)", 0)
+                        z = coord.get("全局Z(mm)", 0)
+                        points_list.append([x, y, z])
+                if not points_list:
+                    rospy.logerr("❌ JSON文件中没有找到坐标数据")
+                    return
+                point_cloud_data = np.array(points_list, dtype=np.float64)
+                point_cloud_data /= 10.0
+                rospy.loginfo(f"✅ 成功解析JSON图纸，共 {len(point_cloud_data)} 个点 (已转为 cm)")
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(point_cloud_data)
+            except json.JSONDecodeError as e:
+                pcd = o3d.io.read_point_cloud(file_path)
+                rospy.loginfo(f"✅ 成功加载点云文件，共 {len(pcd.points)} 个点")
+            except Exception as e:
+                rospy.logerr(f"❌ 图纸解析失败: {e}")
+                return
+        elif "points" in json_data:
+            point_cloud_data = np.array(json_data["points"], dtype=np.float64)
+            point_cloud_data /= 10.0
+            rospy.loginfo(f"✅ 成功解析点云，共 {len(point_cloud_data)} 个点 (已转为 cm)")
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(point_cloud_data)
+        else:
+            rospy.logerr("缺少 points 或 file_path 字段")
             return
 
-        point_cloud_data = np.array(json_data["points"], dtype=np.float64)
-        point_cloud_data /= 10.0
-
-        rospy.loginfo(f"✅ 成功解析点云，共 {len(point_cloud_data)} 个点 (已转为 cm)")
-
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(point_cloud_data)
+        if len(pcd.points) == 0:
+            rospy.logerr("❌ 点云为空")
+            return
 
         cl, ind = pcd.remove_statistical_outlier(nb_neighbors=50, std_ratio=2.0)
         pcd = pcd.select_by_index(ind)
@@ -223,8 +258,10 @@ def run_flask():
 
 # ===================== 主程序 =====================
 def main():
+    global module_pub
     rospy.init_node('pointcloud_processor_node')
-    rospy.Subscriber('frontend_pointcloud_topic', String, json_callback)
+    rospy.Subscriber('/frontend_pointcloud_topic', String, json_callback)
+    module_pub = rospy.Publisher('/module_arm_task', String, queue_size=10)
     rospy.loginfo("🚀 ROS点云处理节点已启动（PCA摆正 + 统计滤波 + 智能全覆盖切块 + 十六进制编号）")
 
     flask_thread = threading.Thread(target=run_flask)

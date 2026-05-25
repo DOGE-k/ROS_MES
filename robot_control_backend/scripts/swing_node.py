@@ -82,7 +82,7 @@ class SwingSimple:
         trigger_msg.header = Header(stamp=rospy.Time.now())
         trigger_msg.module_id = msg.module_id
         trigger_msg.device_id = 0
-        trigger_msg.position = 0
+        trigger_msg.position = [0]
         self.sensor_trigger_pub.publish(trigger_msg)
 
         # 日志
