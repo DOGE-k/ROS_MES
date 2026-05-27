@@ -27,6 +27,34 @@ class FineTuningDeviceFieldTest(unittest.TestCase):
         finally:
             db.close()
 
+    def test_create_fine_tuning_record_uses_previous_value_for_same_parameter_only(self):
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(bind=engine)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+        db = SessionLocal()
+        try:
+            create_fine_tuning_record(
+                db=db,
+                record=FineTuningCreate(device_id=1, parameter_name="rotation", position=10),
+                username="tester",
+            )
+            create_fine_tuning_record(
+                db=db,
+                record=FineTuningCreate(device_id=1, parameter_name="swing", position=20),
+                username="tester",
+            )
+            record = create_fine_tuning_record(
+                db=db,
+                record=FineTuningCreate(device_id=1, parameter_name="rotation", position=15),
+                username="tester",
+            )
+
+            self.assertEqual(record.old_value, 10)
+            self.assertEqual(record.new_value, 15)
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
