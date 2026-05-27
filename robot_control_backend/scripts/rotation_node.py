@@ -35,11 +35,9 @@ class RotationSimple:
         self.ENC_MAX = int(os.environ.get('ENC_MAX', '29420'))
 
         # ================== 话题名称（从环境变量读取） ==================
-        TOPIC_ADJUST_ROTATION_CMD = os.environ.get('ROS_TOPIC_ADJUST_ROTATION_CMD', '/control/adjust_rotation_cmd')
-        TOPIC_KINEMATICS_ROTATION_CMD = os.environ.get('ROS_TOPIC_KINEMATICS_ROTATION_CMD', '/control/kinematics_rotation_cmd')
+        TOPIC_KINEMATICS_ROTATION_CMD = os.environ.get('ROS_TOPIC_KINEMATICS_ROTATION_CMD', '/control/kinematics_rotation_cmd_sequenced')
         TOPIC_ROTATION_FEEDBACK = os.environ.get('ROS_TOPIC_ROTATION_FEEDBACK', '/hardware/rotation_feedback')
-        TOPIC_ROTATION_OUTPUT = os.environ.get('ROS_TOPIC_ROTATION_OUTPUT', '/hardware/rotation_output')
-        TOPIC_SENSOR_CMD = os.environ.get('ROS_TOPIC_SENSOR_CMD', '/control/sensor_cmd')
+        TOPIC_ROTATION_OUTPUT = os.environ.get('ROS_TOPIC_ROTATION_OUTPUT', '/control/rotation_output')
 
         # 核心变量
         self.has_new_command = False    # 是否有新指令需要下发
@@ -48,7 +46,6 @@ class RotationSimple:
         self.target_reach_deg = 0.0     # 目标角度
 
         # 订阅双指令话题
-        rospy.Subscriber(TOPIC_ADJUST_ROTATION_CMD, RotationCmd, self.cmd_callback)
         rospy.Subscriber(TOPIC_KINEMATICS_ROTATION_CMD, RotationCmd, self.cmd_callback)
         rospy.Subscriber(TOPIC_ROTATION_FEEDBACK, RotationCmd, self.feedback_callback)
 
@@ -77,20 +74,8 @@ class RotationSimple:
 
         self.output_pub.publish(int_cmd_msg)
 
-        # 触发压力传感器节点
-        trigger_msg = IntCmd()
-        trigger_msg.header = Header(stamp=rospy.Time.now())
-        trigger_msg.module_id = msg.module_id
-        trigger_msg.device_id = 0  # 仅用于传递 module_id
-        trigger_msg.position = [0]
-        self.sensor_trigger_pub.publish(trigger_msg)
-
         # 日志
-        cmd_topic = msg._connection_header.get('topic', '未知话题')
-        if cmd_topic == os.environ.get('ROS_TOPIC_ADJUST_ROTATION_CMD', '/control/adjust_rotation_cmd'):
-            rospy.loginfo("旋转轴微调：+%.4f° → 下发编码：%d" % (self.target_delta_deg, target_tick))
-        elif cmd_topic == os.environ.get('ROS_TOPIC_KINEMATICS_ROTATION_CMD', '/control/kinematics_rotation_cmd'):
-            rospy.loginfo("旋转轴运动学：+%.4f° → 下发编码：%d" % (self.target_delta_deg, target_tick))
+        rospy.loginfo("旋转轴指令：+%.4f° → 下发编码：%d" % (self.target_delta_deg, target_tick))
 
     def feedback_callback(self, msg):
         """仅更新当前角度，监控状态"""
