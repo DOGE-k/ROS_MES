@@ -57,7 +57,7 @@ find_package(catkin REQUIRED COMPONENTS
  Kinematics.msg
  IntCmd.msg
  GyroFeedback.msg
- tuo_luo_yi.msg
+ TuoLuoYi.msg
 )
 
 ## Generate services in the 'srv' folder

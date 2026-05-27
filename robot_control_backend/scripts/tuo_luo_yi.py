@@ -9,6 +9,10 @@ IMU 角度 + 末端坐标发布节点（正运动学，不漂移）
 import rospy
 import math
 import numpy as np
+import sqlite3
+import json
+import random
+from datetime import datetime
 from std_msgs.msg import Header
 from robot_control_backend.msg import GyroFeedback, tuo_luo_yi
 
@@ -49,7 +53,77 @@ class ImuAnglePublisher:
 
         rospy.Subscriber('/hardware/gyroscope_feedback', GyroFeedback, self.imu_callback)
         self.angle_pub = rospy.Publisher('/imu_angles', tuo_luo_yi, queue_size=10)
+
+        # ------------------ 数据库初始化 ------------------
+        self.conn = sqlite3.connect("ros_database.db", check_same_thread=False)
+        self._create_table()
+        rospy.loginfo("✅ IMU节点数据库已连接")
+
         rospy.loginfo("IMU 角度+坐标节点启动 (正运动学)")
+
+    def _create_table(self):
+        """创建 sensor_records 表（如果不存在）"""
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS sensor_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sensor_ID INTEGER NOT NULL,
+                sensordescript TEXT,
+                IsRead INTEGER NOT NULL,
+                Module_ID INTEGER NOT NULL,
+                Unit_ID INTEGER NOT NULL,
+                Unit_address INTEGER NOT NULL,
+                unit_row_id INTEGER NOT NULL,
+                creater_id INTEGER NOT NULL,
+                Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                del_flag BOOL DEFAULT false,
+                Notes TEXT
+            )
+        """)
+        self.conn.commit()
+
+    def _save_record(self, module_id, device_id, arm_id, swing, rotation, x, y, z):
+        """保存IMU计算结果到数据库"""
+        unit = arm_id * 32  # 臂1→32, 臂2→64, 臂3→96
+        sensor_ID = 50  # 按照要求将 device_id 改为 50
+        sensordescript = f"IMU传感器-臂{arm_id}"
+        IsRead = 1  # 1=读，IMU为只读传感器
+        Unit_address = device_id  # 单元中定义的地址
+        unit_row_id = arm_id  # 所属机械臂数据库主键
+
+        # 构建备注信息，包含角度和坐标数据
+        data_dict = {
+            "swing_angle": round(swing, 2),
+            "rotation_angle": round(rotation, 2),
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "z": round(z, 2)
+        }
+        notes = json.dumps(data_dict, ensure_ascii=False)
+
+        try:
+            self.conn.execute("""
+                INSERT INTO sensor_records
+                (sensor_ID, sensordescript, IsRead, Module_ID, Unit_ID, Unit_address, unit_row_id, creater_id, del_flag, Notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                sensor_ID,         # sensor_ID: 传感器/电机硬件协议编号
+                sensordescript,    # sensordescript: 传感器描述
+                IsRead,            # IsRead: 读写方式
+                module_id,         # Module_ID: 所属模块ID
+                unit,              # Unit_ID: 所属机械臂硬件/协议编号
+                Unit_address,      # Unit_address: 单元中定义的地址
+                unit_row_id,       # unit_row_id: 所属机械臂数据库主键
+                1,                 # creater_id: 创建者ID
+                False,             # del_flag: 删除标志
+                notes              # Notes: 备注信息（包含角度和坐标）
+            ))
+            self.conn.commit()
+        except Exception as e:
+            rospy.logerr(f"数据库写入失败: {e}")
+
+    def shutdown_hook(self):
+        self.conn.close()
+        rospy.loginfo("✅ IMU节点数据库连接已关闭")
 
     def _get_arm_id(self, device_id):
         base = device_id - GYRO_OFFSET
@@ -193,9 +267,13 @@ class ImuAnglePublisher:
         angle_msg.z = z
         self.angle_pub.publish(angle_msg)
 
+        # 写入数据库
+        self._save_record(module_id, device_id, arm_id, swing, rotation, x, y, z)
+
 if __name__ == '__main__':
     try:
         node = ImuAnglePublisher()
+        rospy.on_shutdown(node.shutdown_hook)
         rospy.spin()
     except rospy.ROSInterruptException:
         pass
