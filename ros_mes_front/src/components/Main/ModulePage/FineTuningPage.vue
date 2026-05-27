@@ -12,6 +12,26 @@
       </div>
     </el-card>
     <div class="arm-list">
+      <div class="pointcloud-actions">
+        <el-button type="primary" plain @click="togglePointCloudViews">
+          {{ showPointCloudViews ? "隐藏点云图" : "查看点云图" }}
+        </el-button>
+      </div>
+
+      <el-card v-if="showPointCloudViews && pointCloudViews.length" shadow="hover" class="pointcloud-card">
+        <template #header>
+          <div class="card-header">
+            <span class="header-text">点云三视图</span>
+          </div>
+        </template>
+        <div class="pointcloud-grid">
+          <div v-for="view in pointCloudViews" :key="view.name" class="pointcloud-view">
+            <div class="pointcloud-title">{{ view.label }}</div>
+            <img :src="view.url" :alt="view.label" class="pointcloud-image" />
+          </div>
+        </div>
+      </el-card>
+
       <el-card shadow="hover" class="main-control-card">
         <template #header>
           <div class="card-header">
@@ -100,6 +120,32 @@
           </div>
         </div>
 
+        <div class="imu-panel">
+          <div class="sensor-title">陀螺仪姿态与末端坐标反馈</div>
+          <div class="imu-grid">
+            <div class="imu-item">
+              <span class="imu-label">摆动角</span>
+              <span class="imu-value">{{ formatFeedbackValue(imuFeedback.swingAngle) }}°</span>
+            </div>
+            <div class="imu-item">
+              <span class="imu-label">旋转角</span>
+              <span class="imu-value">{{ formatFeedbackValue(imuFeedback.rotationAngle) }}°</span>
+            </div>
+            <div class="imu-item">
+              <span class="imu-label">X</span>
+              <span class="imu-value">{{ formatFeedbackValue(imuFeedback.x) }} cm</span>
+            </div>
+            <div class="imu-item">
+              <span class="imu-label">Y</span>
+              <span class="imu-value">{{ formatFeedbackValue(imuFeedback.y) }} cm</span>
+            </div>
+            <div class="imu-item">
+              <span class="imu-label">Z</span>
+              <span class="imu-value">{{ formatFeedbackValue(imuFeedback.z) }} cm</span>
+            </div>
+          </div>
+        </div>
+
         <div class="sensor-panel">
           <div class="sensor-title">压力传感器实时反馈</div>
           <div class="sensor-value-box" v-if="loading">
@@ -172,6 +218,7 @@ import {
   sendFineTuning,
   saveFineTuningConfig,
 } from "@/api/rosApi";
+import { noRosDebug } from "@/api/noRosDebug";
 
 const router = useRouter();
 
@@ -188,17 +235,26 @@ var loading = ref(false);
 let feedbackSocket: WebSocket | null = null;
 const armIdList = ref<any[]>([]);
 const drawingList = ref<any[]>([]);
+const pointCloudViews = ref<Array<{ name: string; label: string; url: string }>>([]);
+const showPointCloudViews = ref(false);
 const route = useRoute();
 const moduleId = ref<number>(0);
 const moduleDisplay = ref("");
 const armList = reactive({
   id: 0,
   device: [
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, label: "底座旋转调整值" },
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, label: "摆动调整值" },
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, label: "伸缩杆调整值" },
+    { deviceId: 41, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "底座旋转调整值" },
+    { deviceId: 42, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "摆动调整值" },
+    { deviceId: 43, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "伸缩杆调整值" },
     { deviceId: 0, initial: 0.0, current: 0.0 },
   ],
+});
+const imuFeedback = reactive({
+  swingAngle: 0,
+  rotationAngle: 0,
+  x: 0,
+  y: 0,
+  z: 0,
 });
 
 const formatUnitOption = (item: any) => {
@@ -211,6 +267,40 @@ const feedbackDeviceIndex: Record<number, number> = {
   33: 0,
   34: 1,
   35: 2,
+  41: 0,
+  42: 1,
+  43: 2,
+};
+
+const formatFeedbackValue = (value: number) => Number(value || 0).toFixed(2);
+
+const togglePointCloudViews = () => {
+  if (pointCloudViews.value.length === 0) {
+    ElMessage.warning("暂无点云图，请确认点云服务已生成");
+    return;
+  }
+  showPointCloudViews.value = !showPointCloudViews.value;
+};
+
+const updateAxisCurrent = (index: number, position: number) => {
+  const axis = armList.device[index] as any;
+  if (!axis.initialLocked) {
+    axis.initial = position;
+    axis.initialLocked = true;
+  }
+  axis.current = position;
+};
+
+const applyMockInitialFeedback = () => {
+  [0, 1, 2].forEach((index) => updateAxisCurrent(index, 0));
+};
+
+const applyImuFeedback = (feedback: any) => {
+  imuFeedback.swingAngle = Number(feedback.swing_angle || 0);
+  imuFeedback.rotationAngle = Number(feedback.rotation_angle || 0);
+  imuFeedback.x = Number(feedback.x || 0);
+  imuFeedback.y = Number(feedback.y || 0);
+  imuFeedback.z = Number(feedback.z || 0);
 };
 
 const getFeedbackWsUrl = () => {
@@ -227,26 +317,51 @@ const applyFeedback = (feedback: any) => {
   }
 
   const position = Number(feedback.position);
-  if (!Number.isFinite(position)) {
-    return;
-  }
-
-  if (feedback.data_type === "axis_encoder") {
+  if (
+    feedback.data_type === "axis_encoder" ||
+    feedback.data_type === "rotation_axis_encoder" ||
+    feedback.data_type === "swing_axis_encoder" ||
+    feedback.data_type === "telescope_axis_encoder"
+  ) {
+    if (!Number.isFinite(position)) {
+      return;
+    }
     const index = feedbackDeviceIndex[Number(feedback.device_id)];
     if (index !== undefined) {
-      armList.device[index].current = position;
+      updateAxisCurrent(index, position);
       loading.value = true;
     }
     return;
   }
 
   if (feedback.data_type === "pressure_sensor") {
+    if (!Number.isFinite(position)) {
+      return;
+    }
     armList.device[3].current = position;
     loading.value = true;
+    return;
+  }
+
+  if (feedback.data_type === "imu_pose") {
+    applyImuFeedback(feedback);
   }
 };
 
 const connectFeedbackSocket = () => {
+  // 无 ROS 调试模式：不连接真实反馈 WebSocket，方便只调页面跳转和微调交互。
+  if (noRosDebug) {
+    loading.value = true;
+    armList.device[3].current = 0.5;
+    applyMockInitialFeedback();
+    imuFeedback.swingAngle = 1.25;
+    imuFeedback.rotationAngle = -2.5;
+    imuFeedback.x = 12.3;
+    imuFeedback.y = 4.56;
+    imuFeedback.z = 7.89;
+    return;
+  }
+
   if (feedbackSocket) {
     feedbackSocket.close();
   }
@@ -301,6 +416,18 @@ const confirmInitConfig = async () => {
       initDialogVisible.value = false;
       armList.id = initConfig.unitId;
       loading.value = true;
+      const viewLabels: Record<string, string> = {
+        top: "俯视图",
+        front: "正视图",
+        side: "侧视图",
+      };
+      const timestamp = Date.now();
+      pointCloudViews.value = Object.entries(res.views || {}).map(([name, url]) => ({
+        name,
+        label: viewLabels[name] || name,
+        url: `${url}${String(url).includes("?") ? "&" : "?"}t=${timestamp}`,
+      }));
+      showPointCloudViews.value = false;
     } else {
       ElMessage.error(res?.message || res?.msg || "目标图纸下发失败");
     }
@@ -339,8 +466,10 @@ const sendSingleAdjust = async (value: number) => {
 
       if (Array.isArray(res.data)) {
         for (const i of res.data) {
-          if (i.parameter_name === parameterName || Number(i.device_id) === Number(initConfig.deviceId)) {
-            armList.device[value].current = Number(i.position);
+          if (i.type === "imu_pose" || Number(i.device_id) === 50) {
+            applyImuFeedback(i);
+          } else if (i.parameter_name === parameterName || Number(i.device_id) === Number(armList.device[value].deviceId)) {
+            updateAxisCurrent(value, Number(i.position));
           } else {
             armList.device[3].current = Number(i.position);
             loading.value = true;
@@ -349,11 +478,11 @@ const sendSingleAdjust = async (value: number) => {
       }
 
       else if (res.data && res.data.position !== undefined) {
-        armList.device[value].current = Number(res.data.position);
+        updateAxisCurrent(value, Number(res.data.position));
       }
 
       else {
-        armList.device[value].current = adjustValue;
+        updateAxisCurrent(value, adjustValue);
       }
 
       armList.device[value].adjust = Number(armList.device[value].current);
@@ -387,7 +516,7 @@ const handleSaveConfig = async () => {
       unit_row_id: Number(initConfig.unitRowId),
       drawing_id: Number(initConfig.drawingId),
       devices: armList.device.map((item: any, index: number) => ({
-        device_id: Number(initConfig.deviceId),
+        device_id: Number(item.deviceId || initConfig.deviceId),
         unit_id: Number(initConfig.unitId),
         unit_row_id: Number(initConfig.unitRowId),
         parameter_name: index === 3 ? "pressure" : adjustmentKeys[index],
@@ -547,8 +676,11 @@ onBeforeUnmount(() => {
 /* ========== 卡片样式 ========== */
 .arm-list {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   margin-top: 20px;
+  gap: 20px;
 }
 
 .main-control-card {
@@ -556,6 +688,52 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   border: none;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05) !important;
+}
+
+.pointcloud-actions {
+  width: min(100%, 980px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pointcloud-card {
+  width: min(100%, 980px);
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05) !important;
+}
+
+.pointcloud-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.pointcloud-view {
+  min-width: 0;
+}
+
+.pointcloud-title {
+  color: #606266;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.pointcloud-image {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: contain;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  background: #f5f7fa;
+}
+
+@media (max-width: 900px) {
+  .pointcloud-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .card-header {
@@ -611,6 +789,50 @@ onBeforeUnmount(() => {
 }
 
 /* 压力传感器面板 */
+.imu-panel {
+  margin-top: 34px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 18px 20px;
+  background: #fafcff;
+}
+
+.imu-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.imu-item {
+  min-width: 0;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.imu-label {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.imu-value {
+  display: block;
+  color: #303133;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .imu-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .sensor-panel {
   margin-top: 40px;
   background: #2b3243;

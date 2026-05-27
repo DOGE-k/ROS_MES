@@ -1,4 +1,9 @@
-from fastapi import APIRouter, Body, Depends, HTTPException
+import os
+import time
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.db import models
@@ -11,12 +16,57 @@ from app.services.rosbridge_gateway import (
 
 router = APIRouter()
 
+POINTCLOUD_VIEW_BASE_URL = os.getenv("POINTCLOUD_VIEW_BASE_URL", "http://localhost:5000")
+POINTCLOUD_VIEW_NAMES = {"top", "front", "side"}
+
+
+def build_pointcloud_view_urls() -> dict:
+    return {
+        view_name: f"/api/coordination/views/{view_name}"
+        for view_name in sorted(POINTCLOUD_VIEW_NAMES)
+    }
+
+
+def fetch_pointcloud_view(view_name: str) -> tuple[bytes, str]:
+    if view_name not in POINTCLOUD_VIEW_NAMES:
+        raise HTTPException(status_code=404, detail="unknown pointcloud view")
+
+    url = f"{POINTCLOUD_VIEW_BASE_URL.rstrip('/')}/get_view/{view_name}"
+    request = Request(url, headers={"Cache-Control": "no-cache"})
+    try:
+        with urlopen(request, timeout=2.0) as response:
+            content_type = response.headers.get("Content-Type", "image/png")
+            return response.read(), content_type
+    except URLError as exc:
+        raise HTTPException(status_code=502, detail=f"pointcloud view service unavailable: {exc}") from exc
+
+
+def wait_for_pointcloud_views(timeout_seconds: float = 5.0, interval_seconds: float = 0.5) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            for view_name in POINTCLOUD_VIEW_NAMES:
+                content, _ = fetch_pointcloud_view(view_name)
+                if not content:
+                    raise ValueError("empty pointcloud view")
+            return True
+        except Exception:
+            time.sleep(interval_seconds)
+    return False
+
+
+@router.get("/views/{view_name}")
+def proxy_pointcloud_view(view_name: str):
+    content, media_type = fetch_pointcloud_view(view_name)
+    return Response(content=content, media_type=media_type)
+
 
 @router.post("/send")
 def send_coordination(
     payload: dict = Body(...),
     db: Session = Depends(get_db),
     dispatcher=rosbridge_dispatcher,
+    wait_for_views=wait_for_pointcloud_views,
 ):
     device_id = payload.get("device_id")
     module_id = payload.get("module_id")
@@ -25,15 +75,15 @@ def send_coordination(
     drawing_id = payload.get("drawing_id")
 
     if device_id is None:
-        raise HTTPException(status_code=422, detail="缺少 device_id")
+        raise HTTPException(status_code=422, detail="missing device_id")
     if module_id is None:
-        raise HTTPException(status_code=422, detail="缺少 module_id")
+        raise HTTPException(status_code=422, detail="missing module_id")
     if unit_id is None:
-        raise HTTPException(status_code=422, detail="缺少 unit_id")
+        raise HTTPException(status_code=422, detail="missing unit_id")
     if unit_row_id is None:
-        raise HTTPException(status_code=422, detail="缺少 unit_row_id")
+        raise HTTPException(status_code=422, detail="missing unit_row_id")
     if drawing_id is None:
-        raise HTTPException(status_code=422, detail="缺少 drawing_id")
+        raise HTTPException(status_code=422, detail="missing drawing_id")
 
     try:
         dispatch_payload = {
@@ -44,7 +94,7 @@ def send_coordination(
             "drawing_id": int(drawing_id),
         }
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="模块、机械臂或图纸编号格式错误") from exc
+        raise HTTPException(status_code=422, detail="invalid module, unit, or drawing id") from exc
 
     drawing = (
         db.query(models.Drawing)
@@ -55,24 +105,25 @@ def send_coordination(
         .first()
     )
     if not drawing:
-        raise HTTPException(status_code=404, detail="图纸不存在")
+        raise HTTPException(status_code=404, detail="drawing not found")
     if not drawing.Drawingfile:
-        raise HTTPException(status_code=422, detail="图纸文件路径为空")
+        raise HTTPException(status_code=422, detail="drawing file path is empty")
 
     ros_payload = build_drawing_path_publish_payload(drawing.Drawingfile)
     ros_payload["business"] = dispatch_payload
-    print(f"[Coordination] 图纸文件: {drawing.Drawingfile}")
-    print(f"[Coordination] ROS Payload: {ros_payload}")
 
     try:
         dispatch_result = dispatcher.dispatch("drawing_path", ros_payload)
-        print(f"[Coordination] dispatch_result: {dispatch_result}")
     except RosbridgeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    if not wait_for_views():
+        raise HTTPException(status_code=504, detail="pointcloud views generation timed out")
+
     return {
         "code": 200,
-        "message": "目标图纸路径下发成功",
+        "message": "target drawing path dispatched and pointcloud views are ready",
         "data": dispatch_payload,
         "dispatch": dispatch_result,
+        "views": build_pointcloud_view_urls(),
     }

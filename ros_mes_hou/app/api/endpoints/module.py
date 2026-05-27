@@ -2,6 +2,12 @@
 
 from fastapi import APIRouter, Body, HTTPException
 
+from app.services.rosbridge_gateway import (
+    RosbridgeError,
+    build_module_confirm_publish_payload,
+    rosbridge_dispatcher,
+)
+
 router = APIRouter()
 
 
@@ -13,7 +19,7 @@ def first_not_none(*values):
 
 
 @router.post("/")
-def lock_and_dispatch_module(payload: dict = Body(...)):
+def lock_and_dispatch_module(payload: dict = Body(...), dispatcher=rosbridge_dispatcher):
     x = first_not_none(
         payload.get("x"),
         payload.get("X"),
@@ -39,7 +45,7 @@ def lock_and_dispatch_module(payload: dict = Body(...)):
         y = first_not_none(y, position.get("y"))
 
     if x is None or y is None:
-        raise HTTPException(status_code=422, detail="缺少 x 或 y 坐标")
+        raise HTTPException(status_code=422, detail="missing x or y coordinate")
 
     try:
         x = int(x)
@@ -47,7 +53,7 @@ def lock_and_dispatch_module(payload: dict = Body(...)):
         module_id = int(module_id) if module_id is not None else x * 16 + y
         device_id = int(device_id) if device_id is not None else None
     except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="模块参数格式错误")
+        raise HTTPException(status_code=422, detail="invalid module parameters")
 
     dispatch_payload = {
         "x": x,
@@ -57,9 +63,17 @@ def lock_and_dispatch_module(payload: dict = Body(...)):
         "position": position,
         "raw": payload,
     }
+    ros_payload = build_module_confirm_publish_payload(module_id)
+    ros_payload["business"] = dispatch_payload
+
+    try:
+        dispatch_result = dispatcher.dispatch("module_confirm", ros_payload)
+    except RosbridgeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {
         "code": 200,
-        "message": "模块锁定成功",
+        "message": "module locked and confirmation command dispatched",
         "data": dispatch_payload,
+        "dispatch": dispatch_result,
     }

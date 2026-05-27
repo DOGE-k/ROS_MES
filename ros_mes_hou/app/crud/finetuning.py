@@ -25,10 +25,13 @@ def get_fine_tuning_records(
     )
 
 
-def get_latest_position(db: Session, device_id: int) -> Optional[float]:
+def get_latest_position(db: Session, device_id: int, parameter_name: Optional[str] = None) -> Optional[float]:
+    query = db.query(models.FineTuning).filter(models.FineTuning.Device_ID == device_id)
+    if parameter_name:
+        query = query.filter(models.FineTuning.parameter_name == parameter_name)
+
     latest = (
-        db.query(models.FineTuning)
-        .filter(models.FineTuning.Device_ID == device_id)
+        query
         .order_by(models.FineTuning.adjusted_at.desc(), models.FineTuning.id.desc())
         .first()
     )
@@ -56,14 +59,15 @@ def create_fine_tuning_record(
 ):
     device_id = int(record.device_id)
     new_value = record.position if record.position is not None else record.new_value
-    previous = get_latest_position(db, device_id)
+    parameter_name = record.parameter_name or f"module_{record.module_id or 0}_position"
+    previous = get_latest_position(db, device_id, parameter_name)
     device_snapshot = get_device_snapshot(db, device_id)
 
     db_record = models.FineTuning(
         Device_ID=device_id,
         DeviceAddress=device_snapshot["DeviceAddress"],
         Devicedescript=device_snapshot["Devicedescript"],
-        parameter_name=record.parameter_name or f"module_{record.module_id or 0}_position",
+        parameter_name=parameter_name,
         old_value=record.old_value if record.old_value is not None else previous,
         new_value=float(new_value),
         adjusted_by=username,
