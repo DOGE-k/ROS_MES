@@ -8,28 +8,143 @@ from std_msgs.msg import String
 from flask import Flask, send_file
 import threading
 import os
+import sqlite3
+from datetime import datetime
 
 app = Flask(__name__)
-point_cloud_data = None
 output_dir = "/tmp/ros_pointcloud_output/"
 
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
     rospy.loginfo(f"📂 已创建输出目录: {output_dir}")
 
-# ===================== 参数 =====================
-MODULE_ORIGIN_X = 0.0          # cm，模块原点 X
-MODULE_ORIGIN_Y = 0.0          # cm，模块原点 Y
-MODULE_ORIGIN_Z = 0.0          # cm，模块原点 Z
+# ===================== 数据库配置（与节点B完全一致） =====================
+# 统一使用相对路径 ros_database.db，和节点B共享同一个数据库
+DB_FILE = "ros_database.db"
+DEFAULT_CREATER_ID = 1  # 默认创建者ID，可修改
+DEFAULT_DEL_FLAG = 0    # 默认删除标记：0=未删除
+DEFAULT_NOTES = None    # 默认备注为空
 
-FIRST_ARM = np.array([5, 5, 0])
-ARM_STEP = 10
+# ===================== 默认参数（将被 .env 覆盖） =====================
+MODULE_ORIGIN_X = 0.0
+MODULE_ORIGIN_Y = 0.0
+MODULE_ORIGIN_Z = 0.0
 MODULE_SIZE_X = 10
 MODULE_SIZE_Y = 30
 ARM_MIN_HEIGHT = 10.0
 ARM_SAFE_GAP = 1.0
 
+# 默认话题
+TOPIC_FRONTEND_INPUT = '/frontend_pointcloud_topic'
+TOPIC_MODULE_ARM_TASK = '/module_arm_task'
+
 module_pub = None
+
+# ===================== 数据库初始化（创建point_data表） =====================
+def init_database():
+    """初始化数据库，创建point_data表，与节点B的calculation表共存"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS point_data (
+            Createtime DATETIME NOT NULL PRIMARY KEY,
+            creater_id INT NOT NULL,
+            Module_id INT,
+            point TEXT NOT NULL,
+            arms_address TEXT NOT NULL,
+            del_flag BOOL DEFAULT false,
+            Notes TEXT
+        )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        rospy.loginfo(f"🗄️ 数据库初始化成功: {os.path.abspath(DB_FILE)}")
+        rospy.loginfo("✅ 已创建 point_data 表，与节点B共享数据库")
+    except Exception as e:
+        rospy.logerr(f"❌ 数据库初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+# ===================== 数据库存储函数 =====================
+def save_modules_to_database(modules):
+    """将模块数据存入point_data表，del_flag默认0，Notes默认空"""
+    if not modules:
+        rospy.logwarn("⚠️ 无模块数据，跳过数据库存储")
+        return
+    
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        success_count = 0
+
+        for module in modules:
+            point_json = json.dumps(module["points"])
+            arms_json = json.dumps(module["arms"])
+            module_model_id = module["module_id"]
+            
+            cursor.execute('''
+            INSERT INTO point_data (
+                Createtime, creater_id, Module_id, point, arms_address, del_flag, Notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                current_time, 
+                DEFAULT_CREATER_ID, 
+                module_model_id, 
+                point_json, 
+                arms_json, 
+                DEFAULT_DEL_FLAG, 
+                DEFAULT_NOTES
+            ))
+            
+            success_count += 1
+
+        conn.commit()
+        conn.close()
+        rospy.loginfo(f"✅ 数据库存储完成: 成功插入 {success_count} 条记录到 point_data 表")
+    except Exception as e:
+        rospy.logerr(f"❌ 数据库存储失败: {e}")
+        import traceback
+        traceback.print_exc()
+        if 'conn' in locals() and conn:
+            conn.rollback()
+            conn.close()
+
+
+def load_env_config():
+    """从 .env 文件加载配置到环境变量"""
+    env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    os.environ[key] = value
+        rospy.loginfo("✅ 点云处理节点已从 rob_arm.env 加载配置")
+
+
+def update_params_from_env():
+    """用环境变量更新全局参数和话题"""
+    global MODULE_ORIGIN_X, MODULE_ORIGIN_Y, MODULE_ORIGIN_Z
+    global MODULE_SIZE_X, MODULE_SIZE_Y
+    global ARM_MIN_HEIGHT, ARM_SAFE_GAP
+    global TOPIC_FRONTEND_INPUT, TOPIC_MODULE_ARM_TASK
+
+    MODULE_ORIGIN_X = float(os.environ.get('MODULE_ORIGIN_X', MODULE_ORIGIN_X))
+    MODULE_ORIGIN_Y = float(os.environ.get('MODULE_ORIGIN_Y', MODULE_ORIGIN_Y))
+    MODULE_ORIGIN_Z = float(os.environ.get('MODULE_ORIGIN_Z', MODULE_ORIGIN_Z))
+    MODULE_SIZE_X = int(os.environ.get('MODULE_SIZE_X', MODULE_SIZE_X))
+    MODULE_SIZE_Y = int(os.environ.get('MODULE_SIZE_Y', MODULE_SIZE_Y))
+    ARM_MIN_HEIGHT = float(os.environ.get('ARM_MIN_HEIGHT', ARM_MIN_HEIGHT))
+    ARM_SAFE_GAP = float(os.environ.get('ARM_SAFE_GAP', ARM_SAFE_GAP))
+
+    TOPIC_FRONTEND_INPUT = os.environ.get('ROS_TOPIC_FRONTEND_POINTCLOUD', TOPIC_FRONTEND_INPUT)
+    TOPIC_MODULE_ARM_TASK = os.environ.get('ROS_TOPIC_MODULE_ARM_TASK', TOPIC_MODULE_ARM_TASK)
+
 
 # ===================== 摆正函数 =====================
 def align_max_face_down(pcd):
@@ -58,6 +173,7 @@ def align_max_face_down(pcd):
     pcd_rotated = o3d.geometry.PointCloud(pcd)
     pcd_rotated.rotate(R, center=center)
     return pcd_rotated
+
 
 # ===================== 移动至工作原点 =====================
 def move_to_origin(points):
@@ -97,7 +213,8 @@ def move_to_origin(points):
     rospy.loginfo(f"📍 点云已移动：最低 Z {min_z:.2f} → {target_z:.1f} cm")
     return points
 
-# ===================== 切分为模块（最优全覆盖 + 新编号） =====================
+
+# ===================== 切分为模块 =====================
 def split_into_modules(points):
     min_x = np.min(points[:, 0])
     max_x = np.max(points[:, 0])
@@ -127,25 +244,26 @@ def split_into_modules(points):
             arm_y2 = y0 + 15
             arm_y3 = y0 + 25
 
-            # ★ 新编号规则：module_id = (i+1)*16 + (j+1)  十进制
             module_id = (i + 1) * 16 + (j + 1)
 
             modules.append({
-                "module_id": module_id,          # 数字类型，json中为数值
+                "module_id": module_id,
                 "points": seg.tolist(),
                 "arms": [[arm_x, arm_y1, 0], [arm_x, arm_y2, 0], [arm_x, arm_y3, 0]]
             })
     return modules
 
+
 # ===================== 发布模块 =====================
 def publish_all_modules(modules):
     global module_pub
     if module_pub is None:
-        module_pub = rospy.Publisher('/module_arm_task', String, queue_size=10)
+        module_pub = rospy.Publisher(TOPIC_MODULE_ARM_TASK, String, queue_size=10)
     msg = String()
     msg.data = json.dumps(modules)
     module_pub.publish(msg)
     rospy.loginfo(f"📤 已发送 {len(modules)} 个模块")
+
 
 # ===================== JSON 回调处理 =====================
 def json_callback(msg):
@@ -215,6 +333,8 @@ def json_callback(msg):
 
         publish_all_modules(modules)
 
+        save_modules_to_database(modules)
+
         o3d.io.write_point_cloud(os.path.join(output_dir, "pointcloud.pcd"), pcd)
         rospy.loginfo("💾 已保存处理后的点云文件")
 
@@ -245,6 +365,7 @@ def json_callback(msg):
         import traceback
         traceback.print_exc()
 
+
 # ===================== Flask =====================
 @app.route('/get_view/<view_name>')
 def get_view(view_name):
@@ -253,16 +374,24 @@ def get_view(view_name):
         return send_file(img_path, mimetype='image/png')
     return "图片不存在", 404
 
+
 def run_flask():
     app.run(host='0.0.0.0', port=5000, debug=False)
+
 
 # ===================== 主程序 =====================
 def main():
     global module_pub
+    load_env_config()          # 加载 .env 到环境变量
+    update_params_from_env()   # 更新全局参数和话题
     rospy.init_node('pointcloud_processor_node')
-    rospy.Subscriber('/frontend_pointcloud_topic', String, json_callback)
-    module_pub = rospy.Publisher('/module_arm_task', String, queue_size=10)
-    rospy.loginfo("🚀 ROS点云处理节点已启动（PCA摆正 + 统计滤波 + 智能全覆盖切块 + 十六进制编号）")
+    
+    init_database()            # 初始化数据库
+    
+    rospy.Subscriber(TOPIC_FRONTEND_INPUT, String, json_callback)
+    module_pub = rospy.Publisher(TOPIC_MODULE_ARM_TASK, String, queue_size=10)
+    rospy.loginfo("🚀 ROS点云处理节点已启动（参数从 .env 加载）")
+    rospy.loginfo(f"🗄️ 共享数据库文件: {os.path.abspath(DB_FILE)}")
 
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
@@ -270,6 +399,7 @@ def main():
     rospy.loginfo("🌐 Flask服务运行在 5000 端口")
 
     rospy.spin()
+
 
 if __name__ == '__main__':
     main()

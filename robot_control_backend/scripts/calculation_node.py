@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-节点A：最优托举点计算（不包含运动学解算）
+节点A：最优托举点计算（参数和话题均从 .env 读取）
 发布话题：/arm_alpha_beta
 """
 
@@ -9,12 +9,16 @@ import rospy
 import json
 import numpy as np
 import time
+import sqlite3
 import open3d as o3d
+import os
+import random
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from scipy.spatial import KDTree
 from std_msgs.msg import String
 
-# =============== 性能监控装饰器（可继承自原代码） ===============
+# =============== 性能监控装饰器 ===============
 def timeit(func):
     def wrapper(*args, **kwargs):
         start = time.time()
@@ -25,11 +29,11 @@ def timeit(func):
         return result
     return wrapper
 
-# =============== 配置参数 ===============
+# =============== 配置参数（默认值，可被 .env 覆盖） ===============
 class Config:
     VOXEL_SIZE = 0.1
     MAX_WORKERS = 4
-    MAX_SWING_ANGLE = 20.0      # 此处虽用不到，但保留便于后续统一配置
+    MAX_SWING_ANGLE = 20.0
     ARM_MIN_EXTEND = 1.0
     ARM_MAX_EXTEND = 60.0
     VERTICAL_CHECK_RADIUS = 1.0
@@ -44,10 +48,48 @@ class Config:
     POINT_SELECT_STRATEGY = "balanced"
     DISTANCE_WEIGHT = 0.6
     ANGLE_WEIGHT = 0.4
+    DB_PATH = "ros_database.db"
 
-# =============== 工具函数（仅点云处理，无运动学） ===============
+
+def load_env_config():
+    """从 .env 文件加载配置到环境变量"""
+    env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    os.environ[key] = value
+        rospy.loginfo("✅ 节点A已从 rob_arm.env 加载配置")
+
+
+def update_config_from_env():
+    """用环境变量覆盖 Config 类的默认值"""
+    Config.VOXEL_SIZE = float(os.environ.get('VOXEL_SIZE', Config.VOXEL_SIZE))
+    Config.MAX_WORKERS = int(os.environ.get('MAX_WORKERS', Config.MAX_WORKERS))
+    Config.MAX_SWING_ANGLE = float(os.environ.get('MAX_SWING_ANGLE', Config.MAX_SWING_ANGLE))
+    Config.ARM_MIN_EXTEND = float(os.environ.get('ARM_MIN_EXTEND', Config.ARM_MIN_EXTEND))
+    Config.ARM_MAX_EXTEND = float(os.environ.get('ARM_MAX_EXTEND', Config.ARM_MAX_EXTEND))
+    Config.VERTICAL_CHECK_RADIUS = float(os.environ.get('VERTICAL_CHECK_RADIUS', Config.VERTICAL_CHECK_RADIUS))
+    Config.VERTICAL_FLAT_TOLERANCE = float(os.environ.get('VERTICAL_FLAT_TOLERANCE', Config.VERTICAL_FLAT_TOLERANCE))
+    Config.SURFACE_EXTRACT_K = int(os.environ.get('SURFACE_EXTRACT_K', Config.SURFACE_EXTRACT_K))
+    Config.SURFACE_ANGLE_THRESH = float(os.environ.get('SURFACE_ANGLE_THRESH', Config.SURFACE_ANGLE_THRESH))
+    Config.NORMAL_RADIUS = float(os.environ.get('NORMAL_RADIUS', Config.NORMAL_RADIUS))
+    Config.HORIZONTAL_ANGLE_THRESH = float(os.environ.get('HORIZONTAL_ANGLE_THRESH', Config.HORIZONTAL_ANGLE_THRESH))
+    Config.HORIZONTAL_Z_STD = float(os.environ.get('HORIZONTAL_Z_STD', Config.HORIZONTAL_Z_STD))
+    Config.DEFAULT_HEIGHT = float(os.environ.get('DEFAULT_HEIGHT', Config.DEFAULT_HEIGHT))
+    Config.MIN_POINTS_FOR_PCA = int(os.environ.get('MIN_POINTS_FOR_PCA', Config.MIN_POINTS_FOR_PCA))
+    Config.POINT_SELECT_STRATEGY = os.environ.get('POINT_SELECT_STRATEGY', Config.POINT_SELECT_STRATEGY)
+    Config.DISTANCE_WEIGHT = float(os.environ.get('DISTANCE_WEIGHT', Config.DISTANCE_WEIGHT))
+    Config.ANGLE_WEIGHT = float(os.environ.get('ANGLE_WEIGHT', Config.ANGLE_WEIGHT))
+    Config.DB_PATH = os.environ.get('DB_PATH', Config.DB_PATH)
+
+
+# =============== 工具函数（保持不变） ===============
 @timeit
 def extract_surface_points(points, k=Config.SURFACE_EXTRACT_K, angle_thresh=Config.SURFACE_ANGLE_THRESH):
+    # 原代码保持不变...
     if len(points) < k:
         return points.copy()
     pcd = o3d.geometry.PointCloud()
@@ -106,8 +148,10 @@ def is_horizontal_plane(points):
     z_std = np.std(points[:, 2])
     return (angle < Config.HORIZONTAL_ANGLE_THRESH) and (z_std < Config.HORIZONTAL_Z_STD), normal
 
-# =============== 点选择与策略控制器（无运动学） ===============
+
+# =============== 点选择与策略控制器（不变） ===============
 class FusionPointSelector:
+    # ... 所有方法不变，因为它们引用 Config.XXX ...
     def __init__(self):
         self.stats = {"vertical": 0, "horizontal": 0, "surface": 0}
         self.tree_cache = {}
@@ -157,20 +201,15 @@ class FusionPointSelector:
                 return points[np.argmin(combined)]
 
     def process_arm(self, arm_base, points):
-        """返回 (alpha, beta, strategy) 三元组，无角度"""
         points = self.downsample_points(points)
         if len(points) == 0:
             return self._create_default_result(arm_base)
-
-        # 垂直策略
         res = self._try_vertical_strategy(arm_base, points)
         if res:
             return res
-        # 水平策略
         res = self._try_horizontal_strategy(arm_base, points)
         if res:
             return res
-        # 曲面策略
         return self._surface_strategy(arm_base, points)
 
     def _try_vertical_strategy(self, arm_base, points):
@@ -216,19 +255,54 @@ class FusionPointSelector:
         alpha = np.array([cx, cy, cz + Config.DEFAULT_HEIGHT])
         return alpha, np.array([0, 0, -1]), "default"
 
-# =============== ROS节点A ===============
+
+# =============== ROS节点A（话题从 .env 读取） ===============
 class PointSelectorNode:
     def __init__(self):
+        # 话题名称（从环境变量获取，提供默认值）
+        topic_module_arm_task = os.environ.get('ROS_TOPIC_MODULE_ARM_TASK', '/module_arm_task')
+        topic_arm_alpha_beta = os.environ.get('ROS_TOPIC_ARM_ALPHA_BETA', '/arm_alpha_beta')
+        topic_arm_fusion_stats = os.environ.get('ROS_TOPIC_ARM_FUSION_STATS', '/arm_fusion_stats')
+
         rospy.init_node("arm_point_selector")
         self.selector = FusionPointSelector()
         self.executor = ThreadPoolExecutor(max_workers=Config.MAX_WORKERS)
 
-        rospy.Subscriber("/module_arm_task", String, self.task_callback)
-        self.pub_alpha_beta = rospy.Publisher("/arm_alpha_beta", String, queue_size=10)
-        self.stats_pub = rospy.Publisher("/arm_fusion_stats", String, queue_size=1)
+        rospy.Subscriber(topic_module_arm_task, String, self.task_callback)
+        self.pub_alpha_beta = rospy.Publisher(topic_arm_alpha_beta, String, queue_size=10)
+        self.stats_pub = rospy.Publisher(topic_arm_fusion_stats, String, queue_size=1)
         rospy.Timer(rospy.Duration(10), self.publish_stats)
 
-        rospy.loginfo("节点A（最优点选取）启动")
+        # 数据库
+        db_path = os.environ.get('DB_PATH', Config.DB_PATH)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._create_table()
+        rospy.loginfo("✅ 节点A 数据库已连接，路径: %s", db_path)
+
+        rospy.loginfo("节点A（最优点选取）启动，话题已从 .env 加载")
+
+    def _create_table(self):
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS calculation (
+                Createtime DATETIME NOT NULL PRIMARY KEY,
+                creater_id INTEGER NOT NULL,
+                Work_ID    INTEGER NOT NULL,
+                Module_ID  INTEGER NOT NULL,
+                Unit_ID    INTEGER NOT NULL,
+                device_ID  INTEGER NOT NULL,
+                isread     INTEGER NOT NULL,
+                coord      TEXT NOT NULL,
+                position   TEXT NOT NULL,
+                del_flag   BOOL NOT NULL DEFAULT false,
+                Notes      TEXT NOT NULL
+            )
+        """)
+        self.conn.commit()
+
+    @staticmethod
+    def arm_to_ids(arm_id):
+        mapping = {1: 32, 2: 64, 3: 96}
+        return mapping.get(arm_id, 0)
 
     def task_callback(self, msg):
         try:
@@ -242,11 +316,56 @@ class PointSelectorNode:
                 res = future.result()
                 if res:
                     out.append(res)
+
             if out:
                 self.pub_alpha_beta.publish(json.dumps(out, ensure_ascii=False))
-            rospy.loginfo(f"节点A 发送 {len(out)} 个模块 | 耗时 {round((time.time()-start_time)*1000,2)}ms")
+
+                # 按模块写一条记录
+                for mod in out:
+                    module_id = mod["module_id"]
+                    coord_dict = {}
+                    position_dict = {}
+                    for arm in mod["alpha_beta"]:
+                        arm_id = arm["arm_id"]
+                        unit = self.arm_to_ids(arm_id)
+                        coord_dict[str(unit)] = {
+                            "alpha": arm["alpha"],
+                            "arm_id": arm_id,
+                            "base": arm["base"],
+                            "strategy": arm["strategy"]
+                        }
+                        position_dict[str(unit)] = arm["beta"]
+
+                    self._save_module_record(module_id, coord_dict, position_dict)
+
+            rospy.loginfo(f"节点A 发送 {len(out)} 个模块，写入 {len(out)} 条记录 | 耗时 {round((time.time()-start_time)*1000,2)}ms")
         except Exception as e:
             rospy.logerr(f"节点A处理异常: {str(e)}", exc_info=True)
+
+    def _save_module_record(self, module_id, coord_dict, position_dict):
+        now = datetime.now()
+        createtime = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}-{random.randint(0,9999):04d}"
+        try:
+            self.conn.execute("""
+                INSERT INTO calculation
+                (Createtime, creater_id, Work_ID, Module_ID, Unit_ID, device_ID, isread, coord, position, del_flag, Notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                createtime,
+                1,
+                1,
+                module_id,
+                0,
+                0,
+                2,
+                json.dumps(coord_dict),
+                json.dumps(position_dict),
+                False,
+                ""
+            ))
+            self.conn.commit()
+        except Exception as e:
+            rospy.logerr(f"数据库写入失败: {e}")
 
     def process_module(self, mod):
         try:
@@ -280,9 +399,16 @@ class PointSelectorNode:
         total = sum(stats.values())
         self.stats_pub.publish(json.dumps({"total": total, **stats}))
 
+    def shutdown_hook(self):
+        self.conn.close()
+
+
 if __name__ == "__main__":
     try:
-        PointSelectorNode()
+        load_env_config()         # 加载 .env 到环境变量
+        update_config_from_env()  # 更新 Config 类参数
+        node = PointSelectorNode()
+        rospy.on_shutdown(node.shutdown_hook)
         rospy.spin()
     except rospy.ROSInterruptException:
         pass

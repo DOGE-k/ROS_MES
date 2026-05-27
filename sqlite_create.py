@@ -445,20 +445,20 @@ def create_database(db_path=DB_PATH):
 
         cursor.execute("SELECT Work_ID FROM works WHERE Work_ID = 1")
         if cursor.fetchone() is None:
-            cursor.execute("SELECT id FROM Unit WHERE Device_ID = ? AND Unit_ID = ?", (1, 32))
+            cursor.execute("SELECT id FROM Unit WHERE Module_ID = ? AND Unit_ID = ?", (17, 32))
             initial_unit = cursor.fetchone()
             cursor.execute("""
                 SELECT s.id
                 FROM sensors AS s
                 JOIN Unit AS u ON u.id = s.unit_row_id
-                WHERE u.Device_ID = ? AND u.Unit_ID = ? AND s.sensor_ID = ?
-            """, (1, 32, 33))
+                WHERE u.Module_ID = ? AND u.Unit_ID = ? AND s.sensor_ID = ?
+            """, (17, 32, 33))
             initial_sensor = cursor.fetchone()
             if initial_unit is None or initial_sensor is None:
                 raise RuntimeError("初始工作引用的机械臂或传感器不存在")
             cursor.execute("""
-                INSERT INTO works (Work_ID, Workname, Device_id, unit_id, sensor_id, creater_id, Createtime, del_flag)
-                VALUES (1, '初始工作', 1, ?, ?, 1, CURRENT_TIMESTAMP, 0)
+                INSERT INTO works (Work_ID, Workname, Module_ID, unit_id, sensor_id, creater_id, Createtime, del_flag)
+                VALUES (1, '初始工作', 17, ?, ?, 1, CURRENT_TIMESTAMP, 0)
             """, (initial_unit[0], initial_sensor[0]))
             print("已插入 Work_ID=1")
         conn.commit()
@@ -472,7 +472,6 @@ def create_database(db_path=DB_PATH):
         for tbl in tables_with_del_flag:
             cursor.execute(f"UPDATE {tbl} SET del_flag = 0 WHERE del_flag IS NULL")
         conn.commit()
-        print("已修复所有 del_flag=NULL 的数据。")
     except Exception as e:
         print(f"插入初始数据时出现异常：{e}")
 
