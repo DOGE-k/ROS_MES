@@ -192,6 +192,7 @@ def create_database(db_path=DB_PATH):
             Module_ID INTEGER NOT NULL,
             Unit_ID INTEGER NOT NULL,
             Unit_address INTEGER NOT NULL,
+            unit_row_id INTEGER NOT NULL,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
