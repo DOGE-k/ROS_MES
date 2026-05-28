@@ -305,14 +305,18 @@ def create_database(db_path=DB_PATH):
         CREATE TABLE IF NOT EXISTS fine_tuning (
             id INTEGER PRIMARY KEY,
             Module_ID INTEGER NOT NULL,
+            Unit_ID INTEGER NOT NULL,
+            ModuleAddress INTEGER,
+            Moduledescript TEXT,
             parameter_name TEXT NOT NULL,
             old_value REAL,
             new_value REAL NOT NULL,
-            adjusted_by TEXT,
-            adjusted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            del_flag BOOLEAN DEFAULT 0,
+            creater_id INTEGER NOT NULL,
+            Createtime DATETIME NOT NULL ,
             Notes TEXT,
-            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID)
+            del_flag BOOLEAN DEFAULT 0,
+            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID),
+            FOREIGN KEY (Unit_ID) REFERENCES Unit(Unit_ID),
         );
     """)
 
@@ -320,15 +324,18 @@ def create_database(db_path=DB_PATH):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning_config (
             id INTEGER PRIMARY KEY,
-            Module_id INTEGER NOT NULL,
-            device_id INTEGER NOT NULL,
+            Module_ID INTEGER NOT NULL,
+            Unit_ID INTEGER NOT NULL,
+            sensor_ID INTEGER NOT NULL,
             config_json TEXT NOT NULL,
-            saved_by TEXT,
             creater_id INTEGER,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
+            FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
+            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID),
+            FOREIGN KEY (Unit_ID) REFERENCES Unit(Unit_ID),
+            FOREIGN KEY (sensor_ID) REFERENCES sensors(sensor_ID)
+            
         );
     """)
 
