@@ -118,7 +118,45 @@ FastAPI 自动文档地址：
 http://127.0.0.1:8000/docs
 ```
 
-### 3.2 启动前端
+### 3.2 生成数据库
+
+数据库文件位于项目根目录：
+
+```text
+ROS_MES/ros_database.db
+```
+
+数据库结构和初始数据以项目根目录的 `sqlite_create.py` 为准。首次部署、数据库结构调整后重建数据库，或需要恢复默认初始数据时，在项目根目录执行：
+
+```powershell
+python sqlite_create.py
+```
+
+执行成功后会生成或更新：
+
+```text
+ros_database.db
+```
+
+注意：
+
+- 生成数据库前，先关闭后端服务和正在占用数据库的 SQLite 可视化工具。
+- 如果要完全重新生成数据库，可以先删除旧的 `ros_database.db`，再执行 `python sqlite_create.py`。
+- 后端启动时的 `models.Base.metadata.create_all(bind=engine)` 只负责创建缺失的表，不会执行 `sqlite_create.py` 中的初始数据插入逻辑。
+- 后端连接的默认数据库路径在 `ros_mes_hou/app/core/config.py` 中配置，默认指向项目根目录的 `ros_database.db`。
+- 当前设计不再使用旧的 `Model`、`Device` 表；型号类型和模块分别以 `Type`、`Module` 表为准。
+
+推荐顺序：
+
+```powershell
+cd D:\university\competition\ROS_MES_System\2.0\ROS_MES
+python sqlite_create.py
+cd ros_mes_hou
+.\venv\Scripts\activate
+uvicorn app.main:app --reload
+```
+
+### 3.3 启动前端
 
 进入前端目录：
 
