@@ -21,15 +21,13 @@ def create_record(
     1. 记录 SQLite
     2. 返回前端需要的 data 数组
     """
-    username = "web_frontend"
-
     db_record = crud.create_fine_tuning_record(
         db=db,
         record=record,
-        username=username,
+        creater_id=1,
     )
 
-    device_id = record.device_id or db_record.Device_ID
+    device_id = record.device_id or 0
     position = record.position if record.position is not None else db_record.new_value
 
     return {
@@ -55,13 +53,14 @@ def create_record(
 def read_records(
     skip: int = 0,
     limit: int = 100,
-    device_id: Optional[int] = Query(None),
+    module_id: Optional[int] = Query(None),
+    unit_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
 ):
     """
     获取微调记录列表。
     """
-    return crud.get_fine_tuning_records(db, skip=skip, limit=limit, device_id=device_id)
+    return crud.get_fine_tuning_records(db, skip=skip, limit=limit, module_id=module_id, unit_id=unit_id)
 
 
 @router.post("/config")
@@ -73,12 +72,10 @@ def save_config(
     保存机械臂当前配置快照：
     存 SQLite
     """
-    username = "web_frontend"
-
     db_config = crud.save_fine_tuning_config(
         db=db,
         config=config,
-        username=username,
+        creater_id=1,
     )
 
     return {
@@ -87,9 +84,12 @@ def save_config(
         "data": {
             "id": db_config.id,
             "module_id": db_config.module_id,
-            "device_id": db_config.device_id,
+            "unit_id": db_config.unit_id,
+            "sensor_id": db_config.sensor_id,
             "config": crud.parse_config(db_config),
-            "saved_by": db_config.saved_by,
-            "created_at": str(db_config.created_at),
+            "creater_id": db_config.creater_id,
+            "create_time": str(db_config.create_time),
+            "notes": db_config.notes,
+            "del_flag": db_config.del_flag,
         },
     }

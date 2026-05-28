@@ -1,6 +1,7 @@
 import unittest
 
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.api.endpoints.dashboard import get_dashboard_stats
@@ -26,19 +27,19 @@ class DashboardStatsTest(unittest.TestCase):
                 )
             )
             db.add(
-                models.ModelTooling(
-                    Model_ID=1,
-                    Modelname="model",
+                models.Type(
+                    Type_ID=1,
+                    Typename="model",
                     creater_id=1,
                     del_flag=False,
                 )
             )
             db.add(
-                models.Device(
-                    Device_ID=2,
-                    Model_ID=1,
-                    DeviceAddress=18,
-                    Devicedescript="module",
+                models.Module(
+                    Module_ID=17,
+                    Type_ID=1,
+                    ModuleAddress="17",
+                    Moduledescript="module",
                     creater_id=1,
                     del_flag=False,
                 )
@@ -47,7 +48,7 @@ class DashboardStatsTest(unittest.TestCase):
                 models.Unit(
                     id=7,
                     Unit_ID=32,
-                    Device_ID=2,
+                    Module_ID=17,
                     UnitDescript="arm",
                     creater_id=1,
                     del_flag=False,
@@ -57,9 +58,8 @@ class DashboardStatsTest(unittest.TestCase):
                 models.Sensor(
                     id=8,
                     sensor_ID=49,
-                    Device_ID=2,
+                    Module_ID=17,
                     Unit_ID=32,
-                    unit_row_id=7,
                     sensordescript="pressure",
                     Unit_address=0,
                     IsRead=1,
@@ -76,6 +76,82 @@ class DashboardStatsTest(unittest.TestCase):
             self.assertEqual(response["data"]["faultCount"]["value"], 0)
             self.assertEqual(response["data"]["onlineUsers"]["value"], 1)
             self.assertIn("deviceStatus", response["data"])
+        finally:
+            db.close()
+
+    def test_dashboard_stats_supports_legacy_fine_tuning_adjusted_at_column(self):
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE Users (
+                    User_ID INTEGER PRIMARY KEY,
+                    Username TEXT NOT NULL,
+                    Password TEXT NOT NULL,
+                    Type_ID INTEGER NOT NULL,
+                    Creator_ID INTEGER NOT NULL,
+                    del_flag BOOLEAN DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE Type (
+                    Type_ID INTEGER PRIMARY KEY,
+                    Typename TEXT NOT NULL,
+                    creater_id INTEGER NOT NULL,
+                    del_flag BOOLEAN DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE Module (
+                    Module_ID INTEGER PRIMARY KEY,
+                    Type_ID INTEGER NOT NULL,
+                    ModuleAddress TEXT NOT NULL,
+                    creater_id INTEGER NOT NULL,
+                    del_flag BOOLEAN DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE Unit (
+                    id INTEGER PRIMARY KEY,
+                    Unit_ID INTEGER NOT NULL,
+                    Module_ID INTEGER NOT NULL,
+                    creater_id INTEGER NOT NULL,
+                    del_flag BOOLEAN DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE sensors (
+                    id INTEGER PRIMARY KEY,
+                    sensor_ID INTEGER NOT NULL,
+                    IsRead INTEGER NOT NULL,
+                    Module_ID INTEGER NOT NULL,
+                    Unit_ID INTEGER NOT NULL,
+                    Unit_address INTEGER NOT NULL,
+                    creater_id INTEGER NOT NULL,
+                    del_flag BOOLEAN DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE fine_tuning (
+                    id INTEGER PRIMARY KEY,
+                    Device_ID INTEGER NOT NULL,
+                    parameter_name TEXT NOT NULL,
+                    new_value REAL NOT NULL,
+                    adjusted_at DATETIME NOT NULL
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO Users (User_ID, Username, Password, Type_ID, Creator_ID, del_flag)
+                VALUES (1, 'admin', 'x', 1, 1, 0)
+            """))
+
+        db = SessionLocal()
+        try:
+            response = get_dashboard_stats(db)
+
+            self.assertEqual(response["code"], 200)
+            self.assertIn("taskCount", response["data"])
         finally:
             db.close()
 

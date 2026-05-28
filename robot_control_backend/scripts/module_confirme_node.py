@@ -28,7 +28,7 @@ class ModuleConfirm:
 
         # ================= 话题名称（从环境变量读取） =================
         TOPIC_ARM_CMD_VEL = os.environ.get('ROS_TOPIC_ARM_CMD_VEL', '/arm/cmd_vel')
-        TOPIC_MODULE_CONFIRM_SUCCESS = os.environ.get('ROS_TOPIC_MODULE_CONFIRM_SUCCESS', '/control/module_confirm_success')
+        TOPIC_MODULE_CONFIRM_SUCCESS = os.environ.get('ROS_TOPIC_MODULE_CONFIRM_SUCCESS', '/hardware/module_confirm_success')
         TOPIC_MODULE_CMD = os.environ.get('ROS_TOPIC_MODULE_CMD', '/control/module_cmd')
         TOPIC_HARDWARE_MODULE_CMD = os.environ.get('ROS_TOPIC_MODULE_CMD', '/hardware/module_cmd')
 

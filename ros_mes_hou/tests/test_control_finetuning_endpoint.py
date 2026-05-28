@@ -4,8 +4,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api.endpoints import control
-from app.db import models
 from app.db.database import Base
+from app.db import models
 from app.schemas.finetuning import FineTuningCreate
 
 
@@ -19,32 +19,25 @@ class DummyDispatcher:
 
 
 class ControlFineTuningEndpointTest(unittest.TestCase):
-    def test_send_fine_tuning_returns_axis_feedback_and_records_device_field(self):
+    def test_send_fine_tuning_returns_axis_feedback_and_records_new_fields(self):
         engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
         Base.metadata.create_all(bind=engine)
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
         db = SessionLocal()
         try:
-            db.add(
-                models.Device(
-                    Device_ID=2,
-                    Model_ID=17,
-                    DeviceAddress=18,
-                    Devicedescript="test module",
-                    creater_id=1,
-                    del_flag=False,
-                )
-            )
+            db.add(models.User(User_ID=1, Username="admin", Password="x", Type_ID=1, Creator_ID=1))
+            db.add(models.Type(Type_ID=1, Typename="type", creater_id=1))
+            db.add(models.Module(Module_ID=17, Type_ID=1, ModuleAddress="17", Moduledescript="test module", creater_id=1))
+            db.add(models.Unit(Unit_ID=32, UnitDescript="arm", Module_ID=17, creater_id=1))
             db.commit()
 
             dispatcher = DummyDispatcher()
             response = control.send_fine_tuning(
                 record=FineTuningCreate(
-                    module_id=18,
+                    module_id=17,
                     device_id=2,
                     unit_id=32,
-                    unit_row_id=7,
                     parameter_name="rotation",
                     position=8.5,
                 ),
@@ -62,11 +55,10 @@ class ControlFineTuningEndpointTest(unittest.TestCase):
             self.assertEqual(response["dispatch"]["payload"]["message"]["position"], [8.5])
             self.assertEqual(response["dispatch"]["payload"]["business"]["device_id"], 2)
             self.assertEqual(response["dispatch"]["payload"]["business"]["unit_id"], 32)
-            self.assertEqual(response["dispatch"]["payload"]["business"]["unit_row_id"], 7)
             self.assertEqual(response["dispatch"]["payload"]["parameter_name"], "rotation")
             saved = db.query(models.FineTuning).one()
-            self.assertEqual(saved.Device_ID, 2)
-            self.assertEqual(saved.DeviceAddress, 18)
+            self.assertEqual(saved.module_id, 17)
+            self.assertEqual(saved.unit_id, 32)
             self.assertEqual(saved.parameter_name, "rotation")
         finally:
             db.close()
@@ -88,10 +80,9 @@ class ControlFineTuningEndpointTest(unittest.TestCase):
                     dispatcher = DummyDispatcher()
                     control.send_fine_tuning(
                         record=FineTuningCreate(
-                            module_id=99,
+                            module_id=17,
                             device_id=5,
                             unit_id=32,
-                            unit_row_id=7,
                             parameter_name=parameter_name,
                             position=3.25,
                         ),

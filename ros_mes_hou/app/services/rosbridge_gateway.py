@@ -45,7 +45,7 @@ DRAWING_PATH_TOPIC = "/frontend_pointcloud_topic"
 DRAWING_PATH_MESSAGE_TYPE = "std_msgs/String"
 MODULE_CONFIRM_TOPIC = "/control/module_cmd"
 MODULE_CONFIRM_MESSAGE_TYPE = "robot_control_backend/IntCmd"
-MODULE_CONFIRM_SUCCESS_TOPIC = "/control/module_confirm_success"
+MODULE_CONFIRM_SUCCESS_TOPIC = "/hardware/module_confirm_success"
 MODULE_CONFIRM_FEEDBACK_TOPIC = "/hardware/web_module_cmd"
 
 FEEDBACK_LABELS = {

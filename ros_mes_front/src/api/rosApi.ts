@@ -45,7 +45,7 @@ export function loginApi(data: LoginForm) {
 // ==================== 用户信息 ====================
 export function getUserInfoApi() {
 	return request<any, ApiResponse<UserInfo>>({
-		url: '/user/info',
+		url: '/user/me',
 		method: 'get'
 	});
 }
@@ -87,7 +87,7 @@ export function saveFineTuningConfigApi(data: {
 	module_id?: number;
 	device_id?: number;
 	unit_id?: number;
-	unit_row_id?: number;
+	sensor_id?: number;
 	drawing_id?: number;
 	moduleId?: number;
 	deviceId?: number;
@@ -115,17 +115,17 @@ export function getFineTuningConfig(params: { moduleId?: number; deviceId?: numb
 }
 
 // ==================== ROS 测试页面 ====================
-export function sendRosMessage(data: any) {
+export function sendRosMessage(msg: string) {
 	return request<any, ApiResponse<any>>({
-		url: '/ros/send',
-		method: 'post',
-		data
+		url: '/ros/send_ros',
+		method: 'get',
+		params: { msg }
 	});
 }
 
 export function getRosStatus() {
 	return request<any, ApiResponse<any>>({
-		url: '/ros/status',
+		url: '/ros/get_ros_status',
 		method: 'get'
 	});
 }
@@ -244,6 +244,7 @@ export function createWorkApi(data: {
 	Workname: string;
 	WorkDescript?: string;
 	Drawing_ID?: number | null;
+	Module_ID?: number | null;
 	Device_id?: number | null;
 	unit_id?: number | null;
 	sensor_id?: number | null;
@@ -269,6 +270,7 @@ export function updateWorkApi(workId: number, data: {
 	Workname?: string;
 	WorkDescript?: string;
 	Drawing_ID?: number | null;
+	Module_ID?: number | null;
 	Device_id?: number | null;
 	unit_id?: number | null;
 	sensor_id?: number | null;
@@ -446,6 +448,7 @@ export interface TreeNode {
 	raw_id: number;
 	arm_type?: number;
 	sensor_type?: number;
+	module_id?: number;
 	device_id?: number;
 	children?: TreeNode[];
 }
@@ -570,7 +573,7 @@ export function getUnitApi(id: number) {
 	});
 }
 
-export function createUnitApi(data: { Unit_ID: number; Device_ID: number; UnitDescript?: string; Notes?: string }) {
+export function createUnitApi(data: { Unit_ID: number; Module_ID?: number; Device_ID?: number; UnitDescript?: string; Notes?: string }) {
 	return request<any, ApiResponse<any>>({
 		url: '/unit/',
 		method: 'post',
@@ -578,7 +581,7 @@ export function createUnitApi(data: { Unit_ID: number; Device_ID: number; UnitDe
 	});
 }
 
-export function updateUnitApi(id: number, data: { Device_ID?: number; UnitDescript?: string; Notes?: string }) {
+export function updateUnitApi(id: number, data: { Module_ID?: number; Device_ID?: number; UnitDescript?: string; Notes?: string }) {
 	return request<any, ApiResponse<any>>({
 		url: `/unit/${id}`,
 		method: 'put',
@@ -608,7 +611,7 @@ export function getSensorApi(id: number) {
 	});
 }
 
-export function createSensorApi(data: { sensor_ID: number; Device_ID: number; Unit_ID: number; unit_row_id: number; sensordescript?: string; Unit_address: number; IsRead?: number; Notes?: string }) {
+export function createSensorApi(data: { sensor_ID: number; Module_ID?: number; Device_ID?: number; Unit_ID: number; unit_row_id?: number; sensordescript?: string; Unit_address: number; IsRead?: number; Notes?: string }) {
 	return request<any, ApiResponse<any>>({
 		url: '/sensors/',
 		method: 'post',
@@ -623,7 +626,7 @@ export function getSensorsByUnitApi(unitId: number) {
 	});
 }
 
-export function updateSensorApi(id: number, data: { sensor_ID?: number; Device_ID?: number; Unit_ID?: number; unit_row_id?: number; sensordescript?: string; Unit_address?: number; IsRead?: number; Notes?: string }) {
+export function updateSensorApi(id: number, data: { sensor_ID?: number; Module_ID?: number; Device_ID?: number; Unit_ID?: number; unit_row_id?: number; sensordescript?: string; Unit_address?: number; IsRead?: number; Notes?: string }) {
 	return request<any, ApiResponse<any>>({
 		url: `/sensors/${id}`,
 		method: 'put',

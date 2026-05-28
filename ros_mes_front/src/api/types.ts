@@ -33,23 +33,29 @@ export interface UserInfo {
 // 微调相关
 export interface FineTuningItem {
 	id: number;
-	Device_ID: number;
-	DeviceAddress?: number;
-	Devicedescript?: string;
-	parameterName: string;
-	oldValue: number;
-	newValue: number;
-	adjustedBy: string;
-	adjustedAt: string;
+	module_id: number;
+	unit_id: number;
+	module_address?: number | null;
+	module_descript?: string | null;
+	parameter_name: string;
+	old_value?: number | null;
+	new_value: number;
+	creater_id: number;
+	create_time?: string | null;
+	notes?: string | null;
+	del_flag: boolean;
 }
 
 export interface FineTuningConfigItem {
 	id: number;
-	moduleId: number;
-	deviceId: number;
-	configJson: string;
-	savedBy: string;
-	createdAt: string;
+	module_id: number;
+	unit_id: number;
+	sensor_id: number;
+	config: Record<string, any>;
+	creater_id: number;
+	create_time?: string | null;
+	notes?: string | null;
+	del_flag: boolean;
 }
 
 // 图纸管理相关
@@ -116,7 +122,8 @@ export interface WorkItem {
 	Workname: string;
 	WorkDescript: string;
 	Drawing_ID: number | null;
-	Device_id: number | null;
+	Module_ID: number | null;
+	Device_id?: number | null;
 	unit_id: number | null;
 	sensor_id: number | null;
 	data: string;

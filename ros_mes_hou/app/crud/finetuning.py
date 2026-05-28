@@ -12,65 +12,63 @@ def get_fine_tuning_records(
     db: Session,
     skip: int = 0,
     limit: int = 100,
-    device_id: Optional[int] = None,
+    module_id: Optional[int] = None,
+    unit_id: Optional[int] = None,
 ):
     query = db.query(models.FineTuning)
-    if device_id is not None:
-        query = query.filter(models.FineTuning.Device_ID == device_id)
+    if module_id is not None:
+        query = query.filter(models.FineTuning.module_id == module_id)
+    if unit_id is not None:
+        query = query.filter(models.FineTuning.unit_id == unit_id)
     return (
-        query.order_by(models.FineTuning.adjusted_at.desc(), models.FineTuning.id.desc())
+        query.order_by(models.FineTuning.create_time.desc(), models.FineTuning.id.desc())
         .offset(skip)
         .limit(limit)
         .all()
     )
 
 
-def get_latest_position(db: Session, device_id: int, parameter_name: Optional[str] = None) -> Optional[float]:
-    query = db.query(models.FineTuning).filter(models.FineTuning.Device_ID == device_id)
+def get_latest_position(
+    db: Session,
+    module_id: int,
+    unit_id: int,
+    parameter_name: Optional[str] = None,
+) -> Optional[float]:
+    query = db.query(models.FineTuning).filter(
+        models.FineTuning.module_id == module_id,
+        models.FineTuning.unit_id == unit_id,
+    )
     if parameter_name:
         query = query.filter(models.FineTuning.parameter_name == parameter_name)
 
     latest = (
         query
-        .order_by(models.FineTuning.adjusted_at.desc(), models.FineTuning.id.desc())
+        .order_by(models.FineTuning.create_time.desc(), models.FineTuning.id.desc())
         .first()
     )
     return latest.new_value if latest else None
 
 
-def get_device_snapshot(db: Session, device_id: int) -> Dict[str, Any]:
-    device = (
-        db.query(models.Device)
-        .filter(models.Device.Device_ID == device_id, models.Device.del_flag == False)
-        .first()
-    )
-    if not device:
-        return {"DeviceAddress": None, "Devicedescript": None}
-    return {
-        "DeviceAddress": device.DeviceAddress,
-        "Devicedescript": device.Devicedescript,
-    }
-
-
 def create_fine_tuning_record(
     db: Session,
     record: schemas.FineTuningCreate,
-    username: str,
+    creater_id: int = 1,
 ):
-    device_id = int(record.device_id)
+    module_id = int(record.module_id)
+    unit_id = int(record.unit_id)
     new_value = record.position if record.position is not None else record.new_value
-    parameter_name = record.parameter_name or f"module_{record.module_id or 0}_position"
-    previous = get_latest_position(db, device_id, parameter_name)
-    device_snapshot = get_device_snapshot(db, device_id)
+    parameter_name = record.parameter_name or f"module_{module_id}_unit_{unit_id}_position"
+    previous = get_latest_position(db, module_id, unit_id, parameter_name)
 
     db_record = models.FineTuning(
-        Device_ID=device_id,
-        DeviceAddress=device_snapshot["DeviceAddress"],
-        Devicedescript=device_snapshot["Devicedescript"],
+        module_id=module_id,
+        unit_id=unit_id,
+        module_address=module_id,
+        module_descript=None,
         parameter_name=parameter_name,
         old_value=record.old_value if record.old_value is not None else previous,
         new_value=float(new_value),
-        adjusted_by=username,
+        creater_id=creater_id,
     )
 
     db.add(db_record)
@@ -82,14 +80,15 @@ def create_fine_tuning_record(
 def save_fine_tuning_config(
     db: Session,
     config: schemas.FineTuningConfigCreate,
-    username: str,
+    creater_id: int = 1,
 ):
     config_dict: Dict[str, Any] = config.model_dump()
     db_config = models.FineTuningConfig(
         module_id=config.module_id,
-        device_id=config.device_id,
+        unit_id=config.unit_id,
+        sensor_id=int(config.sensor_id),
         config_json=json.dumps(config_dict, ensure_ascii=False),
-        saved_by=username,
+        creater_id=creater_id,
     )
     db.add(db_config)
     db.commit()

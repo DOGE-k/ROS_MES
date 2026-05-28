@@ -353,6 +353,23 @@ const existingDevices = ref<any[]>([])
 const allUnits = ref<any[]>([])
 const existingSensorsInUnit = ref<any[]>([])
 
+function getNodeModuleId(node: TreeNode | null | undefined) {
+  return Number((node as any)?.module_id ?? (node as any)?.device_id ?? node?.raw_id ?? 0)
+}
+
+function getUnitModuleId(unit: any) {
+  return Number(unit?.Module_ID ?? unit?.Device_ID ?? 0)
+}
+
+function getSensorUnitRowId(sensor: any) {
+  if (sensor?.unit_row_id) return Number(sensor.unit_row_id)
+  const matched = unitOptions.value.find(
+    u => Number(getUnitModuleId(u)) === Number(sensor?.Module_ID ?? sensor?.Device_ID) &&
+      Number(u.Unit_ID) === Number(sensor?.Unit_ID)
+  )
+  return matched ? Number(matched.id) : 0
+}
+
 const ARM_OPTIONS = [
   { label: '一号机械臂', value: 32 },
   { label: '二号机械臂', value: 64 },
@@ -374,7 +391,7 @@ const availableArmOptions = computed(() => {
   const parentDeviceId = selectedNode.value?.raw_id
   if (!parentDeviceId) return ARM_OPTIONS
   return ARM_OPTIONS.filter(opt => !allUnits.value.some(
-    u => u.Unit_ID === opt.value && u.Device_ID === parentDeviceId
+    u => Number(u.Unit_ID) === Number(opt.value) && Number(getUnitModuleId(u)) === Number(parentDeviceId)
   ))
 })
 
@@ -515,9 +532,12 @@ async function handleNodeClick(node: TreeNode) {
     } else if (node.type === 'unit') {
       const res = await getUnitApi(node.raw_id)
       formData.value = res.data || {}
+      formData.value.Device_ID = getUnitModuleId(formData.value)
     } else if (node.type === 'sensor') {
       const res = await getSensorApi(node.raw_id)
       formData.value = res.data || {}
+      formData.value.Device_ID = Number(formData.value.Module_ID ?? formData.value.Device_ID ?? node.device_id ?? 0)
+      formData.value.unit_row_id = getSensorUnitRowId(formData.value)
       const unitRowId = formData.value.unit_row_id
       if (unitRowId) {
         getSensorsByUnitApi(unitRowId).then(r => {
@@ -564,7 +584,7 @@ async function saveEdit() {
       })
     } else if (node.type === 'unit') {
       await updateUnitApi(node.raw_id, {
-        Device_ID: formData.value.Device_ID,
+        Module_ID: formData.value.Module_ID ?? formData.value.Device_ID,
         UnitDescript: formData.value.UnitDescript,
         Notes: formData.value.Notes,
       })
@@ -573,9 +593,8 @@ async function saveEdit() {
       const sensorId = getSensorId(selectedUnit?.Unit_ID || formData.value.Unit_ID || 0, formData.value.sensordescript)
       await updateSensorApi(node.raw_id, {
         sensor_ID: sensorId,
-        Device_ID: selectedUnit?.Device_ID || formData.value.Device_ID || node.device_id || 0,
+        Module_ID: getUnitModuleId(selectedUnit) || formData.value.Module_ID || formData.value.Device_ID || node.device_id || 0,
         Unit_ID: selectedUnit?.Unit_ID || 0,
-        unit_row_id: formData.value.unit_row_id,
         sensordescript: formData.value.sensordescript,
         Unit_address: formData.value.Unit_address,
         IsRead: formData.value.IsRead,
@@ -679,7 +698,8 @@ function showAddDialog(type: 'device' | 'unit' | 'sensor') {
     addForm.value.IsRead = 1
     addForm.value.unit_row_id = unitRowId
     addForm.value.Unit_ID = (selectedNode.value as any)?.arm_type || 0
-    addForm.value.Device_ID = (selectedNode.value as any)?.device_id || 0
+    addForm.value.Module_ID = getNodeModuleId(selectedNode.value)
+    addForm.value.Device_ID = addForm.value.Module_ID
   }
   addDialogVisible.value = true
 }
@@ -716,7 +736,7 @@ async function submitAdd() {
       const armName = ARM_OPTIONS.find(o => o.value === addForm.value.Unit_ID)?.label || ''
       const res = await createUnitApi({
         Unit_ID: addForm.value.Unit_ID,
-        Device_ID: parent.raw_id,
+        Module_ID: parent.raw_id,
         UnitDescript: armName,
       })
       focusId = `unit-${res.data.id}`
@@ -724,9 +744,8 @@ async function submitAdd() {
       const sensorId = getSensorId(addForm.value.Unit_ID, addForm.value.sensordescript)
       const res = await createSensorApi({
         sensor_ID: sensorId,
-        Device_ID: addForm.value.Device_ID,
+        Module_ID: addForm.value.Module_ID ?? addForm.value.Device_ID,
         Unit_ID: addForm.value.Unit_ID,
-        unit_row_id: addForm.value.unit_row_id,
         sensordescript: addForm.value.sensordescript || '',
         Unit_address: addForm.value.Unit_address ?? 0,
         IsRead: addForm.value.IsRead ?? 1,
