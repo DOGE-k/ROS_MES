@@ -79,22 +79,23 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           前端/Web层                                   │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ /frontend_pointcloud_topic    /control/adjust_*_cmd              │  │
-│  └───────────────────┬───────────────────────────┬──────────────────┘  │
-└───────────────────────┼───────────────────────────┼─────────────────────┘
-                        │                           │
-                        ▼                           ▼
+│  ┌──────────────────────────┐  ┌──────────────────────────────────┐   │
+│  │ /frontend_pointcloud_topic│  │ /control/adjust_*_cmd           │   │
+│  │   (点云JSON数据)          │  │   (前端微调指令)                │   │
+│  └──────────┬───────────────┘  └───────────────┬──────────────────┘   │
+└─────────────┼───────────────────────────────────┼─────────────────────┘
+              │                                   │
+              ▼                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                        数据处理层                                      │
 │  ┌──────────────────┐                    ┌──────────────────────────┐  │
 │  │ data_process_node│                    │      control_node        │  │
-│  │  点云处理/模块切分│                    │  时序控制/前端调节       │  │
+│  │  点云处理/模块切分│                    │  时序控制核心           │  │
 │  └────────┬─────────┘                    └──────────┬───────────────┘  │
 │           │                                         │                   │
 │           ▼                                         ▼                   │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │              /module_arm_task           /control/*_cmd           │    │
+│  │              /module_arm_task           /control/*_cmd_sequenced│    │
 │  └───────────────┬───────────────────────┬─────────────────────────┘    │
 │                  │                       │                               │
 │                  ▼                       ▼                               │
@@ -111,7 +112,7 @@
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                        功能节点层                                      │
+│                        轴控制层                                        │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐               │
 │  │rotation_node│  │ swing_node  │  │telescopic_node  │               │
 │  │   旋转轴控制 │  │   摆动轴控制│  │   伸缩轴控制    │               │
@@ -128,7 +129,7 @@
 │                        反馈处理层                                      │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │                     feedback_node                                │  │
-│  │  硬件反馈解析 / 轴指令转发                                        │  │
+│  │  硬件反馈解析 / 指令转发 / 数据存储                              │  │
 │  └───────────────────────────┬──────────────────────────────────────┘  │
 │                              │                                        │
 │              ┌───────────────┼───────────────┐                        │
@@ -151,16 +152,33 @@
 
 ## 四、消息类型说明
 
-| 消息类型            | 核心字段                                                  | 说明         |
-| --------------- | ----------------------------------------------------- | ---------- |
-| `RotationCmd`   | `module_id`, `device_id`, `position[]`                | 旋转角度指令（度）  |
-| `SwingCmd`      | `module_id`, `device_id`, `position[]`                | 摆动角度指令（度）  |
-| `TelescopicCmd` | `module_id`, `device_id`, `position[]`                | 伸缩长度指令（mm） |
-| `IntCmd`        | `module_id`, `device_id`, `position[]`                | 整数编码指令     |
-| `Feedback`      | `module_id`, `device_id`, `position[]`                | 原始硬件反馈     |
-| `SensorCmd`     | `id`, `module_id`, `device_id`, `position[]`          | 传感器数据      |
-| `GyroFeedback`  | `module_id`, `device_id`, `accel_x/y/z`, `gyro_x/y/z` | 陀螺仪数据      |
-| `String`        | `data`                                                | JSON格式字符串  |
+| 消息类型            | 核心字段                                                  | 说明                 | 状态       |
+| --------------- | ----------------------------------------------------- | ------------------ | -------- |
+| `RotationCmd`   | `module_id`, `device_id`, `position[]`                | 旋转角度指令（度）        | ✅ 正在使用   |
+| `SwingCmd`      | `module_id`, `device_id`, `position[]`                | 摆动角度指令（度）        | ✅ 正在使用   |
+| `TelescopicCmd` | `module_id`, `device_id`, `position[]`                | 伸缩长度指令（mm）       | ✅ 正在使用   |
+| `IntCmd`        | `module_id`, `device_id`, `position[]`                | 整数编码指令           | ✅ 正在使用   |
+| `Feedback`      | `module_id`, `device_id`, `position[]`                | 原始硬件反馈           | ✅ 正在使用   |
+| `SensorCmd`     | `id`, `module_id`, `device_id`, `position[]`          | 传感器数据            | ✅ 正在使用   |
+| `GyroFeedback`  | `module_id`, `device_id`, `accel_x/y/z`, `gyro_x/y/z` | 陀螺仪数据            | ✅ 正在使用   |
+| `Kinematics`    | `header`, `module_id`, `device_id`, `position[]`      | 坐标数据格式（预留接口）    | ⚠️ 未实际使用 |
+| `String`        | `data`                                                | JSON格式字符串          | ✅ 正在使用   |
+
+### Kinematics 消息类型说明
+
+`Kinematics.msg` 定义了坐标数据格式，用于未来实现基于坐标（x, y, z）的运动控制功能：
+
+```
+std_msgs/Header header  # 标准头，用于时间同步和坐标系
+uint8 module_id         # 模块编号(先默认为17)
+uint8 device_id         # 为0
+float64[] position      # 坐标数组，单位为mm
+```
+
+**目前使用状态**：
+- `feedback_node.py` 导入但未实际使用
+- `web_data_node.py` 中的相关代码已注释
+- `test_c.py` 中使用的是 `Feedback` 类型而非 `Kinematics`
 
 ---
 
@@ -175,7 +193,7 @@
                                                             kinematics_node → /control/kinematics_*_cmd
                                                                        │
                                                                        ▼
-                                                           control_node (时序控制)
+                                                           control_node (三阶段时序控制)
                                                                        │
                         ┌──────────────────────────────────────────────┼──────────────────────────────────────────────┐
                         ▼                                              ▼                                              ▼
@@ -190,13 +208,27 @@
                                                            feedback_node → /arm/cmd_vel
                                                                        │
                                                                        ▼
-                                                           hardware_node → STM32
+                                                           hardware_node → STM32串口
+                                                                       │
+                                                                       ▼
+                                                           STM32 → /hardware/all_feedback → feedback_node
+                                                                       │
+                                                                       ▼
+                                                     /hardware/*_feedback → 各轴节点 (角度闭环)
 ```
 
 ### 前端微调流程
 
 ```
-前端调节指令 → /control/adjust_*_cmd → control_node → /control/adjust_*_cmd_sequenced → 对应功能节点 → 硬件
+前端调节指令 → /control/adjust_*_cmd → control_node → /control/adjust_*_cmd_sequenced → 对应轴节点 → 硬件
+```
+
+### 数据存储流程
+
+```
+轴节点执行指令 → sensor_log 表 (SQLite)
+硬件反馈数据 → sensor_feedback 表 (SQLite)
+陀螺仪数据 → tuo_luo_yi 节点处理 → 数据库
 ```
 
 ---

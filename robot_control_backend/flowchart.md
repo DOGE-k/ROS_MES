@@ -6,70 +6,84 @@
 flowchart TD
     subgraph 前端层
         A[前端JSON数据]
+        A2[前端调节指令]
     end
     
-    subgraph 处理层
+    subgraph 点云处理层
         B[data_process_node]
         C[calculation_node]
+    end
+    
+    subgraph 运动学层
         D[kinematics_node]
     end
     
+    subgraph 时序控制层
+        E[control_node]
+    end
+    
     subgraph 轴控制层
-        E[rotation_node]
-        F[swing_node]
-        G[telescopic_node]
+        F[rotation_node]
+        G[swing_node]
+        H[telescopic_node]
     end
     
-    subgraph 传感器控制
-        H[sensor_control_node]
+    subgraph 反馈处理层
+        I[feedback_node]
     end
     
-    subgraph 下位机
-        I[机械臂执行器]
-        J[压力传感器]
+    subgraph 硬件层
+        J[hardware_node]
+        K[STM32下位机]
     end
     
-    subgraph 时序控制
-        K{间隔≥8秒?}
-        L[延迟7秒]
+    subgraph 数据库
+        L[(SQLite)]
     end
 
-    %% 主数据流
+    %% 主数据流：点云→处理→运动学→时序→轴控制→硬件
     A -->|/frontend_pointcloud_topic| B
     B -->|/module_arm_task| C
     C -->|/arm_alpha_beta| D
+    D -->|/control/kinematics_rotation_cmd| E
+    D -->|/control/kinematics_swing_cmd| E
+    D -->|/control/kinematics_telescopic_cmd| E
     
-    %% kinematics带间隔控制
-    D --> K
-    K -->|是| D_output[发布轴指令]
-    K -->|否| D_wait[等待下一轮]
+    %% 时序控制：三阶段执行
+    E -->|/control/kinematics_rotation_cmd_sequenced| F
+    E -->|/control/kinematics_swing_cmd_sequenced| G
+    E -->|/control/kinematics_telescopic_cmd_sequenced| H
     
-    D_output -->|/control/kinematics_rotation_cmd| E
-    D_output -->|/control/kinematics_swing_cmd| F
-    D_output -->|/control/kinematics_telescopic_cmd| G
+    %% 轴节点→反馈节点→硬件
+    F -->|/hardware/rotation_output| I
+    G -->|/hardware/swing_output| I
+    H -->|/hardware/telescope_output| I
+    I -->|/arm/cmd_vel| J
+    J -->|串口| K
     
-    D_wait -.->|8秒后重新检查| K
+    %% 前端微调指令
+    A2 -->|/control/adjust_rotation_cmd| E
+    A2 -->|/control/adjust_swing_cmd| E
+    A2 -->|/control/adjust_telescopic_cmd| E
     
-    %% 轴节点触发传感器
-    E -->|/control/sensor_cmd| L
-    F -->|/control/sensor_cmd| L
-    G -->|/control/sensor_cmd| L
+    %% 硬件反馈
+    K -->|串口| J
+    J -->|/hardware/all_feedback| I
+    I -->|/hardware/rotation_feedback| F
+    I -->|/hardware/swing_feedback| G
+    I -->|/hardware/telescope_feedback| H
+    I -->|/hardware/sensor_feedback| L
     
-    %% 传感器延迟发送
-    L --> H
-    
-    %% 下发到下位机
-    E -->|/hardware/rotation_output| I
-    F -->|/hardware/swing_output| I
-    G -->|/hardware/telescope_output| I
-    H -->|/arm/cmd_vel| J
+    %% 数据存储
+    F -->|sensor_log| L
+    G -->|sensor_log| L
+    H -->|sensor_log| L
 
     %% 样式
     style A fill:#f9f,stroke:#333,stroke-width:2px
-    style I fill:#9f9,stroke:#333,stroke-width:2px
-    style J fill:#9f9,stroke:#333,stroke-width:2px
-    style K fill:#ff9,stroke:#333,stroke-width:2px
-    style L fill:#ff9,stroke:#333,stroke-width:2px
+    style A2 fill:#f9f,stroke:#333,stroke-width:2px
+    style K fill:#9f9,stroke:#333,stroke-width:2px
+    style L fill:#bbf,stroke:#333,stroke-width:2px
 ```
 
 ## ⏱️ 时序图
@@ -80,44 +94,62 @@ sequenceDiagram
     participant DP as data_process_node
     participant CAL as calculation_node
     participant KIN as kinematics_node
+    participant CTRL as control_node
     participant ROT as rotation_node
-    participant SEN as sensor_control_node
-    participant HW as 下位机
+    participant SW as swing_node
+    participant TEL as telescopic_node
+    participant FB as feedback_node
+    participant HW as hardware_node
+    participant STM as STM32下位机
 
     前端->>DP: /frontend_pointcloud_topic (JSON数据)
     DP->>CAL: /module_arm_task (处理后数据)
-    CAL->>KIN: /arm_alpha_beta (最优托举点)
+    CAL->>KIN: /arm_alpha_beta (最优托举点JSON)
     
-    Note over KIN: 检查间隔是否≥8秒
+    KIN->>CTRL: /control/kinematics_rotation_cmd (旋转增量)
+    KIN->>CTRL: /control/kinematics_swing_cmd (摆动增量)
+    KIN->>CTRL: /control/kinematics_telescopic_cmd (伸缩增量)
     
-    alt 间隔≥8秒
-        KIN->>ROT: /control/kinematics_rotation_cmd (旋转增量)
-        KIN->>ROT: /control/kinematics_swing_cmd (摆动增量)
-        KIN->>ROT: /control/kinematics_telescopic_cmd (伸缩增量)
-        
-        ROT->>HW: /hardware/rotation_output (轴指令)
-        
-        Note over ROT,SEN: 触发传感器节点
-        ROT->>SEN: /control/sensor_cmd (触发信号)
-        
-        Note over SEN: 延迟7秒
-        SEN->>HW: /arm/cmd_vel (传感器指令序列)
-    else 间隔<8秒
-        Note over KIN: 等待，8秒后重试
-    end
+    Note over CTRL: 时序控制：三阶段执行
+    
+    CTRL->>ROT: /control/kinematics_rotation_cmd_sequenced
+    ROT->>FB: /hardware/rotation_output
+    FB->>HW: /arm/cmd_vel
+    HW->>STM: 旋转指令(串口)
+    STM-->>HW: 旋转反馈(串口)
+    HW->>FB: /hardware/all_feedback
+    FB->>ROT: /hardware/rotation_feedback
+    
+    CTRL->>SW: /control/kinematics_swing_cmd_sequenced
+    SW->>FB: /hardware/swing_output
+    FB->>HW: /arm/cmd_vel
+    HW->>STM: 摆动指令(串口)
+    STM-->>HW: 摆动反馈(串口)
+    HW->>FB: /hardware/all_feedback
+    FB->>SW: /hardware/swing_feedback
+    
+    CTRL->>TEL: /control/kinematics_telescopic_cmd_sequenced
+    TEL->>FB: /hardware/telescope_output
+    FB->>HW: /arm/cmd_vel
+    HW->>STM: 伸缩指令(串口)
+    STM-->>HW: 伸缩反馈(串口)
+    HW->>FB: /hardware/all_feedback
+    FB->>TEL: /hardware/telescope_feedback
 ```
 
 ## 📊 节点职责表
 
 | 节点名称 | 核心职责 | 发布话题 | 订阅话题 |
 |---------|---------|---------|---------|
-| `data_process_node` | 点云数据处理 | `/module_arm_task` | `/frontend_pointcloud_topic` |
-| `calculation_node` | 最优托举点计算 | `/arm_alpha_beta` | `/module_arm_task` |
-| `kinematics_node` | 运动学解算+8秒间隔控制 | `/control/kinematics_*_cmd` | `/arm_alpha_beta` |
-| `rotation_node` | 旋转轴控制 | `/hardware/rotation_output` | `/control/kinematics_rotation_cmd` |
-| `swing_node` | 摆动轴控制 | `/hardware/swing_output` | `/control/kinematics_swing_cmd` |
-| `telescopic_node` | 伸缩轴控制 | `/hardware/telescope_output` | `/control/kinematics_telescopic_cmd` |
-| `sensor_control_node` | 压力传感器控制(7秒延迟) | `/arm/cmd_vel` | `/control/sensor_cmd` |
+| `data_process_node` | 点云数据处理与模块切分 | `/module_arm_task` | `/frontend_pointcloud_topic` |
+| `calculation_node` | 最优托举点计算 | `/arm_alpha_beta`, `/arm_fusion_stats` | `/module_arm_task` |
+| `kinematics_node` | 运动学逆解与增量计算 | `/control/kinematics_rotation_cmd`, `/control/kinematics_swing_cmd`, `/control/kinematics_telescopic_cmd` | `/arm_alpha_beta`, `/hardware/*_feedback` |
+| `control_node` | 时序控制核心（三阶段执行） | `/control/kinematics_*_cmd_sequenced`, `/control/adjust_*_cmd_sequenced` | `/control/kinematics_*_cmd`, `/control/adjust_*_cmd` |
+| `rotation_node` | 旋转轴角度控制与限位保护 | `/hardware/rotation_output`, `/control/sensor_cmd` | `/control/kinematics_rotation_cmd_sequenced`, `/hardware/rotation_feedback` |
+| `swing_node` | 摆动轴角度控制与限位保护 | `/hardware/swing_output`, `/control/sensor_cmd` | `/control/kinematics_swing_cmd_sequenced`, `/hardware/swing_feedback` |
+| `telescopic_node` | 伸缩轴长度控制与压力监控 | `/hardware/telescope_output`, `/control/sensor_cmd` | `/control/kinematics_telescopic_cmd_sequenced`, `/hardware/telescope_feedback` |
+| `feedback_node` | 硬件反馈解析与指令转发 | `/arm/cmd_vel`, `/hardware/*_feedback`, `/hardware/sensor_feedback` | `/hardware/all_feedback`, `/hardware/*_output` |
+| `hardware_node` | STM32串口通信与数据解析 | `/hardware/all_feedback`, `/hardware/gyroscope_feedback` | `/arm/cmd_vel` |
 
 ## ⚙️ 时序参数配置
 

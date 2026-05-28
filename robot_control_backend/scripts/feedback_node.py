@@ -9,8 +9,7 @@ from robot_control_backend.msg import (
     TelescopicCmd,
     SensorCmd,
     Feedback,
-    IntCmd,
-    Kinematics
+    IntCmd
 )
 
 def load_env_config():

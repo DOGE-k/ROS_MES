@@ -192,10 +192,9 @@ def create_database(db_path=DB_PATH):
             Module_ID INTEGER NOT NULL,
             Unit_ID INTEGER NOT NULL,
             Unit_address INTEGER NOT NULL,
-            unit_row_id INTEGER NOT NULL,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            del_flag BOOLEAN DEFAULT 0,
+            del_flag BOOLEAN DEFAULT false,
             Notes TEXT,
             FOREIGN KEY (Module_ID, Unit_ID) REFERENCES Unit(Module_ID, Unit_ID),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
@@ -359,8 +358,12 @@ def create_database(db_path=DB_PATH):
                 INSERT INTO Users (User_ID, Username, Password, Type_ID, Creator_ID, Createtime, Islock, del_flag)
                 VALUES (1, 'admin', ?, 1, 1, CURRENT_TIMESTAMP, 0, 0)
             """, (hashed_password,))
+            cursor.execute("""
+                INSERT INTO Users (User_ID, Username, Password, Type_ID, Creator_ID, Createtime, Islock, del_flag)
+                VALUES (2, 'system', ?, 1, 1, CURRENT_TIMESTAMP, 0, 0)
+            """, (hashed_password,))
             conn.commit()
-            print("已插入默认管理员用户（admin）。")
+            print("已插入默认管理员用户（admin 和 system）。")
     except Exception as e:
         print(f"插入初始管理员时出现异常：{e}")
 

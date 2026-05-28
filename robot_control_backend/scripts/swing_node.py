@@ -62,7 +62,10 @@ class SwingSimple:
                 data TEXT NOT NULL,
                 del_flag BOOL DEFAULT false,
                 Notes TEXT,
-                PRIMARY KEY (Createtime, sensor_ID)
+                PRIMARY KEY (Createtime, sensor_ID),
+                FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
+                FOREIGN KEY (Work_ID) REFERENCES works(Work_ID),
+                FOREIGN KEY (sensor_id) REFERENCES sensors(id)
             )
         """)
         self.conn.commit()
@@ -79,7 +82,7 @@ class SwingSimple:
             self.conn.execute("""
                 INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (now, 1, 1, device_id, 2, data_json, 0, note_str))
+            """, (now, 2, 1, device_id, 2, data_json, 0, note_str))
             self.conn.commit()
         except Exception as e:
             rospy.logerr("数据库写入失败: %s", e)
