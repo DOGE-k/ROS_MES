@@ -50,7 +50,7 @@ def create_database(db_path=DB_PATH):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS DrawingsVersion (
             DrawingsVersion_ID INTEGER PRIMARY KEY,
-            Drawing_ID INTEGER,
+            Drawing_ID INTEGER NOT NULL,
             Drawingfile TEXT NOT NULL,
             Creator_ID INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -191,15 +191,14 @@ def create_database(db_path=DB_PATH):
             IsRead INTEGER NOT NULL,
             Module_ID INTEGER NOT NULL,
             Unit_ID INTEGER NOT NULL,
-            unit_row_id INTEGER NOT NULL,
             Unit_address INTEGER NOT NULL,
             creater_id INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
-            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID),
-            FOREIGN KEY (unit_row_id) REFERENCES Unit(id),
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
+            FOREIGN KEY (Module_ID, Unit_ID) REFERENCES Unit(Module_ID, Unit_ID),
+            FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
+            UNIQUE(Module_ID, sensor_ID)
         );
     """)
 
@@ -270,7 +269,9 @@ def create_database(db_path=DB_PATH):
             creater_id INTEGER NOT NULL,
             Work_ID INTEGER NOT NULL,
             Module_ID INTEGER,
-            isread INTEGER,
+            Unit_ID INTEGER,
+            device_ID INTEGER,        
+            isread INTEGER NOT NULL,
             coord TEXT,
             position TEXT,
             del_flag BOOLEAN DEFAULT 0,
@@ -287,13 +288,14 @@ def create_database(db_path=DB_PATH):
         CREATE TABLE IF NOT EXISTS point_data (
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             creater_id INTEGER NOT NULL,
-            Module_id INTEGER,
+            Module_ID INTEGER,
             point TEXT NOT NULL,
             arms_address TEXT NOT NULL,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
             PRIMARY KEY (Createtime),
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
+            FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
+            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID)
         );
     """)
 
@@ -301,31 +303,37 @@ def create_database(db_path=DB_PATH):
     # ----- 微调记录表-----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning (
-            id INTEGER PRIMARY KEY,
-            Module_ID INTEGER NOT NULL,
-            parameter_name TEXT NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            module_id INTEGER NOT NULL,
+            unit_id INTEGER NOT NULL,
+            module_address INTEGER,
+            module_descript TEXT,
+            parameter_name VARCHAR(100) NOT NULL,
             old_value REAL,
             new_value REAL NOT NULL,
-            adjusted_by TEXT,
-            adjusted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            creater_id INTEGER NOT NULL,
+            create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT,
             del_flag BOOLEAN DEFAULT 0,
-            Notes TEXT,
-            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID)
+            FOREIGN KEY (module_id, unit_id) REFERENCES Unit(Module_ID, Unit_ID),
+            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
         );
     """)
 
     # ----- 微调配置表-----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning_config (
-            id INTEGER PRIMARY KEY,
-            Module_id INTEGER NOT NULL,
-            device_id INTEGER NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            module_id INTEGER NOT NULL,
+            unit_id INTEGER NOT NULL,
+            sensor_id INTEGER NOT NULL,
             config_json TEXT NOT NULL,
-            saved_by TEXT,
-            creater_id INTEGER,
-            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            creater_id INTEGER NOT NULL,
+            create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT,
             del_flag BOOLEAN DEFAULT 0,
-            Notes TEXT,
+            FOREIGN KEY (module_id, unit_id) REFERENCES Unit(Module_ID, Unit_ID),
+            FOREIGN KEY (module_id, sensor_id) REFERENCES sensors(Module_ID, sensor_ID),
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
         );
     """)
@@ -423,15 +431,15 @@ def create_database(db_path=DB_PATH):
 
             for sensor_id, s_desc, isread, s_unit_id, unit_addr in sensor_list:
                 cursor.execute(
-                    "SELECT id FROM sensors WHERE unit_row_id = ? AND sensor_ID = ?",
-                    (unit_row_id, sensor_id),
+                    "SELECT id FROM sensors WHERE Module_ID = ? AND sensor_ID = ?",
+                    (17, sensor_id),
                 )
                 sensor_row = cursor.fetchone()
                 if sensor_row is None:
                     cursor.execute("""
-                        INSERT INTO sensors (sensor_ID, sensordescript, IsRead, Module_ID, Unit_ID, unit_row_id, Unit_address, creater_id, Createtime, del_flag)
-                        VALUES (?, ?, ?, 17, ?, ?, ?, 1, CURRENT_TIMESTAMP, 0)
-                    """, (sensor_id, s_desc, isread, s_unit_id, unit_row_id, unit_addr))
+                        INSERT INTO sensors (sensor_ID, sensordescript, IsRead, Module_ID, Unit_ID, Unit_address, creater_id, Createtime, del_flag)
+                        VALUES (?, ?, ?, 17, ?, ?, 1, CURRENT_TIMESTAMP, 0)
+                    """, (sensor_id, s_desc, isread, s_unit_id, unit_addr))
                     sensor_row_id = cursor.lastrowid
                     print(f"已插入 sensor_ID={sensor_id}")
                 else:
@@ -450,8 +458,7 @@ def create_database(db_path=DB_PATH):
             cursor.execute("""
                 SELECT s.id
                 FROM sensors AS s
-                JOIN Unit AS u ON u.id = s.unit_row_id
-                WHERE u.Module_ID = ? AND u.Unit_ID = ? AND s.sensor_ID = ?
+                WHERE s.Module_ID = ? AND s.Unit_ID = ? AND s.sensor_ID = ?
             """, (17, 32, 33))
             initial_sensor = cursor.fetchone()
             if initial_unit is None or initial_sensor is None:
