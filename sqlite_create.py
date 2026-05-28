@@ -50,7 +50,7 @@ def create_database(db_path=DB_PATH):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS DrawingsVersion (
             DrawingsVersion_ID INTEGER PRIMARY KEY,
-            Drawing_ID INTEGER,
+            Drawing_ID INTEGER NOT NULL,
             Drawingfile TEXT NOT NULL,
             Creator_ID INTEGER NOT NULL,
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -289,13 +289,14 @@ def create_database(db_path=DB_PATH):
         CREATE TABLE IF NOT EXISTS point_data (
             Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             creater_id INTEGER NOT NULL,
-            Module_id INTEGER,
+            Module_ID INTEGER,
             point TEXT NOT NULL,
             arms_address TEXT NOT NULL,
             del_flag BOOLEAN DEFAULT 0,
             Notes TEXT,
             PRIMARY KEY (Createtime),
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID)
+            FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
+            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID)
         );
     """)
 
@@ -303,39 +304,39 @@ def create_database(db_path=DB_PATH):
     # ----- 微调记录表-----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             Module_ID INTEGER NOT NULL,
             Unit_ID INTEGER NOT NULL,
             ModuleAddress INTEGER,
             Moduledescript TEXT,
-            parameter_name TEXT NOT NULL,
+            parameter_name VARCHAR(100) NOT NULL,
             old_value REAL,
             new_value REAL NOT NULL,
             creater_id INTEGER NOT NULL,
-            Createtime DATETIME NOT NULL ,
+            Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             Notes TEXT,
             del_flag BOOLEAN DEFAULT 0,
-            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID),
-            FOREIGN KEY (Unit_ID) REFERENCES Unit(Unit_ID),
+            FOREIGN KEY (Module_ID, Unit_ID) REFERENCES Unit(Module_ID, Unit_ID),
+            FOREIGN KEY (creater id) REFERENCES Users(User_ID)
         );
     """)
 
     # ----- 微调配置表-----
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fine_tuning_config (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             Module_ID INTEGER NOT NULL,
             Unit_ID INTEGER NOT NULL,
             sensor_ID INTEGER NOT NULL,
             config_json TEXT NOT NULL,
-            creater_id INTEGER,
-            del_flag BOOLEAN DEFAULT 0,
+            creater_id INTEGER NOT NULL,
+            Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             Notes TEXT,
+            del_flag BOOLEAN DEFAULT 0,
             FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
             FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID),
             FOREIGN KEY (Unit_ID) REFERENCES Unit(Unit_ID),
             FOREIGN KEY (sensor_ID) REFERENCES sensors(sensor_ID)
-            
         );
     """)
 
