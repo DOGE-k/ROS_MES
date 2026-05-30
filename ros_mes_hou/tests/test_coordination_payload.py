@@ -89,7 +89,7 @@ class CoordinationPayloadTest(unittest.TestCase):
                     Drawing_ID=5,
                     Drawingname="drawing",
                     Drawingdescripte="",
-                    Drawingfile=r"D:\drawings\part.json",
+                    Drawingfile=r"D:\university\competition\ROS_MES_System\2.0\ROS_MES\Drawing\零件.json",
                     Creator_ID=1,
                     NewVersion_ID=1,
                     del_flag=False,
@@ -116,7 +116,7 @@ class CoordinationPayloadTest(unittest.TestCase):
             _, payload = dispatcher.calls[0]
             self.assertEqual(payload["topic"], "/frontend_pointcloud_topic")
             self.assertEqual(payload["message_type"], "std_msgs/String")
-            self.assertEqual(payload["message"]["data"], '{"file_path":"D:\\\\drawings\\\\part.json"}')
+            self.assertEqual(payload["message"]["data"], '{"file_path":"../../Drawing/零件.json"}')
             self.assertEqual(payload["business"]["drawing_id"], 5)
         finally:
             db.close()

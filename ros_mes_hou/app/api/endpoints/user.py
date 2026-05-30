@@ -60,7 +60,7 @@ def list_users(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    query = db.query(models.User)
+    query = db.query(models.User).filter(models.User.del_flag == False)
 
     if keyword:
         kw = f"%{keyword.strip()}%"
@@ -93,7 +93,10 @@ def create_user(
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="密码至少需要 6 位")
 
-    existed = db.query(models.User).filter(models.User.Username == username).first()
+    existed = db.query(models.User).filter(
+        models.User.Username == username,
+        models.User.del_flag == False,
+    ).first()
     if existed:
         raise HTTPException(status_code=400, detail="该用户名已存在")
 
@@ -219,13 +222,19 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    user = db.query(models.User).filter(models.User.User_ID == user_id).first()
+    user = db.query(models.User).filter(
+        models.User.User_ID == user_id,
+        models.User.del_flag == False,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
     if username and username != user.Username:
-        existed = db.query(models.User).filter(models.User.Username == username).first()
+        existed = db.query(models.User).filter(
+            models.User.Username == username,
+            models.User.del_flag == False,
+        ).first()
         if existed:
             raise HTTPException(status_code=400, detail="该用户名已存在")
 
@@ -264,7 +273,10 @@ def delete_user(
     if current_user.User_ID == user_id:
         raise HTTPException(status_code=400, detail="不能删除当前登录用户")
 
-    user = db.query(models.User).filter(models.User.User_ID == user_id).first()
+    user = db.query(models.User).filter(
+        models.User.User_ID == user_id,
+        models.User.del_flag == False,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -288,7 +300,10 @@ def lock_user(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    user = db.query(models.User).filter(models.User.User_ID == user_id).first()
+    user = db.query(models.User).filter(
+        models.User.User_ID == user_id,
+        models.User.del_flag == False,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -318,7 +333,10 @@ def unlock_user(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    user = db.query(models.User).filter(models.User.User_ID == user_id).first()
+    user = db.query(models.User).filter(
+        models.User.User_ID == user_id,
+        models.User.del_flag == False,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -349,7 +367,10 @@ def change_user_role(
     if type_id not in (1, 2):
         raise HTTPException(status_code=400, detail="无效的用户类型值")
 
-    user = db.query(models.User).filter(models.User.User_ID == user_id).first()
+    user = db.query(models.User).filter(
+        models.User.User_ID == user_id,
+        models.User.del_flag == False,
+    ).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -419,7 +440,10 @@ async def import_users(
             fail_list.append({"row": row_num, "reason": "密码至少需要 6 位"})
             continue
 
-        existed = db.query(models.User).filter(models.User.Username == username_val).first()
+        existed = db.query(models.User).filter(
+            models.User.Username == username_val,
+            models.User.del_flag == False,
+        ).first()
 
         if existed:
             fail_list.append({"row": row_num, "reason": f"用户名 {username_val} 已存在"})
@@ -457,7 +481,12 @@ def export_users(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    users = db.query(models.User).order_by(models.User.User_ID.asc()).all()
+    users = (
+        db.query(models.User)
+        .filter(models.User.del_flag == False)
+        .order_by(models.User.User_ID.asc())
+        .all()
+    )
 
     output = io.StringIO()
     writer = csv.writer(output)

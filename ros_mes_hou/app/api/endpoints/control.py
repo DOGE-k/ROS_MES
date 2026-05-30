@@ -29,16 +29,15 @@ def send_fine_tuning(
     db_record = finetuning_crud.create_fine_tuning_record(
         db=db,
         record=record,
-        username="web_frontend",
+        creater_id=1,
     )
-    business_device_id = int(record.device_id or db_record.Device_ID)
+    business_device_id = int(record.device_id or 0)
     position = float(record.position if record.position is not None else db_record.new_value)
     payload = build_fine_tuning_publish_payload(db_record.parameter_name, position)
     payload["business"] = {
         "module_id": record.module_id,
         "device_id": business_device_id,
         "unit_id": record.unit_id,
-        "unit_row_id": record.unit_row_id,
     }
 
     try:

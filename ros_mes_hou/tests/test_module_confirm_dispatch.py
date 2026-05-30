@@ -66,7 +66,7 @@ class ModuleConfirmDispatchTest(unittest.TestCase):
 
             async def recv(self):
                 return (
-                    '{"op":"publish","topic":"/control/module_confirm_success",'
+                    '{"op":"publish","topic":"/hardware/module_confirm_success",'
                     '"msg":{"module_id":18,"device_id":0,"position":[100]}}'
                 )
 
@@ -78,9 +78,9 @@ class ModuleConfirmDispatchTest(unittest.TestCase):
             result = dispatcher.dispatch("module_confirm", payload)
 
         self.assertTrue(result["confirmed"])
-        self.assertEqual(result["confirm_topic"], "/control/module_confirm_success")
+        self.assertEqual(result["confirm_topic"], "/hardware/module_confirm_success")
         self.assertIn('"op": "subscribe"', sent_messages[0])
-        self.assertIn('/control/module_confirm_success', sent_messages[0])
+        self.assertIn('/hardware/module_confirm_success', sent_messages[0])
         self.assertIn('"op": "subscribe"', sent_messages[1])
         self.assertIn('/hardware/web_module_cmd', sent_messages[1])
         self.assertIn('"op": "advertise"', sent_messages[2])
@@ -114,7 +114,7 @@ class ModuleConfirmDispatchTest(unittest.TestCase):
                 dispatcher.dispatch("module_confirm", payload)
 
         self.assertIn("module confirm failed", str(exc.exception))
-        self.assertIn('/control/module_confirm_success', sent_messages[0])
+        self.assertIn('/hardware/module_confirm_success', sent_messages[0])
         self.assertIn('/hardware/web_module_cmd', sent_messages[1])
         self.assertIn('"op": "advertise"', sent_messages[2])
         self.assertIn('"op": "publish"', sent_messages[3])

@@ -13,12 +13,14 @@ workflow_router = APIRouter()
 
 
 def work_to_dict(work: models.Work):
+    module_id = work.Module_ID
     return {
         "Work_ID": work.Work_ID,
         "Workname": work.Workname,
         "WorkDescript": work.WorkDescript or "",
         "Drawing_ID": work.Drawing_ID,
-        "Device_id": work.Device_id,
+        "Module_ID": module_id,
+        "Device_id": module_id,
         "unit_id": work.unit_id,
         "sensor_id": work.sensor_id,
         "data": work.data or "",
@@ -65,6 +67,7 @@ def create_work(
     Workname: str,
     WorkDescript: str = "",
     Drawing_ID: int = None,
+    Module_ID: int = None,
     Device_id: int = None,
     unit_id: int = None,
     sensor_id: int = None,
@@ -86,7 +89,7 @@ def create_work(
         Workname=Workname.strip(),
         WorkDescript=WorkDescript.strip() if WorkDescript else "",
         Drawing_ID=Drawing_ID,
-        Device_id=Device_id,
+        Module_ID=Module_ID if Module_ID is not None else Device_id,
         unit_id=unit_id,
         sensor_id=sensor_id,
         data=data,
@@ -128,6 +131,7 @@ def update_work(
     Workname: str = None,
     WorkDescript: str = None,
     Drawing_ID: int = None,
+    Module_ID: int = None,
     Device_id: int = None,
     unit_id: int = None,
     sensor_id: int = None,
@@ -155,8 +159,10 @@ def update_work(
     if Drawing_ID is not None:
         work.Drawing_ID = Drawing_ID
 
-    if Device_id is not None:
-        work.Device_id = Device_id
+    if Module_ID is not None:
+        work.Module_ID = Module_ID
+    elif Device_id is not None:
+        work.Module_ID = Device_id
 
     if unit_id is not None:
         work.unit_id = unit_id

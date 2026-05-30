@@ -17,10 +17,10 @@
               <template #default="{ row }">{{ getDrawingLabel(row.Drawing_ID) }}</template>
             </el-table-column>
             <el-table-column label="绑定型号" min-width="140" show-overflow-tooltip>
-              <template #default="{ row }">{{ getModelLabelByDevice(row.Device_id) }}</template>
+              <template #default="{ row }">{{ getModelLabelByDevice(getWorkModuleId(row)) }}</template>
             </el-table-column>
             <el-table-column label="绑定设备" min-width="150" show-overflow-tooltip>
-              <template #default="{ row }">{{ getDeviceLabel(row.Device_id) }}</template>
+              <template #default="{ row }">{{ getDeviceLabel(getWorkModuleId(row)) }}</template>
             </el-table-column>
             <el-table-column label="绑定单元" min-width="150" show-overflow-tooltip>
               <template #default="{ row }">{{ getUnitLabel(row.unit_id) }}</template>
@@ -231,8 +231,8 @@
             <el-descriptions-item label="工作名称">{{ work.Workname }}</el-descriptions-item>
             <el-descriptions-item label="工作描述">{{ work.WorkDescript || '-' }}</el-descriptions-item>
             <el-descriptions-item label="图纸">{{ getDrawingLabel(work.Drawing_ID) }}</el-descriptions-item>
-            <el-descriptions-item label="型号">{{ getModelLabelByDevice(work.Device_id) }}</el-descriptions-item>
-            <el-descriptions-item label="设备">{{ getDeviceLabel(work.Device_id) }}</el-descriptions-item>
+            <el-descriptions-item label="型号">{{ getModelLabelByDevice(getWorkModuleId(work)) }}</el-descriptions-item>
+            <el-descriptions-item label="设备">{{ getDeviceLabel(getWorkModuleId(work)) }}</el-descriptions-item>
             <el-descriptions-item label="单元">{{ getUnitLabel(work.unit_id) }}</el-descriptions-item>
             <el-descriptions-item label="传感器">{{ getSensorLabel(work.sensor_id) }}</el-descriptions-item>
             <el-descriptions-item label="工作数据" :span="2">
@@ -376,6 +376,10 @@ function getDrawingLabel(id: number | null | undefined) {
   return item ? formatDrawingOption(item) : String(id);
 }
 
+function getWorkModuleId(work: any) {
+  return work?.Module_ID ?? work?.Device_id ?? null;
+}
+
 function getModelLabelByDevice(deviceId: number | null | undefined) {
   if (deviceId == null) return '-';
   const device = allDeviceOptions.value.find(d => Number(d.Device_ID) === Number(deviceId));
@@ -507,12 +511,12 @@ async function openEditWorkDialog(row: WorkItem) {
   workForm.Workname = row.Workname;
   workForm.WorkDescript = row.WorkDescript || '';
   workForm.Drawing_ID = row.Drawing_ID ?? null;
-  workForm.Device_id = row.Device_id ?? null;
+  workForm.Device_id = getWorkModuleId(row);
   workForm.unit_id = row.unit_id ?? null;
   workForm.sensor_id = row.sensor_id ?? null;
   workForm.Notes = row.Notes || '';
 
-  const device = allDeviceOptions.value.find(d => Number(d.Device_ID) === Number(row.Device_id));
+  const device = allDeviceOptions.value.find(d => Number(d.Device_ID) === Number(getWorkModuleId(row)));
   workForm.Model_ID = device?.Model_ID ?? null;
   await loadDevicesByModel(workForm.Model_ID);
   await loadUnitsByDevice(workForm.Device_id);
@@ -548,7 +552,7 @@ async function handleSaveWork() {
       Workname: workForm.Workname.trim(),
       WorkDescript: workForm.WorkDescript.trim(),
       Drawing_ID: workForm.Drawing_ID,
-      Device_id: workForm.Device_id,
+      Module_ID: workForm.Device_id,
       unit_id: workForm.unit_id,
       sensor_id: workForm.sensor_id,
       Notes: workForm.Notes.trim(),

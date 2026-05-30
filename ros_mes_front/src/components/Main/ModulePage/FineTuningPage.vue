@@ -228,6 +228,7 @@ const initConfig = reactive({
   deviceId: 0,
   unitId: 0,
   unitRowId: 0,
+  sensorId: 0,
   drawingId: 0,
 });
 
@@ -454,7 +455,6 @@ const sendSingleAdjust = async (value: number) => {
       module_id: Number(moduleId.value),
       device_id: Number(initConfig.deviceId),
       unit_id: Number(initConfig.unitId),
-      unit_row_id: Number(initConfig.unitRowId),
       parameter_name: parameterName,
       position: adjustValue,
     });
@@ -513,12 +513,12 @@ const handleSaveConfig = async () => {
       module_id: Number(moduleId.value),
       device_id: Number(initConfig.deviceId),
       unit_id: Number(initConfig.unitId),
-      unit_row_id: Number(initConfig.unitRowId),
+      sensor_id: Number(initConfig.sensorId),
       drawing_id: Number(initConfig.drawingId),
       devices: armList.device.map((item: any, index: number) => ({
         device_id: Number(item.deviceId || initConfig.deviceId),
+        sensor_id: Number(item.deviceId || initConfig.sensorId),
         unit_id: Number(initConfig.unitId),
-        unit_row_id: Number(initConfig.unitRowId),
         parameter_name: index === 3 ? "pressure" : adjustmentKeys[index],
         label: item.label || "压力传感器",
         initial: Number(item.initial || 0),
@@ -603,6 +603,7 @@ onMounted(async () => {
 
     initConfig.unitRowId = Number(armIdList.value[0].id);
     initConfig.unitId = Number(armIdList.value[0].Unit_ID);
+    initConfig.sensorId = Number(armList.device[0].deviceId);
     initConfig.drawingId = Number(drawingList.value[0].drawingId);
     armList.id = initConfig.unitId;
     connectFeedbackSocket();

@@ -5,18 +5,23 @@ from app.schemas import model as schemas
 
 
 def get_models(db: Session):
-    return db.query(models.ModelTooling).filter(models.ModelTooling.del_flag == False).all()
+    return db.query(models.Type).filter(models.Type.del_flag == False).all()
 
 
 def get_model(db: Session, model_id: int):
-    return db.query(models.ModelTooling).filter(
-        models.ModelTooling.Model_ID == model_id,
-        models.ModelTooling.del_flag == False,
+    return db.query(models.Type).filter(
+        models.Type.Type_ID == model_id,
+        models.Type.del_flag == False,
     ).first()
 
 
 def create_model(db: Session, data: schemas.ModelCreate):
-    db_item = models.ModelTooling(**data.model_dump())
+    db_item = models.Type(
+        Typename=data.Modelname,
+        Typedescripte=data.Modeldescripte,
+        Notes=data.Notes,
+        creater_id=1,
+    )
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
@@ -28,8 +33,13 @@ def update_model(db: Session, model_id: int, data: schemas.ModelUpdate):
     if not db_item:
         return None
     update_data = data.model_dump(exclude_unset=True)
+    field_map = {
+        "Modelname": "Typename",
+        "Modeldescripte": "Typedescripte",
+        "Notes": "Notes",
+    }
     for field, value in update_data.items():
-        setattr(db_item, field, value)
+        setattr(db_item, field_map[field], value)
     db.commit()
     db.refresh(db_item)
     return db_item

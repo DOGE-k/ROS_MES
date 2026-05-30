@@ -18,6 +18,8 @@ router = APIRouter()
 
 POINTCLOUD_VIEW_BASE_URL = os.getenv("POINTCLOUD_VIEW_BASE_URL", "http://localhost:5000")
 POINTCLOUD_VIEW_NAMES = {"top", "front", "side"}
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+ROS_SCRIPT_DIR = os.path.join(PROJECT_ROOT, "robot_control_backend", "scripts")
 
 
 def build_pointcloud_view_urls() -> dict:
@@ -53,6 +55,11 @@ def wait_for_pointcloud_views(timeout_seconds: float = 5.0, interval_seconds: fl
         except Exception:
             time.sleep(interval_seconds)
     return False
+
+
+def to_ros_node_relative_path(file_path: str) -> str:
+    relative_path = os.path.relpath(os.path.abspath(file_path), ROS_SCRIPT_DIR)
+    return relative_path.replace(os.sep, "/")
 
 
 @router.get("/views/{view_name}")
@@ -109,7 +116,8 @@ def send_coordination(
     if not drawing.Drawingfile:
         raise HTTPException(status_code=422, detail="drawing file path is empty")
 
-    ros_payload = build_drawing_path_publish_payload(drawing.Drawingfile)
+    ros_file_path = to_ros_node_relative_path(drawing.Drawingfile)
+    ros_payload = build_drawing_path_publish_payload(ros_file_path)
     ros_payload["business"] = dispatch_payload
 
     try:
