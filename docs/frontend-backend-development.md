@@ -658,6 +658,33 @@ username=admin&password=123456
 | GET | `/api/control/hardware/realtime` | 是 | 无 | 获取实时硬件状态 |
 | POST | `/api/control/emergency_stop` | 是 | 无 | 触发急停 |
 
+急停接口会通过 rosbridge 向 ROS 发布急停控制指令：
+
+| 属性 | 值 |
+|---|---|
+| 话题名称 | `/control/softstop` |
+| 消息类型 | `IntCmd` |
+| 触发条件 | `device_id == 1` |
+
+消息结构：
+
+```text
+header: Header
+module_id: int32   # 要急停的模块 id，默认 17
+device_id: int32   # 固定为 1
+position: float64[] # 急停指令为空数组
+```
+
+后端默认发送：
+
+```json
+{
+  "module_id": 17,
+  "device_id": 1,
+  "position": []
+}
+```
+
 ### 10.14 坐标协调 Coordination
 
 | 方法 | 路径 | 需认证 | 参数 | 说明 |
