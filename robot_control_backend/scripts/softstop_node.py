@@ -38,17 +38,17 @@ class EmergencyStopNode:
         rospy.loginfo("Emergency stop node started, watching device_id=%d", self.stop_trigger_device_id)
 
     def cmd_callback(self, msg):
-        # 检查模块号是否匹配急停触发条件
-        if msg.device_id == self.stop_trigger_device_id:
-            rospy.logwarn("Emergency stop triggered by device_id %d", msg.device_id)
-            self.publish_stop()
-        # 其他模块号可忽略或转发（根据需求扩展）
+        # 检查 device_id 是否匹配急停触发条件
+        if msg.device_id == 1:
+            rospy.logwarn("Emergency stop triggered by device_id %d, module_id=%d", msg.device_id, msg.module_id)
+            self.publish_stop(msg.module_id)
+        # 其他 device_id 可忽略或转发（根据需求扩展）
 
-    def publish_stop(self):
+    def publish_stop(self, module_id):
         """构造并发布停止指令，使所有运动轴速度置零"""
         stop_cmd = IntCmd()
         stop_cmd.header = Header(stamp=rospy.Time.now())
-        stop_cmd.module_id = self.stop_cmd_module
+        stop_cmd.module_id = module_id
         stop_cmd.device_id = self.stop_cmd_device
         stop_cmd.position = []
         self.cmd_pub.publish(stop_cmd)
