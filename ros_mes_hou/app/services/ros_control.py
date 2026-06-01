@@ -27,6 +27,8 @@ PYTHON_CMD = "python"
 
 # WebSocket 地址（web_data_node 的 rosbridge 桥接端口）
 WEBSOCKET_URI = "ws://localhost:8760"
+EMERGENCY_STOP_MODULE_ID = int(os.environ.get("EMERGENCY_STOP_MODULE_ID", "17"))
+EMERGENCY_STOP_DEVICE_ID = int(os.environ.get("EMERGENCY_STOP_DEVICE_ID", "1"))
 
 
 async def get_hardware_status() -> dict:
@@ -85,8 +87,8 @@ async def trigger_emergency_stop() -> bool:
         "topic": "/control/softstop",
         "msg": {
             "header": {"stamp": {"secs": 0, "nsecs": 0}, "frame_id": ""},
-            "module_id": 17,
-            "device_id": 0,
+            "module_id": EMERGENCY_STOP_MODULE_ID,
+            "device_id": EMERGENCY_STOP_DEVICE_ID,
             "position": []
         }
     }, ensure_ascii=False)

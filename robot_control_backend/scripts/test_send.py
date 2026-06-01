@@ -26,17 +26,19 @@ class TestSoftStopPublisher:
         
         # 从环境变量获取触发ID
         self.trigger_id = int(os.environ.get('TARGET_MODULE_ID', '17'))
-        rospy.loginfo("Test publisher ready, will trigger with module_id=%d", self.trigger_id)
+        self.trigger_device_id = int(os.environ.get('EMERGENCY_STOP_DEVICE_ID', '1'))
+        rospy.loginfo("Test publisher ready, will trigger with device_id=%d", self.trigger_device_id)
 
     def send_trigger(self):
         """构造并发送一次急停触发指令"""
         msg = IntCmd()
         msg.header = Header(stamp=rospy.Time.now())
         msg.module_id = self.trigger_id
-        msg.device_id = 0
+        msg.device_id = self.trigger_device_id
         msg.position = []
         self.pub.publish(msg)
-        rospy.loginfo("SUCCESS sent emergency trigger: module_id=%d", self.trigger_id)
+        rospy.loginfo("SUCCESS sent emergency trigger: module_id=%d, device_id=%d",
+                      self.trigger_id, self.trigger_device_id)
 
     def run(self):
         rospy.sleep(1.0)

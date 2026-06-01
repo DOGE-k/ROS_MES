@@ -25,9 +25,9 @@ class EmergencyStopNode:
 
         # 从环境变量获取配置
         default_module_id = int(os.environ.get('MODULE_ID', '17'))
-        self.stop_trigger_id = int(os.environ.get('TARGET_MODULE_ID', str(default_module_id)))
+        self.stop_trigger_device_id = int(os.environ.get('EMERGENCY_STOP_DEVICE_ID', '1'))
         self.stop_cmd_module = int(os.environ.get('MODULE_ID', str(default_module_id)))
-        self.stop_cmd_device = 0
+        self.stop_cmd_device = self.stop_trigger_device_id
 
         # 发布者：机械臂速度指令话题
         topic_arm_cmd = os.environ.get('ROS_TOPIC_ARM_CMD_VEL', '/arm/cmd_vel')
@@ -35,7 +35,7 @@ class EmergencyStopNode:
         # 订阅者：前端软停指令
         rospy.Subscriber('/control/softstop', IntCmd, self.cmd_callback, queue_size=10)
 
-        rospy.loginfo("Emergency stop node started, watching module_id=%d", self.stop_trigger_id)
+        rospy.loginfo("Emergency stop node started, watching device_id=%d", self.stop_trigger_device_id)
 
     def cmd_callback(self, msg):
         # 检查 device_id 是否匹配急停触发条件
