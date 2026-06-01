@@ -98,9 +98,11 @@ sequenceDiagram
     participant ROT as rotation_node
     participant SW as swing_node
     participant TEL as telescopic_node
+    participant SEN as sensor_control_node
     participant FB as feedback_node
     participant HW as hardware_node
     participant STM as STM32下位机
+    participant IMU as tuo_luo_yi
 
     前端->>DP: /frontend_pointcloud_topic (JSON数据)
     DP->>CAL: /module_arm_task (处理后数据)
@@ -114,14 +116,18 @@ sequenceDiagram
     
     CTRL->>ROT: /control/kinematics_rotation_cmd_sequenced
     ROT->>FB: /hardware/rotation_output
+    ROT->>SEN: /control/sensor_cmd (触发压力传感器)
     FB->>HW: /arm/cmd_vel
     HW->>STM: 旋转指令(串口)
     STM-->>HW: 旋转反馈(串口)
     HW->>FB: /hardware/all_feedback
+    HW->>IMU: 陀螺仪数据
+    IMU->>IMU: /imu_angles (角度计算)
     FB->>ROT: /hardware/rotation_feedback
     
     CTRL->>SW: /control/kinematics_swing_cmd_sequenced
     SW->>FB: /hardware/swing_output
+    SW->>SEN: /control/sensor_cmd (触发压力传感器)
     FB->>HW: /arm/cmd_vel
     HW->>STM: 摆动指令(串口)
     STM-->>HW: 摆动反馈(串口)
@@ -130,11 +136,16 @@ sequenceDiagram
     
     CTRL->>TEL: /control/kinematics_telescopic_cmd_sequenced
     TEL->>FB: /hardware/telescope_output
+    TEL->>SEN: /control/sensor_cmd (触发压力传感器)
     FB->>HW: /arm/cmd_vel
     HW->>STM: 伸缩指令(串口)
     STM-->>HW: 伸缩反馈(串口)
     HW->>FB: /hardware/all_feedback
     FB->>TEL: /hardware/telescope_feedback
+    
+    Note over SEN: 立即响应模式（无延迟）
+    SEN->>HW: /arm/cmd_vel (传感器开关序列)
+    Note over SEN: 关闭→0.5秒→打开
 ```
 
 ## 📊 节点职责表
@@ -148,8 +159,12 @@ sequenceDiagram
 | `rotation_node` | 旋转轴角度控制与限位保护 | `/hardware/rotation_output`, `/control/sensor_cmd` | `/control/kinematics_rotation_cmd_sequenced`, `/hardware/rotation_feedback` |
 | `swing_node` | 摆动轴角度控制与限位保护 | `/hardware/swing_output`, `/control/sensor_cmd` | `/control/kinematics_swing_cmd_sequenced`, `/hardware/swing_feedback` |
 | `telescopic_node` | 伸缩轴长度控制与压力监控 | `/hardware/telescope_output`, `/control/sensor_cmd` | `/control/kinematics_telescopic_cmd_sequenced`, `/hardware/telescope_feedback` |
+| `sensor_control_node` | 压力传感器控制（立即响应） | `/arm/cmd_vel` | `/control/sensor_cmd` |
 | `feedback_node` | 硬件反馈解析与指令转发 | `/arm/cmd_vel`, `/hardware/*_feedback`, `/hardware/sensor_feedback` | `/hardware/all_feedback`, `/hardware/*_output` |
 | `hardware_node` | STM32串口通信与数据解析 | `/hardware/all_feedback`, `/hardware/gyroscope_feedback` | `/arm/cmd_vel` |
+| `tuo_luo_yi` | 陀螺仪数据解析与角度计算 | `/imu_angles` | `/hardware/gyroscope_feedback` |
+| `softstop_node` | 急停控制（device_id=1触发） | `/arm/cmd_vel` | `/control/softstop` |
+| `module_confirme_node` | 模块确认控制 | `/arm/cmd_vel`, `/control/module_confirm_success` | `/control/module_cmd`, `/hardware/module_cmd` |
 
 ## ⚙️ 时序参数配置
 

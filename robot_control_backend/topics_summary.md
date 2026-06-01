@@ -51,9 +51,30 @@
 
 ### 5. 传感器触发话题（Sensor Trigger）
 
-| 话题名称                  | 消息类型     | 发布节点                                             | 订阅节点  | 说明        |
-| --------------------- | -------- | ------------------------------------------------ | ----- | --------- |
-| `/control/sensor_cmd` | `IntCmd` | `rotation_node`, `swing_node`, `telescopic_node` | 传感器节点 | 压力传感器触发信号 |
+| 话题名称                  | 消息类型     | 发布节点                                             | 订阅节点                  | 说明             |
+| --------------------- | -------- | ------------------------------------------------ | --------------------- | -------------- |
+| `/control/sensor_cmd` | `IntCmd` | `rotation_node`, `swing_node`, `telescopic_node` | `sensor_control_node` | 压力传感器触发信号（立即响应） |
+
+### 6. 陀螺仪话题（Gyroscope）
+
+| 话题名称                        | 消息类型         | 发布节点           | 订阅节点       | 说明           |
+| --------------------------- | ---------- | -------------- | ---------- | ------------ |
+| `/hardware/gyroscope_feedback` | `GyroFeedback` | `hardware_node` | `tuo_luo_yi` | 陀螺仪六轴数据反馈 |
+| `/hardware/imu_angles`                 | `TuoLuoYi`     | `tuo_luo_yi`    | `前端`        | IMU计算的角度数据 |
+
+### 7. 急停控制话题（Emergency Stop）
+
+| 话题名称              | 消息类型    | 发布节点   | 订阅节点         | 说明               |
+| ----------------- | ------- | ------ | ------------ | ---------------- |
+| `/control/softstop` | `IntCmd` | 前端/Web | `softstop_node` | 急停触发指令（device_id=1） |
+
+### 8. 模块确认话题（Module Confirm）
+
+| 话题名称                          | 消息类型    | 发布节点                 | 订阅节点                 | 说明          |
+| ----------------------------- | ------- | -------------------- | -------------------- | ----------- |
+| `/control/module_cmd`          | `IntCmd` | 前端/Web, `feedback_node` | `module_confirme_node` | 模块控制指令    |
+| `/control/module_confirm_success` | `IntCmd` | `module_confirme_node`  | -                    | 模块确认成功信号 |
+| `/hardware/module_cmd`         | `IntCmd` | `hardware_node`         | `module_confirme_node` | 模块硬件反馈    |
 
 ---
 
@@ -180,6 +201,20 @@ float64[] position      # 坐标数组，单位为mm
 - `web_data_node.py` 中的相关代码已注释
 - `test_c.py` 中使用的是 `Feedback` 类型而非 `Kinematics`
 
+### TuoLuoYi 消息类型说明
+
+`TuoLuoYi.msg` 定义了陀螺仪计算后的角度数据格式：
+
+```
+uint8 module_id         # 模块编号
+uint8 device_id         # 设备编号
+float64 swing           # 摆动角度（度）
+float64 rotation        # 旋转角度（度）
+float64 x               # X轴加速度
+float64 y               # Y轴加速度
+float64 z               # Z轴加速度
+```
+
 ---
 
 ## 五、数据流路径
@@ -267,17 +302,21 @@ float64[] position      # 坐标数组，单位为mm
 
 ## 七、节点列表
 
-| 节点文件                   | 节点名称                | 功能描述       |
-| ---------------------- | ------------------- | ---------- |
-| `control_node.py`      | `control_node`      | 时序控制核心节点   |
-| `kinematics_node.py`   | `kinematics_node`   | 运动学逆解与增量计算 |
-| `rotation_node.py`     | `rotation_node`     | 旋转轴功能节点    |
-| `swing_node.py`        | `swing_node`        | 摆动轴功能节点    |
-| `telescopic_node.py`   | `telescopic_node`   | 伸缩轴功能节点    |
-| `hardware_node.py`     | `hardware_node`     | STM32硬件桥接  |
-| `feedback_node.py`     | `feedback_node`     | 反馈处理与指令转发  |
-| `data_process_node.py` | `data_process_node` | 点云处理与模块切分  |
-| `calculation_node.py`  | `calculation_node`  | 最优托举点计算    |
+| 节点文件                     | 节点名称                      | 功能描述              |
+| ------------------------ | ------------------------- | ----------------- |
+| `data_process_node.py`   | `data_process_node`       | 点云处理与模块切分        |
+| `calculation_node.py`    | `calculation_node`        | 最优托举点计算          |
+| `kinematics_node.py`     | `kinematics_node`         | 运动学逆解与增量计算       |
+| `control_node.py`        | `control_node`            | 时序控制核心节点（三阶段执行）   |
+| `rotation_node.py`       | `rotation_node`           | 旋转轴功能节点          |
+| `swing_node.py`          | `swing_node`              | 摆动轴功能节点          |
+| `telescopic_node.py`     | `telescopic_node`         | 伸缩轴功能节点          |
+| `sensor_control_node.py` | `sensor_control_node`     | 压力传感器控制（立即响应模式）    |
+| `feedback_node.py`       | `feedback_node`           | 反馈处理与指令转发         |
+| `hardware_node.py`       | `hardware_node`           | STM32硬件桥接         |
+| `tuo_luo_yi.py`          | `tuo_luo_yi`              | 陀螺仪数据解析与角度计算      |
+| `softstop_node.py`       | `softstop_node`           | 急停控制（device_id=1触发） |
+| `module_confirme_node.py` | `module_confirme_node`   | 模块确认控制            |
 
 
 ```

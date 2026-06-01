@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-节点B：角度解算与控制指令发布（参数与话题从 .env 读取）
+节点B：角度解算与控制指令发布（所有参数与话题强制从 .env 读取，无默认值）
 """
 
 import rospy
@@ -19,42 +19,42 @@ from concurrent.futures import ThreadPoolExecutor
 from std_msgs.msg import Header, String
 from robot_control_backend.msg import RotationCmd, SwingCmd, TelescopicCmd
 
+
+# ===================== 配置加载 =====================
 def load_env_config():
-    """从 .env 文件加载配置到环境变量"""
+    """从 .env 文件强制加载所有配置到环境变量（文件必须存在）"""
     env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    key, value = line.split('=', 1)
-                    os.environ[key] = value
-        rospy.loginfo("✅ 节点B已从 rob_arm.env 加载配置")
+    if not os.path.exists(env_path):
+        raise FileNotFoundError(f"配置文件 {env_path} 未找到")
+    with open(env_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                os.environ[key] = value
+    rospy.loginfo("✅ 节点B 已从 rob_arm.env 加载配置")
 
-# =============== 配置参数（可被 .env 覆盖） ===============
+
+# ===================== 配置参数（全部从环境变量强制读取） =====================
 class Config:
-    MAX_SWING_ANGLE = 20.0
-    ARM_MIN_EXTEND = 1.0            # cm
-    ARM_MAX_EXTEND = 60.0           # cm
-    MIN_LENGTH_MM = 50.0
-    MAX_LENGTH_MM = 500.0
-    MAX_WORKERS = 4
+    """所有参数通过 update_config_from_env 动态添加，无默认值"""
+    pass
 
-    @staticmethod
-    def get_cycle_interval():
-        return float(os.environ.get('CYCLE_INTERVAL', '8.0'))
 
 def update_config_from_env():
-    """用环境变量更新 Config 类的默认值"""
-    Config.MAX_SWING_ANGLE = float(os.environ.get('MAX_SWING_ANGLE', Config.MAX_SWING_ANGLE))
-    Config.ARM_MIN_EXTEND = float(os.environ.get('ARM_MIN_EXTEND', Config.ARM_MIN_EXTEND))
-    Config.ARM_MAX_EXTEND = float(os.environ.get('ARM_MAX_EXTEND', Config.ARM_MAX_EXTEND))
-    Config.MIN_LENGTH_MM = float(os.environ.get('MIN_LENGTH_MM', Config.MIN_LENGTH_MM))
-    Config.MAX_LENGTH_MM = float(os.environ.get('MAX_LENGTH_MM', Config.MAX_LENGTH_MM))
-    Config.MAX_WORKERS = int(os.environ.get('MAX_WORKERS', Config.MAX_WORKERS))
+    """强制从环境变量读取运动学参数，缺少任何一项将引发 KeyError"""
+    Config.MAX_SWING_ANGLE = float(os.environ['MAX_SWING_ANGLE'])
+    Config.ARM_MIN_EXTEND   = float(os.environ['ARM_MIN_EXTEND'])       # cm
+    Config.ARM_MAX_EXTEND   = float(os.environ['ARM_MAX_EXTEND'])       # cm
+    Config.MIN_LENGTH_MM    = float(os.environ['MIN_LENGTH_MM'])
+    Config.MAX_LENGTH_MM    = float(os.environ['MAX_LENGTH_MM'])
+    Config.MAX_WORKERS      = int(os.environ['MAX_WORKERS'])
+    Config.CYCLE_INTERVAL   = float(os.environ['CYCLE_INTERVAL'])       # 指令周期间隔
 
-# =============== 运动学解算（不变） ===============
+
+# ===================== 运动学解算 =====================
 def solve_3dof(arm_base, target_p):
+    """3自由度逆运动学解算，返回关节目标角度/长度"""
     dx, dy, dz = target_p - arm_base
     dxy = np.hypot(dx, dy)
     j1 = np.degrees(np.arctan2(dy, dx)) if dxy > 1e-3 else 0.0
@@ -66,46 +66,49 @@ def solve_3dof(arm_base, target_p):
     j3 = np.clip(j3, Config.ARM_MIN_EXTEND, Config.ARM_MAX_EXTEND)
     return round(j1, 2), round(np.degrees(limited_j2), 2), round(j3, 2)
 
-# =============== ROS节点B ===============
+
+# ===================== ROS 节点B =====================
 class KinematicsNode:
+    """逆运动学节点：接收最优托举点，发布增量指令，并记录数据库"""
+
     def __init__(self):
-        # ----- 从环境变量读取话题名称 -----
-        topic_alpha_beta = os.environ.get('ROS_TOPIC_ARM_ALPHA_BETA', '/arm_alpha_beta')
-        topic_rot_fb = os.environ.get('ROS_TOPIC_ROTATION_FEEDBACK', '/hardware/rotation_feedback')
-        topic_sw_fb = os.environ.get('ROS_TOPIC_SWING_FEEDBACK', '/hardware/swing_feedback')
-        topic_tel_fb = os.environ.get('ROS_TOPIC_TELESCOPE_FEEDBACK', '/hardware/telescope_feedback')
-        # 输出话题（节点B发布，即控制节点的输入话题）
-        topic_rot_cmd = os.environ.get('ROS_TOPIC_KINEMATICS_ROTATION_CMD_INPUT', '/control/kinematics_rotation_cmd')
-        topic_sw_cmd = os.environ.get('ROS_TOPIC_KINEMATICS_SWING_CMD_INPUT', '/control/kinematics_swing_cmd')
-        topic_tel_cmd = os.environ.get('ROS_TOPIC_KINEMATICS_TELESCOPIC_CMD_INPUT', '/control/kinematics_telescopic_cmd')
+        # ---------- 从环境变量强制读取话题名称 ----------
+        topic_alpha_beta = os.environ['ROS_TOPIC_ARM_ALPHA_BETA']
+        topic_rot_fb = os.environ['ROS_TOPIC_ROTATION_FEEDBACK']
+        topic_sw_fb  = os.environ['ROS_TOPIC_SWING_FEEDBACK']
+        topic_tel_fb = os.environ['ROS_TOPIC_TELESCOPE_FEEDBACK']
+        # 输出话题（即控制节点的输入话题）
+        topic_rot_cmd = os.environ['ROS_TOPIC_KINEMATICS_ROTATION_CMD_INPUT']
+        topic_sw_cmd  = os.environ['ROS_TOPIC_KINEMATICS_SWING_CMD_INPUT']
+        topic_tel_cmd = os.environ['ROS_TOPIC_KINEMATICS_TELESCOPIC_CMD_INPUT']
 
         rospy.init_node("arm_kinematics")
         self.executor = ThreadPoolExecutor(max_workers=Config.MAX_WORKERS)
 
-        self.arm_states = {}
+        self.arm_states = {}      # 指令队列状态
         self.lock = Lock()
 
-        # 订阅目标信息
+        # ---------- 订阅目标信息 ----------
         rospy.Subscriber(topic_alpha_beta, String, self.alpha_beta_callback)
 
-        # 订阅硬件反馈
-        self.current_state = {}
-        rospy.Subscriber(topic_rot_fb, RotationCmd, self.rotation_feedback_cb)
-        rospy.Subscriber(topic_sw_fb, SwingCmd, self.swing_feedback_cb)
+        # ---------- 订阅硬件反馈 ----------
+        self.current_state = {}   # arm_id -> {rotation, swing, telescopic}
+        rospy.Subscriber(topic_rot_fb, RotationCmd,   self.rotation_feedback_cb)
+        rospy.Subscriber(topic_sw_fb,  SwingCmd,      self.swing_feedback_cb)
         rospy.Subscriber(topic_tel_fb, TelescopicCmd, self.telescopic_feedback_cb)
 
-        # 发布指令话题
-        self.pub_rotation = rospy.Publisher(topic_rot_cmd, RotationCmd, queue_size=10)
-        self.pub_swing = rospy.Publisher(topic_sw_cmd, SwingCmd, queue_size=10)
+        # ---------- 发布指令 ----------
+        self.pub_rotation   = rospy.Publisher(topic_rot_cmd, RotationCmd,   queue_size=10)
+        self.pub_swing      = rospy.Publisher(topic_sw_cmd,  SwingCmd,      queue_size=10)
         self.pub_telescopic = rospy.Publisher(topic_tel_cmd, TelescopicCmd, queue_size=10)
 
-        # ------------------ 数据库初始化 ------------------
-        db_path = os.environ.get('DB_PATH', "ros_database.db")
+        # ---------- 数据库初始化 ----------
+        db_path = os.environ.get('DB_PATH', 'ros_database.db')   # 数据库路径可保留默认值（非强制性配置）
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_table()
         rospy.loginfo("✅ 节点B 数据库已连接，路径: %s", db_path)
 
-        rospy.loginfo(f"节点B（增量模式）启动 | 周期间隔: {Config.get_cycle_interval()}s")
+        rospy.loginfo(f"节点B（增量模式）启动 | 周期间隔: {Config.CYCLE_INTERVAL}s")
 
     def _create_table(self):
         """创建 calculation 表（如果不存在）"""
@@ -126,12 +129,12 @@ class KinematicsNode:
         """)
         self.conn.commit()
 
-    # 臂编号 → 单元号
     @staticmethod
     def arm_to_unit(arm_id):
+        """臂编号 -> 单元号映射"""
         return {1: 32, 2: 64, 3: 96}.get(arm_id, 0)
 
-    # ----- 反馈回调（使用新 device_id 规则，arm_id 从1开始） -----
+    # ----- 硬件反馈回调（新 device_id 规则） -----
     def rotation_feedback_cb(self, msg):
         arm_id = (msg.device_id - 1) // 32        # 33→1, 65→2, 97→3
         self._ensure_arm(arm_id)
@@ -153,7 +156,7 @@ class KinematicsNode:
         if arm_id not in self.arm_states:
             self.arm_states[arm_id] = {"last_time":0, "pending_cmds":deque()}
 
-    # ----- 以下方法保持不变（与之前完全一致） -----
+    # ----- 主回调：接收最优托举点，解算后入队 -----
     def alpha_beta_callback(self, msg):
         try:
             start_time = time.time()
@@ -190,27 +193,29 @@ class KinematicsNode:
             rospy.logerr(f"节点B处理异常: {str(e)}", exc_info=True)
 
     def process_arm_queue(self, arm_id):
+        """按周期从队列取出指令并发布"""
         with self.lock:
             state = self.arm_states.get(arm_id)
             if not state or not state["pending_cmds"]:
                 return
             now = time.time()
             time_since_last = now - state["last_time"]
-            if time_since_last >= Config.get_cycle_interval():
+            if time_since_last >= Config.CYCLE_INTERVAL:
                 cmd = state["pending_cmds"].popleft()
                 state["last_time"] = now
             else:
-                rospy.loginfo(f"⏳ 臂{arm_id} 等待中，剩余 {Config.get_cycle_interval() - time_since_last:.1f}s")
+                rospy.loginfo(f"⏳ 臂{arm_id} 等待中，剩余 {Config.CYCLE_INTERVAL - time_since_last:.1f}s")
                 return
         self.publish_cmd(cmd)
         with self.lock:
             if self.arm_states[arm_id]["pending_cmds"]:
-                delay = Config.get_cycle_interval() - (time.time() - state["last_time"])
+                delay = Config.CYCLE_INTERVAL - (time.time() - state["last_time"])
                 rospy.Timer(rospy.Duration(max(0, delay)),
                            lambda event, aid=arm_id: self.process_arm_queue(aid),
                            oneshot=True)
 
     def publish_cmd(self, cmd):
+        """发布一条指令（三个轴）并写入数据库"""
         mid = cmd["module_id"]
         arm_id = cmd["arm_id"]
         target_j1 = cmd["target_j1"]
@@ -219,36 +224,42 @@ class KinematicsNode:
 
         self._ensure_arm(arm_id)
         cur_rot = self.current_state[arm_id]["rotation"]
-        cur_sw = self.current_state[arm_id]["swing"]
+        cur_sw  = self.current_state[arm_id]["swing"]
         cur_tel = self.current_state[arm_id]["telescopic"]
 
+        # 计算增量
         delta_rot = cur_rot - target_j1
-        delta_sw = target_j2 - cur_sw
+        delta_sw  = target_j2 - cur_sw
         target_j3_mm = target_j3_cm * 10.0
         delta_tel = target_j3_mm - cur_tel
 
+        # 增量限幅
         delta_rot = max(-180, min(delta_rot, 180))
-        delta_sw = max(-Config.MAX_SWING_ANGLE, min(delta_sw, Config.MAX_SWING_ANGLE))
+        delta_sw  = max(-Config.MAX_SWING_ANGLE, min(delta_sw, Config.MAX_SWING_ANGLE))
         delta_tel = max(-100, min(delta_tel, 100))
 
+        # 新 device_id 规则
         dev_rot = arm_id * 32 + 1
         dev_sw  = arm_id * 32 + 2
         dev_tel = arm_id * 32 + 3
 
         now = rospy.Time.now()
+        # 旋转增量
         rot_msg = RotationCmd()
         rot_msg.header = Header(stamp=now); rot_msg.module_id = mid; rot_msg.device_id = dev_rot; rot_msg.position = [delta_rot]
         self.pub_rotation.publish(rot_msg)
 
+        # 摆动增量
         sw_msg = SwingCmd()
         sw_msg.header = Header(stamp=now); sw_msg.module_id = mid; sw_msg.device_id = dev_sw; sw_msg.position = [delta_sw]
         self.pub_swing.publish(sw_msg)
 
+        # 伸缩增量
         tel_msg = TelescopicCmd()
         tel_msg.header = Header(stamp=now); tel_msg.module_id = mid; tel_msg.device_id = dev_tel; tel_msg.position = [delta_tel]
         self.pub_telescopic.publish(tel_msg)
 
-        # 写入数据库
+        # 写入数据库（device_ID 固定为0）
         alpha = [target_j1, target_j2, target_j3_cm]
         self._save_arm_record(mid, arm_id, alpha, delta_rot, delta_sw, delta_tel)
 
@@ -258,10 +269,7 @@ class KinematicsNode:
         """存储一条臂记录到数据库，device_ID 固定为 0，真正的电机ID在 position JSON 中"""
         unit = self.arm_to_unit(arm_id)
 
-        coord_dict = {
-            str(unit): alpha
-        }
-
+        coord_dict = {str(unit): alpha}
         position_dict = {
             str(arm_id * 32 + 1): round(delta_rot, 2),
             str(arm_id * 32 + 2): round(delta_sw, 2),
@@ -283,7 +291,7 @@ class KinematicsNode:
                 1,
                 module_id,
                 unit,
-                0,                # ← device_ID 固定为 0
+                0,                # device_ID 固定为 0
                 2,
                 json.dumps(coord_dict),
                 json.dumps(position_dict),
@@ -299,6 +307,7 @@ class KinematicsNode:
         rospy.loginfo("✅ 节点B 数据库连接已关闭")
 
     def process_module(self, mod):
+        """处理单个模块，返回臂的解算结果"""
         try:
             mid = mod["module_id"]
             arm_items = mod["alpha_beta"]
@@ -320,6 +329,7 @@ class KinematicsNode:
             return None
 
     def process_single_arm(self, item):
+        """单个机械臂的运动学解算"""
         base = np.array(item["base"])
         alpha = np.array(item["alpha"])
         j1, j2, j3 = solve_3dof(base, alpha)
@@ -332,6 +342,7 @@ class KinematicsNode:
             "j2_swing_deg": j2,
             "j3_extend_cm": j3
         }
+
 
 if __name__ == "__main__":
     load_env_config()

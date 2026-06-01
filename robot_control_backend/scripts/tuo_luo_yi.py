@@ -3,59 +3,69 @@
 """
 IMU 角度 + 末端坐标发布节点（正运动学，不漂移）
 订阅：/hardware/gyroscope_feedback (GyroFeedback)
-发布：/imu_angles (tuo_luo_yi)
+发布：/hardware/imu_angles (tuo_luo_yi)
 """
 
 import rospy
+import os
 import math
 import numpy as np
 import sqlite3
 import json
-import random
 from datetime import datetime
 from std_msgs.msg import Header
 from robot_control_backend.msg import GyroFeedback, tuo_luo_yi
 
-# ==================== 宏定义 ====================
-# 陀螺仪初始姿态（竖直向上，指向前方）
-INITIAL_ROLL  = 0.0          # 弧度
-INITIAL_PITCH = 0.0
-INITIAL_YAW   = 0.0
-
-GRAVITY = 9.81               # m/s²
-ACCEL_UNIT_IS_G = False      # 加速度单位是否为 g
-
-# Mahony 互补滤波参数
-KP = 0.5
-KI = 0.05
-ACC_TRUST_THRESH = 1.0       # m/s²
-
-# 机械臂设备 ID 映射
-ARM_BASE_IDS = [32, 64, 96]
-GYRO_OFFSET = 18
-
-# 底座在世界坐标系中的位置 (cm)
-BASE_X = 0.0
-BASE_Y = 0.0
-BASE_Z = 0.0
-
-# 摆动轴中心到底座的高度 (cm) —— 杆竖直时，摆动中心在底座上方这个高度
-SWING_CENTER_HEIGHT = 30.0   # 请按实际修改
-
-# 当前伸缩杆长度 (cm) —— 从摆动中心到末端的距离
-TELESCOPIC_LENGTH = 50.0     # 请按实际修改，未来可改为动态获取
-# ========================================================
+def load_env_config():
+    """从 .env 文件加载配置"""
+    env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = line.split('=', 1)
+                    os.environ[key] = value
+        rospy.loginfo("✅ 已从 rob_arm.env 加载配置")
 
 class ImuAnglePublisher:
     def __init__(self):
+        load_env_config()
         rospy.init_node('imu_angle_publisher')
+        
+        # 从环境变量读取配置参数
+        self.INITIAL_ROLL = float(os.environ.get('IMU_INITIAL_ROLL', '0.0'))
+        self.INITIAL_PITCH = float(os.environ.get('IMU_INITIAL_PITCH', '0.0'))
+        self.INITIAL_YAW = float(os.environ.get('IMU_INITIAL_YAW', '0.0'))
+        
+        self.GRAVITY = float(os.environ.get('IMU_GRAVITY', '9.81'))
+        self.ACCEL_UNIT_IS_G = os.environ.get('IMU_ACCEL_UNIT_IS_G', 'False').lower() == 'true'
+        
+        self.KP = float(os.environ.get('IMU_KP', '0.5'))
+        self.KI = float(os.environ.get('IMU_KI', '0.05'))
+        self.ACC_TRUST_THRESH = float(os.environ.get('IMU_ACC_TRUST_THRESH', '1.0'))
+        
+        self.ARM_BASE_IDS = [int(x) for x in os.environ.get('IMU_ARM_BASE_IDS', '32,64,96').split(',')]
+        self.GYRO_OFFSET = int(os.environ.get('IMU_GYRO_OFFSET', '18'))
+        
+        self.BASE_X = float(os.environ.get('IMU_BASE_X', '0.0'))
+        self.BASE_Y = float(os.environ.get('IMU_BASE_Y', '0.0'))
+        self.BASE_Z = float(os.environ.get('IMU_BASE_Z', '0.0'))
+        self.SWING_CENTER_HEIGHT = float(os.environ.get('IMU_SWING_CENTER_HEIGHT', '30.0'))
+        self.TELESCOPIC_LENGTH = float(os.environ.get('IMU_TELESCOPIC_LENGTH', '50.0'))
+        
+        # 从环境变量读取话题名称
+        self.TOPIC_GYROSCOPE_FEEDBACK = os.environ.get('ROS_TOPIC_GYROSCOPE_FEEDBACK', '/hardware/gyroscope_feedback')
+        self.TOPIC_IMU_ANGLES = os.environ.get('ROS_TOPIC_IMU_ANGLES', '/hardware/imu_angles')
+        
         self.states = {}       # key: (module_id, arm_id)
 
-        rospy.Subscriber('/hardware/gyroscope_feedback', GyroFeedback, self.imu_callback)
-        self.angle_pub = rospy.Publisher('/imu_angles', tuo_luo_yi, queue_size=10)
+        rospy.Subscriber(self.TOPIC_GYROSCOPE_FEEDBACK, GyroFeedback, self.imu_callback)
+        self.angle_pub = rospy.Publisher(self.TOPIC_IMU_ANGLES, tuo_luo_yi, queue_size=10)
 
         # ------------------ 数据库初始化 ------------------
-        self.conn = sqlite3.connect("ros_database.db", check_same_thread=False)
+        db_path = os.environ.get('DB_PATH', "ros_database.db")
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_table()
         rospy.loginfo("✅ IMU节点数据库已连接")
 
@@ -126,16 +136,16 @@ class ImuAnglePublisher:
         rospy.loginfo("✅ IMU节点数据库连接已关闭")
 
     def _get_arm_id(self, device_id):
-        base = device_id - GYRO_OFFSET
-        if base in ARM_BASE_IDS:
-            return ARM_BASE_IDS.index(base) + 1
+        base = device_id - self.GYRO_OFFSET
+        if base in self.ARM_BASE_IDS:
+            return self.ARM_BASE_IDS.index(base) + 1
         return None
 
     def _ensure_state(self, module_id, arm_id):
         key = (module_id, arm_id)
         if key not in self.states:
             self.states[key] = {
-                'quat':     self._euler_to_quat(INITIAL_ROLL, INITIAL_PITCH, INITIAL_YAW),
+                'quat':     self._euler_to_quat(self.INITIAL_ROLL, self.INITIAL_PITCH, self.INITIAL_YAW),
                 'eInt':     np.zeros(3),
                 'last_time': None
             }
@@ -203,14 +213,14 @@ class ImuAnglePublisher:
 
         # 数据预处理
         accel = np.array([msg.accel_x, msg.accel_y, msg.accel_z])
-        if ACCEL_UNIT_IS_G:
-            accel *= GRAVITY
+        if self.ACCEL_UNIT_IS_G:
+            accel *= self.GRAVITY
         gyro = np.radians([msg.gyro_x, msg.gyro_y, msg.gyro_z])
 
         # Mahony 互补滤波
         gyro_corrected = gyro.copy()
         acc_norm = np.linalg.norm(accel)
-        if abs(acc_norm - GRAVITY) < ACC_TRUST_THRESH and acc_norm > 1e-6:
+        if abs(acc_norm - self.GRAVITY) < self.ACC_TRUST_THRESH and acc_norm > 1e-6:
             acc_unit = accel / acc_norm
             w, x, y, z = state['quat']
             R = np.array([
@@ -220,8 +230,8 @@ class ImuAnglePublisher:
             ])
             gravity_est = R[2, :]   # 世界系 Z 轴在机体系的投影
             error = np.cross(acc_unit, gravity_est)
-            state['eInt'] += error * KI * dt
-            correction = KP * error + state['eInt']
+            state['eInt'] += error * self.KI * dt
+            correction = self.KP * error + state['eInt']
             gyro_corrected = gyro + correction
 
         # 四元数更新（右乘）
@@ -246,14 +256,14 @@ class ImuAnglePublisher:
         rot_rad = math.radians(rotation)
 
         # 末端相对底座的位置
-        dx_rel = TELESCOPIC_LENGTH * math.sin(swing_rad) * math.cos(rot_rad)
-        dy_rel = TELESCOPIC_LENGTH * math.sin(swing_rad) * math.sin(rot_rad)
-        dz_rel = SWING_CENTER_HEIGHT + TELESCOPIC_LENGTH * math.cos(swing_rad)
+        dx_rel = self.TELESCOPIC_LENGTH * math.sin(swing_rad) * math.cos(rot_rad)
+        dy_rel = self.TELESCOPIC_LENGTH * math.sin(swing_rad) * math.sin(rot_rad)
+        dz_rel = self.SWING_CENTER_HEIGHT + self.TELESCOPIC_LENGTH * math.cos(swing_rad)
 
         # 世界坐标
-        x = BASE_X + dx_rel
-        y = BASE_Y + dy_rel
-        z = BASE_Z + dz_rel
+        x = self.BASE_X + dx_rel
+        y = self.BASE_Y + dy_rel
+        z = self.BASE_Z + dz_rel
 
         # 发布消息
         angle_msg = tuo_luo_yi()
