@@ -7,6 +7,7 @@ flowchart TD
     subgraph 前端层
         A[前端JSON数据]
         A2[前端调节指令]
+        A3[前端接收传感器数据]
     end
     
     subgraph 点云处理层
@@ -28,6 +29,11 @@ flowchart TD
         H[telescopic_node]
     end
     
+    subgraph 传感器控制层
+        SEN[sensor_control_node]
+        AVG[imu_average_calculator_node]
+    end
+    
     subgraph 反馈处理层
         I[feedback_node]
     end
@@ -35,6 +41,7 @@ flowchart TD
     subgraph 硬件层
         J[hardware_node]
         K[STM32下位机]
+        IMU[陀螺仪模块]
     end
     
     subgraph 数据库
@@ -72,18 +79,35 @@ flowchart TD
     I -->|/hardware/rotation_feedback| F
     I -->|/hardware/swing_feedback| G
     I -->|/hardware/telescope_feedback| H
-    I -->|/hardware/sensor_feedback| L
+    
+    %% 压力传感器数据流
+    F -->|/control/sensor_cmd| SEN
+    G -->|/control/sensor_cmd| SEN
+    H -->|/control/sensor_cmd| SEN
+    SEN -->|/arm/cmd_vel| J
+    SEN -->|/control/pressure_sample_trigger| AVG
+    I -->|/hardware/sensor_raw| AVG
+    AVG -->|/hardware/sensor_feedback| A3
+    AVG -->|sensor_avg_log| L
+    
+    %% 陀螺仪数据流
+    IMU -->|六轴数据| J
+    J -->|/hardware/gyroscope_feedback| L
     
     %% 数据存储
     F -->|sensor_log| L
     G -->|sensor_log| L
     H -->|sensor_log| L
+    SEN -->|sensor_log| L
 
     %% 样式
     style A fill:#f9f,stroke:#333,stroke-width:2px
     style A2 fill:#f9f,stroke:#333,stroke-width:2px
+    style A3 fill:#f9f,stroke:#333,stroke-width:2px
     style K fill:#9f9,stroke:#333,stroke-width:2px
     style L fill:#bbf,stroke:#333,stroke-width:2px
+    style SEN fill:#ff9,stroke:#333,stroke-width:2px
+    style AVG fill:#ff9,stroke:#333,stroke-width:2px
 ```
 
 ## ⏱️ 时序图
@@ -99,6 +123,7 @@ sequenceDiagram
     participant SW as swing_node
     participant TEL as telescopic_node
     participant SEN as sensor_control_node
+    participant AVG as imu_average_calculator_node
     participant FB as feedback_node
     participant HW as hardware_node
     participant STM as STM32下位机
@@ -145,7 +170,13 @@ sequenceDiagram
     
     Note over SEN: 立即响应模式（无延迟）
     SEN->>HW: /arm/cmd_vel (传感器开关序列)
+    SEN->>AVG: /control/pressure_sample_trigger (触发5秒采集)
     Note over SEN: 关闭→0.5秒→打开
+    
+    Note over AVG: 5秒数据采集窗口
+    FB->>AVG: /hardware/sensor_raw (压力原始数据)
+    AVG->>AVG: 计算平均值
+    AVG->>前端: /hardware/sensor_feedback (平均值结果)
 ```
 
 ## 📊 节点职责表
@@ -159,10 +190,11 @@ sequenceDiagram
 | `rotation_node` | 旋转轴角度控制与限位保护 | `/hardware/rotation_output`, `/control/sensor_cmd` | `/control/kinematics_rotation_cmd_sequenced`, `/hardware/rotation_feedback` |
 | `swing_node` | 摆动轴角度控制与限位保护 | `/hardware/swing_output`, `/control/sensor_cmd` | `/control/kinematics_swing_cmd_sequenced`, `/hardware/swing_feedback` |
 | `telescopic_node` | 伸缩轴长度控制与压力监控 | `/hardware/telescope_output`, `/control/sensor_cmd` | `/control/kinematics_telescopic_cmd_sequenced`, `/hardware/telescope_feedback` |
-| `sensor_control_node` | 压力传感器控制（立即响应） | `/arm/cmd_vel` | `/control/sensor_cmd` |
-| `feedback_node` | 硬件反馈解析与指令转发 | `/arm/cmd_vel`, `/hardware/*_feedback`, `/hardware/sensor_feedback` | `/hardware/all_feedback`, `/hardware/*_output` |
+| `sensor_control_node` | 压力传感器控制（立即响应+触发采集） | `/arm/cmd_vel`, `/control/pressure_sample_trigger` | `/control/sensor_cmd` |
+| `imu_average_calculator_node` | 压力传感器平均值计算（5秒窗口） | `/hardware/sensor_feedback` | `/hardware/sensor_raw`, `/control/pressure_sample_trigger` |
+| `feedback_node` | 硬件反馈解析与指令转发 | `/arm/cmd_vel`, `/hardware/*_feedback`, `/hardware/sensor_raw` | `/hardware/all_feedback`, `/hardware/*_output` |
 | `hardware_node` | STM32串口通信与数据解析 | `/hardware/all_feedback`, `/hardware/gyroscope_feedback` | `/arm/cmd_vel` |
-| `tuo_luo_yi` | 陀螺仪数据解析与角度计算 | `/imu_angles` | `/hardware/gyroscope_feedback` |
+| `tuo_luo_yi` | 陀螺仪数据解析与角度计算 | `/hardware/imu_angles` | `/hardware/gyroscope_feedback` |
 | `softstop_node` | 急停控制（device_id=1触发） | `/arm/cmd_vel` | `/control/softstop` |
 | `module_confirme_node` | 模块确认控制 | `/arm/cmd_vel`, `/control/module_confirm_success` | `/control/module_cmd`, `/hardware/module_cmd` |
 
@@ -197,8 +229,8 @@ flowchart LR
 1. **前端输入**：发送JSON格式的点云数据到 `/frontend_pointcloud_topic`
 2. **点云处理**：`data_process_node` 处理后发布到 `/module_arm_task`
 3. **最优计算**：`calculation_node` 计算最优托举点发布到 `/arm_alpha_beta`
-4. **运动学解算**：`kinematics_node` 进行运动学解算，**每8秒发送一条轴指令**
-5. **轴控制**：三个轴节点接收指令并下发到下位机
-6. **传感器触发**：轴节点发布触发信号到 `/control/sensor_cmd`
-7. **延迟发送**：`sensor_control_node` 收到触发后**延迟7秒**发送压力传感器指令
+4. **运动学解算**：`kinematics_node` 进行运动学解算，**每8秒发送一条轴指令**（`CYCLE_INTERVAL=8.0s`）
+5. **轴控制**：三个轴节点（`rotation_node`/`swing_node`/`telescopic_node`）接收时序化指令并下发到下位机
+6. **传感器触发**：`control_node` 发布触发信号到 `/control/sensor_cmd`，启动7秒去抖定时器
+7. **压力采集**：`sensor_control_node` 收到触发后**立即响应**执行硬件开关序列，`imu_average_calculator_node` 进行5秒数据采集并计算平均值
 8. **循环执行**：持续监听新指令，重复上述流程

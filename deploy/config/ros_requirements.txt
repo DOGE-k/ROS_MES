@@ -1,0 +1,32 @@
+# ============================================================
+# ROS MES 机器人控制后端 Python 依赖
+# 安装方式：pip install -r requirements.txt
+# 注意：需先安装 ROS Noetic/Melodic 的 rospy 环境
+# ============================================================
+
+# ---- 核心科学计算 ----
+numpy>=1.21.0
+scipy>=1.7.0
+
+# ---- 点云处理 ----
+open3d>=0.15.0
+
+# ---- 串口通信 ----
+pyserial>=3.5
+
+# ---- CAN 总线（可选，仅硬件节点 CAN 版本需要）----
+python-can>=4.0.0
+
+# ---- Web 服务（data_process_node 内嵌 Flask）----
+flask>=2.0.0
+
+# ---- 数据库 ----
+# sqlite3 为 Python 标准库，无需安装
+
+# ---- rosbridge 相关 ----
+# rosbridge_suite 通过 apt 安装，不是 pip 包
+# websockets 用于后端与 rosbridge 通信
+websockets>=12.0
+
+# ---- 其他工具 ----
+python-dotenv>=1.0.0

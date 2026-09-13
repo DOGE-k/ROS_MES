@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-""" """
+"""
+反馈节点 - 硬件反馈解析与指令转发
+订阅话题：/hardware/all_feedback, /hardware/*_output
+发布话题：/hardware/*_feedback, /hardware/sensor_raw, /arm/cmd_vel
+"""
 import rospy
 import os
 from std_msgs.msg import Header
@@ -45,6 +49,7 @@ class FeedbackNode:
         TOPIC_SWING_FEEDBACK = os.environ.get('ROS_TOPIC_SWING_FEEDBACK', '/hardware/swing_feedback')
         TOPIC_TELESCOPE_FEEDBACK = os.environ.get('ROS_TOPIC_TELESCOPE_FEEDBACK', '/hardware/telescope_feedback')
         TOPIC_SENSOR_FEEDBACK = os.environ.get('ROS_TOPIC_SENSOR_FEEDBACK', '/hardware/sensor_feedback')
+        TOPIC_SENSOR_RAW = os.environ.get('ROS_TOPIC_SENSOR_RAW', '/hardware/sensor_raw')
         TOPIC_MODULE_CMD = os.environ.get('ROS_TOPIC_MODULE_CMD', '/hardware/module_cmd')
         TOPIC_ALL_FEEDBACK = os.environ.get('ROS_TOPIC_ALL_FEEDBACK', '/hardware/all_feedback')
         TOPIC_ROTATION_OUTPUT = os.environ.get('ROS_TOPIC_ROTATION_OUTPUT', '/hardware/rotation_output')
@@ -63,6 +68,8 @@ class FeedbackNode:
         self.pub_swing_fb = rospy.Publisher(TOPIC_SWING_FEEDBACK, RotationCmd, queue_size=10)
         self.pub_tel_fb = rospy.Publisher(TOPIC_TELESCOPE_FEEDBACK, TelescopicCmd, queue_size=10)
         self.pub_sensor_fb = rospy.Publisher(TOPIC_SENSOR_FEEDBACK, SensorCmd, queue_size=10)
+        # 新增：压力传感器原始数据中转话题发布者
+        self.pub_sensor_raw = rospy.Publisher(TOPIC_SENSOR_RAW, SensorCmd, queue_size=10)
         self.pub_md_fb = rospy.Publisher(TOPIC_MODULE_CMD, IntCmd, queue_size=10)
 
         # ================= 订阅者 =================
@@ -129,6 +136,18 @@ class FeedbackNode:
             N = kg * 9.81
             rospy.loginfo("→ 压力传感器 [%d] 转换: %.4f kg → %.4f N" % (device_id, kg, N))
 
+            # 发布到原始数据中转话题（供平均值计算节点使用）
+            m_raw = SensorCmd()
+            m_raw.header = Header()
+            m_raw.header.stamp = rospy.Time.now()
+            m_raw.id = 0
+            m_raw.module_id = self.MODULE_ID
+            m_raw.device_id = device_id
+            m_raw.position = [N]
+            self.pub_sensor_raw.publish(m_raw)
+            rospy.loginfo("✅ 已发布传感器原始数据到中转话题")
+
+            # 同时发布到传感器反馈话题（供前端直接使用）
             m = SensorCmd()
             m.header = Header()
             m.id = 0

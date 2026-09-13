@@ -3,9 +3,10 @@
 """
 压力传感器控制节点 - 独立节点（立即响应版）
 订阅话题：/control/sensor_cmd
-发布话题：/arm/cmd_vel (IntCmd)
+发布话题：/arm/cmd_vel (IntCmd), /control/pressure_sample_trigger (IntCmd)
 
 功能：接收触发信号后，立即发送压力传感器开关序列（关→0.5s→开）
+      并触发5秒数据采集窗口
 """
 
 import rospy
@@ -78,15 +79,23 @@ class PressureSensorControlNode:
         
         # 配置参数（从环境变量读取）
         self.DEV_SENSOR = int(os.environ.get('DEV_SENSOR', '49'))
+        self.SAMPLE_WINDOW = float(os.environ.get('PRESSURE_SAMPLE_WINDOW', '5.0'))
         
-        rospy.loginfo(f"压力传感器控制节点已启动（立即响应模式）")
-
         # 话题名称（从环境变量读取）
         TOPIC_ARM_CMD_VEL = os.environ.get('ROS_TOPIC_ARM_CMD_VEL', '/arm/cmd_vel')
         TOPIC_SENSOR_CMD = os.environ.get('ROS_TOPIC_SENSOR_CMD', '/control/sensor_cmd')
+        TOPIC_SAMPLE_TRIGGER = os.environ.get('ROS_TOPIC_PRESSURE_SAMPLE_TRIGGER', '/control/pressure_sample_trigger')
+        
+        rospy.loginfo(f"压力传感器控制节点已启动（立即响应模式）")
+        rospy.loginfo(f"📥 订阅触发话题: {TOPIC_SENSOR_CMD}")
+        rospy.loginfo(f"📤 发布指令话题: {TOPIC_ARM_CMD_VEL}")
+        rospy.loginfo(f"📤 发布采集触发话题: {TOPIC_SAMPLE_TRIGGER}")
 
         # 发布：向下位机发送压力传感器开关指令
         self.pub_sensor_cmd = rospy.Publisher(TOPIC_ARM_CMD_VEL, IntCmd, queue_size=10)
+        
+        # 新增：发布采集触发信号（触发平均值计算节点）
+        self.pub_sample_trigger = rospy.Publisher(TOPIC_SAMPLE_TRIGGER, IntCmd, queue_size=10)
 
         # 订阅：触发信号
         rospy.Subscriber(TOPIC_SENSOR_CMD, IntCmd, self.trigger_callback)
@@ -101,7 +110,7 @@ class PressureSensorControlNode:
         self.send_sensor_sequence(target_module_id)
 
     def send_sensor_sequence(self, module_id):
-        """发送压力传感器开关序列（2帧，间隔0.5秒）"""
+        """发送压力传感器开关序列（2帧，间隔0.5秒）并触发数据采集"""
         rospy.loginfo("🔌 发送压力传感器指令序列")
 
         # 第1帧：关闭
@@ -130,6 +139,16 @@ class PressureSensorControlNode:
         rospy.loginfo(f"压力传感器指令2: module={module_id}, pos=1")
 
         rospy.loginfo("✅ 压力传感器指令序列发送完成")
+        
+        # 发送采集触发信号，通知平均值计算节点开始采集5秒数据
+        trigger_msg = IntCmd()
+        trigger_msg.header = Header()
+        trigger_msg.header.stamp = rospy.Time.now()
+        trigger_msg.module_id = module_id
+        trigger_msg.device_id = self.DEV_SENSOR
+        trigger_msg.position = [1]  # 触发信号
+        self.pub_sample_trigger.publish(trigger_msg)
+        rospy.loginfo(f"📡 已发送采集触发信号，开始采集 {self.SAMPLE_WINDOW} 秒数据")
 
     def shutdown_hook(self):
         self.db_conn.close()
