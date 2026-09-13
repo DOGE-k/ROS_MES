@@ -1,20 +1,29 @@
 <!-- eslint-disable -->
 <template>
   <div class="aside-container" :class="{ 'is-collapsed': layoutStore.fold }">
+    <!-- 品牌区 -->
     <div class="logo">
-      <span v-if="!layoutStore.fold">MES 核心控制台</span>
-      <span v-else>MES</span>
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="9" width="16" height="11" rx="2"/>
+          <circle cx="9" cy="14.5" r="1.4" fill="currentColor" stroke="none"/>
+          <circle cx="15" cy="14.5" r="1.4" fill="currentColor" stroke="none"/>
+          <path d="M12 9V5"/>
+          <circle cx="12" cy="3.6" r="1.4"/>
+        </svg>
+      </div>
+      <div v-if="!layoutStore.fold" class="logo-text">
+        <span class="logo-title">ROS·MES</span>
+        <span class="logo-sub">智能制造执行系统</span>
+      </div>
     </div>
 
     <el-menu
         :default-active="activeMenu"
-        class="el-menu-vertical-demo"
+        class="aside-menu"
         :collapse="layoutStore.fold"
         :collapse-transition="false"
         @select="handleMenuSelect"
-        background-color="#2b3243"
-        active-text-color="#409eff"
-        text-color="#fff"
     >
       <el-menu-item index="/Dashboard">
         <el-icon><Odometer /></el-icon>
@@ -49,7 +58,7 @@
       </el-menu-item>
     </el-menu>
 
-    <!-- 底部急停按钮（样式与 Mes.html 完全一致） -->
+    <!-- 底部急停按钮 -->
     <div class="sidebar-bottom">
       <el-button
           class="e-stop-btn"
@@ -61,8 +70,11 @@
           @touchend="cancelLongPress"
           @touchcancel="cancelLongPress"
       >
-        <span v-if="!layoutStore.fold">长按两秒急停</span>
-        <span v-else style="font-size: 14px; letter-spacing: 0;">急停</span>
+        <span v-if="!layoutStore.fold" class="e-stop-inner">
+          <span class="e-stop-dot"></span>
+          长按两秒急停
+        </span>
+        <span v-else style="font-size: 13px; letter-spacing: 0;">急停</span>
       </el-button>
     </div>
 
@@ -76,8 +88,6 @@
       <el-button type="danger" @click="resetEmergency" class="reset-button">解除急停 (仅调试)</el-button>
     </div>
   </div> -->
-
-  
 
 </template>
 
@@ -173,71 +183,169 @@ const resetEmergency = () => {
 </script>
 
 <style scoped>
-/* 侧边栏容器：宽度由父组件控制，这里设置 100% 撑满 */
+/* 侧边栏容器：深海军蓝渐变 */
 .aside-container {
   height: 100%;
   width: 100%;
-  background-color: #2b3243;
+  background: linear-gradient(180deg, var(--mes-aside-bg-1) 0%, var(--mes-aside-bg-2) 100%);
   display: flex;
   flex-direction: column;
   transition: width 0.3s ease;
   overflow-x: hidden;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-/* Logo 样式（与 Mes.html 完全一致） */
+/* ===== 品牌区 ===== */
 .logo {
-  height: 50px;
-  line-height: 50px;
-  text-align: center;
-  color: #fff;
-  font-size: 16px;
-  font-weight: bold;
-  border-bottom: 1px solid #1f2430;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   white-space: nowrap;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
-/* 菜单样式：边框、背景继承自 el-menu 属性 */
-.el-menu-vertical-demo {
+.is-collapsed .logo {
+  justify-content: center;
+  padding: 0;
+}
+
+.logo-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+  flex-shrink: 0;
+}
+
+.logo-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.logo-title {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.logo-sub {
+  color: var(--mes-aside-text);
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+/* ===== 菜单 ===== */
+.aside-menu {
   flex: 1;
   border-right: none;
-  background-color: #2b3243;
+  background: transparent;
+  padding: 10px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
-/* 底部容器（与 Mes.html 一致） */
+/* 折叠时由 Element 控制宽度，这里去掉内边距避免图标偏移 */
+.aside-menu.el-menu--collapse {
+  padding: 10px 4px;
+  width: 100%;
+}
+
+.aside-menu :deep(.el-menu-item) {
+  height: 44px;
+  line-height: 44px;
+  margin: 4px 0;
+  border-radius: 10px;
+  color: var(--mes-aside-text);
+  transition: all 0.2s ease;
+}
+
+.aside-menu :deep(.el-menu-item .el-icon) {
+  font-size: 17px;
+}
+
+.aside-menu :deep(.el-menu-item:hover) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #dbe7ff;
+}
+
+.aside-menu :deep(.el-menu-item.is-active) {
+  background: linear-gradient(90deg, #2563eb, #1d4ed8);
+  color: var(--mes-aside-active);
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+}
+
+/* ===== 底部急停 ===== */
 .sidebar-bottom {
-  padding: 8px;
+  padding: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-/* 急停按钮样式（完全复制 Mes.html） */
 .e-stop-btn {
   width: 100%;
-  height: 45px;
-  font-size: 15px;
+  height: 44px;
+  font-size: 14px;
   font-weight: bold;
   letter-spacing: 2px;
-  border: none !important;
-  color: white;
-  background: linear-gradient(90deg, #8b0000 50%, #f56c6c 50%);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: #fff;
+  /* 保留原有的长按进度机制：背景从右向左推进 */
+  background: linear-gradient(90deg, #7f1d1d 50%, #dc2626 50%);
   background-size: 200% 100%;
   background-position: 100% 0;
-  transition: background-position 0s, transform 0.2s ease;
+  transition: background-position 0s, transform 0.2s ease, box-shadow 0.2s ease;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
+}
+
+.e-stop-btn:hover {
+  box-shadow: 0 6px 18px rgba(220, 38, 38, 0.5);
+}
+
+.e-stop-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.e-stop-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+  animation: estop-pulse 2s infinite;
+}
+
+@keyframes estop-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .e-stop-btn.is-collapsed {
-  border-radius: 4px;
+  border-radius: 10px;
+  letter-spacing: 0;
 }
 
 .e-stop-btn.pressing {
-  transform: scale(0.95);
-  box-shadow: inset 0 0 20px rgba(0,0,0,0.6);
+  transform: scale(0.96);
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.6);
   background-position: 0 0;
   transition: background-position 2s linear, transform 0.2s ease;
 }
-
-/* 折叠时菜单项文字隐藏（Element Plus 自动处理，无需额外代码） */
 
 /* 急停遮罩层样式（原样保留） */
 .emergency-overlay {

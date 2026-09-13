@@ -19,8 +19,11 @@ def register_user(
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="密码至少需要 6 位")
 
+    # 与用户管理接口保持一致：只在未删除的账号里查重，
+    # 这样被管理员删除的用户名可以重新注册
     db_user = db.query(models.User).filter(
-        models.User.Username == username
+        models.User.Username == username,
+        models.User.del_flag == False,
     ).first()
 
     if db_user:

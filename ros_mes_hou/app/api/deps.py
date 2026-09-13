@@ -31,9 +31,35 @@ def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    user = db.query(models.User).filter(models.User.Username == username).first()
+    # 安全修复：已删除（软删除）的账号不允许继续使用旧 token 访问系统
+    user = db.query(models.User).filter(
+        models.User.Username == username,
+        models.User.del_flag == False,
+    ).first()
 
     if user is None:
         raise credentials_exception
 
+    # 安全修复：被锁定的账号即使持有有效 token 也拒绝访问
+    if user.Islock:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="该账号已被锁定，请联系管理员",
+        )
+
     return user
+
+
+def get_current_admin(
+    current_user: models.User = Depends(get_current_user),
+):
+    """管理员权限依赖：仅 Type_ID == 1（管理员）可通过。
+
+    用于用户管理等敏感接口，防止普通操作员越权调用。
+    """
+    if current_user.Type_ID != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要管理员权限",
+        )
+    return current_user

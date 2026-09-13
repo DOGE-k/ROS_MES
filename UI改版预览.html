@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROS·MES UI 改版预览</title>
+<style>
+  :root {
+    --mes-primary: #2563eb;
+    --mes-primary-dark: #1d4ed8;
+    --mes-primary-light: #3b82f6;
+    --mes-bg: #f1f5f9;
+    --mes-border: #e2e8f0;
+    --mes-border-light: #eef2f7;
+    --mes-text-title: #0f172a;
+    --mes-text-main: #334155;
+    --mes-text-sub: #64748b;
+    --mes-text-faint: #94a3b8;
+    --mes-aside-bg-1: #0b1626;
+    --mes-aside-bg-2: #12233c;
+    --mes-aside-text: #94a7c4;
+    --mes-success: #16a34a;
+    --mes-warning: #d97706;
+    --mes-danger: #dc2626;
+    --radius-lg: 14px;
+    --shadow-card: 0 1px 2px rgba(15,23,42,.04), 0 4px 16px rgba(15,23,42,.06);
+    --shadow-hover: 0 2px 4px rgba(15,23,42,.06), 0 10px 28px rgba(15,23,42,.1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter','HarmonyOS Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+    background: #dde5ee;
+    color: var(--mes-text-main);
+    padding: 28px 16px 60px;
+  }
+  .intro { max-width: 1180px; margin: 0 auto 20px; }
+  .intro h1 { font-size: 22px; color: var(--mes-text-title); margin-bottom: 6px; }
+  .intro p { font-size: 14px; color: var(--mes-text-sub); }
+  .tabs { max-width: 1180px; margin: 0 auto 14px; display: flex; gap: 8px; }
+  .tab {
+    padding: 8px 18px; border-radius: 999px; font-size: 14px; font-weight: 600;
+    background: #fff; color: var(--mes-text-sub); cursor: pointer; border: 1px solid var(--mes-border);
+    transition: all .2s;
+  }
+  .tab.active { background: linear-gradient(90deg,#2563eb,#1d4ed8); color: #fff; border-color: transparent; box-shadow: 0 4px 14px rgba(37,99,235,.4); }
+  .frame {
+    max-width: 1180px; margin: 0 auto; border-radius: 16px; overflow: hidden;
+    box-shadow: 0 20px 60px rgba(15,23,42,.25); border: 1px solid rgba(15,23,42,.08);
+    background: #fff;
+  }
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  /* ============ 登录页 ============ */
+  .login-wrap { display: flex; height: 640px; }
+  .brand-panel {
+    position: relative; flex: 1.15;
+    background:
+      radial-gradient(ellipse 80% 60% at 70% 20%, rgba(59,130,246,.25), transparent),
+      linear-gradient(160deg,#0b1626 0%, #12233c 60%, #0e1f36 100%);
+    color: #fff; display: flex; align-items: center; justify-content: center; padding: 48px;
+  }
+  .brand-grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(148,167,196,.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148,167,196,.07) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 30%, transparent 100%);
+    mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 30%, transparent 100%);
+  }
+  .brand-content { position: relative; max-width: 420px; }
+  .brand-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 40px; }
+  .brand-mark {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: linear-gradient(135deg,#3b82f6,#1d4ed8);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 8px 24px rgba(37,99,235,.5);
+  }
+  .brand-name { font-size: 20px; font-weight: 700; letter-spacing: 2px; }
+  .brand-headline { font-size: 32px; font-weight: 700; letter-spacing: 1px; margin-bottom: 12px; }
+  .brand-desc { font-size: 14px; color: #94a7c4; margin-bottom: 40px; }
+  .brand-features { list-style: none; display: flex; flex-direction: column; gap: 20px; }
+  .brand-features li { display: flex; gap: 14px; }
+  .f-icon { color: #60a5fa; font-size: 14px; line-height: 22px; }
+  .f-title { font-size: 15px; font-weight: 600; color: #e2e8f0; margin-bottom: 2px; }
+  .f-text { font-size: 12.5px; color: #7d90ad; }
+  .form-panel { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #fff; position: relative; }
+  .login-box { width: 340px; }
+  .lg-title { font-size: 26px; font-weight: 700; color: var(--mes-text-title); margin-bottom: 6px; }
+  .lg-sub { font-size: 14px; color: var(--mes-text-sub); margin-bottom: 30px; }
+  .input {
+    height: 44px; border: 1px solid var(--mes-border); border-radius: 10px;
+    display: flex; align-items: center; gap: 10px; padding: 0 14px; margin-bottom: 18px;
+    color: var(--mes-text-faint); font-size: 14px; background: #fff;
+  }
+  .input.focus { border-color: var(--mes-primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12); color: var(--mes-text-main); }
+  .btn-login {
+    width: 100%; height: 44px; border: none; border-radius: 10px; color: #fff;
+    font-size: 16px; font-weight: 600; letter-spacing: 6px;
+    background: linear-gradient(90deg,#2563eb,#1d4ed8); cursor: pointer;
+    box-shadow: 0 4px 14px rgba(37,99,235,.35);
+  }
+  .lg-link { text-align: center; margin-top: 16px; font-size: 13px; color: var(--mes-text-sub); }
+  .lg-link span { color: var(--mes-primary); cursor: pointer; }
+  .copyright { position: absolute; bottom: 18px; font-size: 12px; color: var(--mes-text-faint); letter-spacing: 1px; }
+
+  /* ============ 应用外壳 ============ */
+  .app-wrap { display: flex; height: 640px; background: var(--mes-bg); }
+  .aside {
+    width: 210px; flex-shrink: 0; display: flex; flex-direction: column;
+    background: linear-gradient(180deg, var(--mes-aside-bg-1), var(--mes-aside-bg-2));
+    border-right: 1px solid rgba(255,255,255,.04);
+  }
+  .aside-logo { height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .aside-mark {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: linear-gradient(135deg,#3b82f6,#1d4ed8);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 12px rgba(37,99,235,.45);
+  }
+  .aside-title { color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 1px; line-height: 1.25; }
+  .aside-sub { color: var(--mes-aside-text); font-size: 10.5px; letter-spacing: 1px; }
+  .menu { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; }
+  .menu-item {
+    height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    border-radius: 10px; color: var(--mes-aside-text); font-size: 14px; cursor: pointer; transition: all .2s;
+  }
+  .menu-item:hover { background: rgba(255,255,255,.06); color: #dbe7ff; }
+  .menu-item.active {
+    background: linear-gradient(90deg,#2563eb,#1d4ed8); color: #fff; font-weight: 600;
+    box-shadow: 0 4px 14px rgba(37,99,235,.4);
+  }
+  .menu-item svg { flex-shrink: 0; }
+  .estop-zone { padding: 10px; border-top: 1px solid rgba(255,255,255,.06); }
+  .estop {
+    width: 100%; height: 42px; border: 1px solid rgba(255,255,255,.12); border-radius: 10px;
+    color: #fff; font-size: 13px; font-weight: 700; letter-spacing: 2px;
+    background: #dc2626; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+    box-shadow: 0 4px 14px rgba(220,38,38,.35);
+  }
+  .estop-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.25); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  .main-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar {
+    height: 56px; flex-shrink: 0; background: rgba(255,255,255,.85); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--mes-border); display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
+  }
+  .tb-left { display: flex; align-items: center; gap: 14px; }
+  .fold { color: var(--mes-text-sub); cursor: pointer; display: flex; padding: 6px; border-radius: 8px; }
+  .fold:hover { color: var(--mes-primary); background: #ecf2fe; }
+  .tb-title { font-size: 15.5px; font-weight: 600; color: var(--mes-text-title); }
+  .tb-right { display: flex; align-items: center; gap: 12px; }
+  .btn-serial {
+    height: 30px; padding: 0 14px; border-radius: 999px; font-size: 12.5px; font-weight: 500;
+    color: var(--mes-success); border: 1px solid rgba(22,163,74,.4); background: rgba(22,163,74,.06); cursor: pointer;
+  }
+  .vline { width: 1px; height: 18px; background: var(--mes-border); }
+  .user-chip { display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 4px; border-radius: 999px; cursor: pointer; }
+  .user-chip:hover { background: var(--mes-bg); }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg,#60a5fa,#2563eb);
+    color: #fff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    border: 2px solid #fff; box-shadow: 0 0 0 1px var(--mes-border);
+  }
+  .u-name { font-size: 13.5px; font-weight: 600; color: var(--mes-text-title); }
+  .caret { color: var(--mes-text-faint); font-size: 10px; }
+
+  .content { flex: 1; overflow: auto; padding: 20px 24px 28px; }
+
+  /* 仪表盘 */
+  .welcome {
+    display: flex; align-items: center; justify-content: space-between;
+    border-radius: var(--radius-lg); padding: 24px 30px; margin-bottom: 18px; color: #fff;
+    background:
+      radial-gradient(ellipse 70% 120% at 85% 20%, rgba(96,165,250,.35), transparent),
+      linear-gradient(120deg,#1e3a8a 0%,#1d4ed8 55%,#2563eb 100%);
+    box-shadow: 0 8px 24px rgba(29,78,216,.25);
+  }
+  .w-title { font-size: 20px; font-weight: 700; letter-spacing: .5px; }
+  .w-sub { margin-top: 7px; font-size: 12.5px; color: rgba(255,255,255,.75); }
+  .stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+  .stat {
+    position: relative; display: flex; align-items: center; gap: 14px; background: #fff;
+    border: 1px solid var(--mes-border-light); border-radius: var(--radius-lg); padding: 18px 20px;
+    box-shadow: var(--shadow-card); overflow: hidden; transition: all .25s;
+  }
+  .stat::before { content:''; position: absolute; top:0; left:0; right:0; height:3px;
+    background: linear-gradient(90deg, var(--ac), transparent 70%); }
+  .stat:hover { transform: translateY(-3px); box-shadow: var(--shadow-hover); }
+  .s-icon {
+    width: 46px; height: 46px; border-radius: 12px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; color: var(--ac); background: var(--ac-bg);
+  }
+  .s-value { font-size: 22px; font-weight: 700; color: var(--mes-text-title); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .s-unit { font-size: 12px; color: var(--mes-text-faint); font-weight: 400; }
+  .s-label { margin-top: 3px; font-size: 12.5px; color: var(--mes-text-sub); }
+  .s-trend {
+    position: absolute; top: 12px; right: 12px; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 999px;
+  }
+  .t-up { color: #16a34a; background: rgba(22,163,74,.1); }
+  .t-down { color: #dc2626; background: rgba(220,38,38,.1); }
+
+  /* 表格页 */
+  .page-h { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+  .page-title { font-size: 19px; font-weight: 700; color: var(--mes-text-title); display: flex; align-items: center; gap: 10px; }
+  .page-title::before { content:''; width: 4px; height: 18px; border-radius: 4px; background: linear-gradient(180deg,#3b82f6,#1d4ed8); }
+  .page-sub { margin: 5px 0 0 14px; font-size: 12.5px; color: var(--mes-text-sub); }
+  .mini-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 16px; }
+  .mini {
+    position: relative; background: #fff; border: 1px solid var(--mes-border-light); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card); text-align: center; padding: 16px 0 13px; overflow: hidden;
+  }
+  .mini::before { content:''; position: absolute; top:0; left:0; right:0; height:3px; background: linear-gradient(90deg,var(--ac),transparent 70%); }
+  .m-num { font-size: 26px; font-weight: 700; color: var(--ac2, var(--mes-text-title)); font-variant-numeric: tabular-nums; }
+  .m-label { font-size: 12px; color: var(--mes-text-sub); margin-top: 3px; }
+  .card {
+    background: #fff; border: 1px solid var(--mes-border-light); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card); padding: 16px 18px; margin-bottom: 14px;
+  }
+  .toolbar { display: flex; gap: 10px; align-items: center; }
+  .tb-input {
+    flex: 0 0 240px; height: 34px; border: 1px solid var(--mes-border); border-radius: 8px;
+    display: flex; align-items: center; padding: 0 12px; font-size: 13px; color: var(--mes-text-faint); background: #fff;
+  }
+  .tb-select { flex: 0 0 130px; }
+  .btn { height: 34px; padding: 0 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--mes-border); background: #fff; color: var(--mes-text-main); }
+  .btn.primary { background: linear-gradient(90deg,#2563eb,#1d4ed8); border: none; color: #fff; box-shadow: 0 2px 8px rgba(37,99,235,.28); }
+  .btn.success { background: #16a34a; border: none; color: #fff; box-shadow: 0 2px 8px rgba(22,163,74,.28); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    background: #f8fafc; color: var(--mes-text-sub); font-weight: 600; text-align: left;
+    padding: 11px 12px; border-bottom: 1px solid var(--mes-border-light); letter-spacing: .3px;
+  }
+  tbody td { padding: 11px 12px; border-bottom: 1px solid var(--mes-border-light); color: var(--mes-text-main); }
+  tbody tr:hover { background: #f1f5fd; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+  .tag.run { color: #16a34a; background: rgba(22,163,74,.1); }
+  .tag.ready { color: #64748b; background: rgba(100,116,139,.1); }
+  .tag.pause { color: #d97706; background: rgba(217,119,6,.12); }
+  .tag.done { color: #475569; background: #eef2f7; }
+  .link { color: var(--mes-primary); cursor: pointer; margin-right: 10px; font-weight: 500; }
+  .link.warn { color: var(--mes-warning); }
+  .link.danger { color: var(--mes-danger); }
+  .note { max-width: 1180px; margin: 14px auto 0; font-size: 12.5px; color: #64748b; text-align: center; }
+</style>
+</head>
+<body>
+
+<div class="intro">
+  <h1>ROS·MES 界面改版预览（现代亮色工业风）</h1>
+  <p>下面是改版后三个代表性界面的静态还原效果，实际项目中所有页面都已套用同一套设计系统。</p>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="show(0,this)">① 登录页</div>
+  <div class="tab" onclick="show(1,this)">② 首页仪表盘</div>
+  <div class="tab" onclick="show(2,this)">③ 任务管理（表格页示例）</div>
+</div>
+
+<div class="frame">
+
+  <!-- ============ 登录页 ============ -->
+  <div class="screen active" id="s0">
+    <div class="login-wrap">
+      <div class="brand-panel">
+        <div class="brand-grid"></div>
+        <div class="brand-content">
+          <div class="brand-logo">
+            <div class="brand-mark">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="9" width="16" height="11" rx="2"/><circle cx="9" cy="14.5" r="1.4" fill="#fff" stroke="none"/><circle cx="15" cy="14.5" r="1.4" fill="#fff" stroke="none"/><path d="M12 9V5"/><circle cx="12" cy="3.6" r="1.4"/>
+              </svg>
+            </div>
+            <span class="brand-name">ROS·MES</span>
+          </div>
+          <div class="brand-headline">智能制造执行系统</div>
+          <div class="brand-desc">基于 ROS 的机械臂集群调度与生产管理平台</div>
+          <ul class="brand-features">
+            <li><span class="f-icon">◈</span><div><div class="f-title">设备全生命周期管理</div><div class="f-text">型号 / 模块 / 机械臂 / 传感器 四层设备树</div></div></li>
+            <li><span class="f-icon">◈</span><div><div class="f-title">工作流与任务调度</div><div class="f-text">图纸下发、工序编排、任务全程可追溯</div></div></li>
+            <li><span class="f-icon">◈</span><div><div class="f-title">实时姿态微调与监控</div><div class="f-text">编码器 / 压力 / 陀螺仪数据实时反馈</div></div></li>
+          </ul>
+        </div>
+      </div>
+      <div class="form-panel">
+        <div class="login-box">
+          <div class="lg-title">欢迎登录</div>
+          <div class="lg-sub">请使用操作员账号登录系统</div>
+          <div class="input focus">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+            operator_01
+          </div>
+          <div class="input">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            请输入密码
+          </div>
+          <button class="btn-login">登 录</button>
+          <div class="lg-link">没有账号？<span>申请注册</span></div>
+        </div>
+        <div class="copyright">ROS MES System · 智能制造执行系统</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 仪表盘 ============ -->
+  <div class="screen" id="s1">
+    <div class="app-wrap">
+      <div class="aside">
+        <div class="aside-logo">
+          <div class="aside-mark">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="9" width="16" height="11" rx="2"/><circle cx="9" cy="14.5" r="1.4" fill="#fff" stroke="none"/><circle cx="15" cy="14.5" r="1.4" fill="#fff" stroke="none"/><path d="M12 9V5"/><circle cx="12" cy="3.6" r="1.4"/></svg>
+          </div>
+          <div><div class="aside-title">ROS·MES</div><div class="aside-sub">智能制造执行系统</div></div>
+        </div>
+        <div class="menu">
+          <div class="menu-item active"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 8h-3v9h-5v-6H11v6H6v-9H3z"/></svg>首页仪表盘</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>设备信息管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>模块管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>图纸管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>工作流管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>任务管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>用户管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12"/></svg>个人中心</div>
+        </div>
+        <div class="estop-zone"><button class="estop"><span class="estop-dot"></span>长按两秒急停</button></div>
+      </div>
+      <div class="main-col">
+        <div class="topbar">
+          <div class="tb-left">
+            <span class="fold"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h16"/></svg></span>
+            <span class="tb-title">首页仪表盘</span>
+          </div>
+          <div class="tb-right">
+            <button class="btn-serial">⚡ 串口连接测试</button>
+            <div class="vline"></div>
+            <div class="user-chip"><div class="avatar">A</div><span class="u-name">admin</span><span class="caret">▼</span></div>
+          </div>
+        </div>
+        <div class="content">
+          <div class="welcome">
+            <div>
+              <div class="w-title">下午好，admin</div>
+              <div class="w-sub">2026 年 7 月 26 日 周日 · 系统运行概览</div>
+            </div>
+            <svg viewBox="0 0 24 24" width="60" height="60" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="1.2" stroke-linecap="round"><rect x="4" y="9" width="16" height="11" rx="2"/><circle cx="9" cy="14.5" r="1.4" fill="rgba(255,255,255,.9)" stroke="none"/><circle cx="15" cy="14.5" r="1.4" fill="rgba(255,255,255,.9)" stroke="none"/><path d="M12 9V5"/><circle cx="12" cy="3.6" r="1.4"/></svg>
+          </div>
+          <div class="stats">
+            <div class="stat" style="--ac:#2563eb;--ac-bg:rgba(37,99,235,.1)">
+              <div class="s-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+              <div><div class="s-value">正常运行</div><div class="s-label">设备状态</div></div>
+            </div>
+            <div class="stat" style="--ac:#16a34a;--ac-bg:rgba(22,163,74,.1)">
+              <div class="s-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+              <div><div class="s-value">128</div><div class="s-label">任务数</div></div>
+              <span class="s-trend t-up">↑ 12%</span>
+            </div>
+            <div class="stat" style="--ac:#dc2626;--ac-bg:rgba(220,38,38,.1)">
+              <div class="s-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></svg></div>
+              <div><div class="s-value">3</div><div class="s-label">故障数</div></div>
+              <span class="s-trend t-down">↓ 25%</span>
+            </div>
+            <div class="stat" style="--ac:#d97706;--ac-bg:rgba(217,119,6,.1)">
+              <div class="s-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div>
+              <div><div class="s-value">12</div><div class="s-label">在线用户</div></div>
+              <span class="s-trend t-up">↑ 8%</span>
+            </div>
+            <div class="stat" style="--ac:#7c3aed;--ac-bg:rgba(124,58,237,.1)">
+              <div class="s-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
+              <div><div class="s-value">23<span class="s-unit"> ms</span></div><div class="s-label">响应时间</div></div>
+              <span class="s-trend t-down">↓ 5%</span>
+            </div>
+            <div class="stat" style="--ac:#0891b2;--ac-bg:rgba(8,145,178,.1)">
+              <div class="s-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.6 10.6l6.8-3.2M8.6 13.4l6.8 3.2"/></svg></div>
+              <div><div class="s-value">156</div><div class="s-label">并发</div></div>
+              <span class="s-trend t-up">↑ 15%</span>
+            </div>
+            <div class="stat" style="--ac:#0d9488;--ac-bg:rgba(13,148,136,.1)">
+              <div class="s-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg></div>
+              <div><div class="s-value">45</div><div class="s-label">设备连接数</div></div>
+              <span class="s-trend t-up">↑ 6%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 任务管理 ============ -->
+  <div class="screen" id="s2">
+    <div class="app-wrap">
+      <div class="aside">
+        <div class="aside-logo">
+          <div class="aside-mark">
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="9" width="16" height="11" rx="2"/><circle cx="9" cy="14.5" r="1.4" fill="#fff" stroke="none"/><circle cx="15" cy="14.5" r="1.4" fill="#fff" stroke="none"/><path d="M12 9V5"/><circle cx="12" cy="3.6" r="1.4"/></svg>
+          </div>
+          <div><div class="aside-title">ROS·MES</div><div class="aside-sub">智能制造执行系统</div></div>
+        </div>
+        <div class="menu">
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 8h-3v9h-5v-6H11v6H6v-9H3z"/></svg>首页仪表盘</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>设备信息管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>模块管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>图纸管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>工作流管理</div>
+          <div class="menu-item active"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>任务管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>用户管理</div>
+          <div class="menu-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12"/></svg>个人中心</div>
+        </div>
+        <div class="estop-zone"><button class="estop"><span class="estop-dot"></span>长按两秒急停</button></div>
+      </div>
+      <div class="main-col">
+        <div class="topbar">
+          <div class="tb-left">
+            <span class="fold"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h16"/></svg></span>
+            <span class="tb-title">任务管理</span>
+          </div>
+          <div class="tb-right">
+            <button class="btn-serial">⚡ 串口连接测试</button>
+            <div class="vline"></div>
+            <div class="user-chip"><div class="avatar">A</div><span class="u-name">admin</span><span class="caret">▼</span></div>
+          </div>
+        </div>
+        <div class="content">
+          <div class="page-h">
+            <div>
+              <div class="page-title">任务管理</div>
+              <div class="page-sub">任务创建、调度、进度追踪与工件执行记录</div>
+            </div>
+          </div>
+          <div class="mini-stats">
+            <div class="mini" style="--ac:#2563eb"><div class="m-num">24</div><div class="m-label">任务总数</div></div>
+            <div class="mini" style="--ac:#16a34a;--ac2:#16a34a"><div class="m-num">1</div><div class="m-label">运行中</div></div>
+            <div class="mini" style="--ac:#d97706;--ac2:#d97706"><div class="m-num">3</div><div class="m-label">暂停 / 阻塞</div></div>
+            <div class="mini" style="--ac:#94a3b8;--ac2:#64748b"><div class="m-num">20</div><div class="m-label">已结束</div></div>
+          </div>
+          <div class="card">
+            <div class="toolbar">
+              <div class="tb-input">按任务名称搜索</div>
+              <div class="tb-input tb-select">状态：全部</div>
+              <button class="btn primary">查询</button>
+              <button class="btn">重置</button>
+              <button class="btn success">新建任务</button>
+            </div>
+          </div>
+          <div class="card" style="padding: 0; overflow: hidden;">
+            <table>
+              <thead><tr><th>序号</th><th>任务名称</th><th>绑定图纸</th><th>绑定工作流</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td>A 区抓取装配</td><td>底板-v3.json</td><td>装配流程一</td><td><span class="tag run">运行中</span></td><td>2026-07-25 10:31</td><td><span class="link warn">暂停</span><span class="link danger">结束</span><span class="link">查看进度</span></td></tr>
+                <tr><td>2</td><td>B 区搬运任务</td><td>支架-v1.json</td><td>搬运流程</td><td><span class="tag pause">已暂停</span></td><td>2026-07-25 09:02</td><td><span class="link">唤醒</span><span class="link warn">调度</span><span class="link">查看进度</span></td></tr>
+                <tr><td>3</td><td>压装工位校准</td><td>压装-v2.json</td><td>校准流程</td><td><span class="tag ready">就绪</span></td><td>2026-07-24 16:47</td><td><span class="link">启动</span><span class="link">编辑</span><span class="link danger">删除</span></td></tr>
+                <tr><td>4</td><td>夜班巡检任务</td><td>—</td><td>巡检流程</td><td><span class="tag done">已结束</span></td><td>2026-07-23 22:15</td><td><span class="link">查看进度</span><span class="link danger">删除</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="note">静态预览仅用于展示视觉效果 · 真实功能与数据以项目运行为准</div>
+
+<script>
+function show(i, el) {
+  document.querySelectorAll('.screen').forEach(function(s, idx){ s.classList.toggle('active', idx === i); });
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  el.classList.add('active');
+}
+</script>
+</body>
+</html>

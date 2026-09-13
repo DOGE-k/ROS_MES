@@ -1,16 +1,15 @@
 ﻿<template>
-  <div class="fine-tuning-container">
+  <div class="fine-tuning-container mes-page">
     <!-- 顶部标题和返回按钮 -->
-    <el-card class="header-card">
-      <div class="header-row">
-        <div class="header-left">
-          <el-button type="default" @click="goBack" class="back-button">
-            &lt; Back
-          </el-button>
-          <h2 class="page-title">机械臂姿态微调与压力监控</h2>
+    <div class="mes-page-header">
+      <div class="header-left">
+        <el-button @click="goBack" class="back-button" :icon="ArrowLeft" round>返回</el-button>
+        <div>
+          <h2 class="mes-page-title">机械臂姿态微调与压力监控</h2>
+          <p class="mes-page-sub">实时下发微调指令，同步编码器 / 压力 / 陀螺仪反馈</p>
         </div>
       </div>
-    </el-card>
+    </div>
     <div class="arm-list">
       <div class="pointcloud-actions">
         <el-button type="primary" plain @click="togglePointCloudViews">
@@ -211,6 +210,7 @@
 import { ref, reactive, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import { ArrowLeft } from "@element-plus/icons-vue";
 import {
   getDrawingListApi,
   getUnitsByDeviceApi,
@@ -634,38 +634,17 @@ onBeforeUnmount(() => {
   flex-grow: 1;
 }
 .fine-tuning-container {
-  padding: 30px;
-  background-color: #fff;
-  border-radius: 10px;
-  height: calc(100vh - 150px);
   overflow: auto;
-}
-
-.header-card {
-  margin-bottom: 16px;
-}
-
-.header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
 }
 
 .back-button {
   font-size: 14px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
 }
 
 .header-right {
@@ -789,13 +768,13 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-/* 压力传感器面板 */
+/* 陀螺仪反馈面板 */
 .imu-panel {
   margin-top: 34px;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
+  border: 1px solid var(--mes-border-light);
+  border-radius: var(--mes-radius);
   padding: 18px 20px;
-  background: #fafcff;
+  background: #f8fafc;
 }
 
 .imu-grid {
@@ -836,8 +815,8 @@ onBeforeUnmount(() => {
 
 .sensor-panel {
   margin-top: 40px;
-  background: #2b3243;
-  border-radius: 8px;
+  background: linear-gradient(135deg, var(--mes-aside-bg-1), var(--mes-aside-bg-2));
+  border-radius: var(--mes-radius);
   padding: 20px;
   color: #fff;
   text-align: center;

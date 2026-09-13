@@ -16,8 +16,10 @@ def login_for_access_token(
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends()
 ):
+    # 安全修复：已删除（软删除）的账号不允许登录
     user = db.query(models.User).filter(
-        models.User.Username == form_data.username
+        models.User.Username == form_data.username,
+        models.User.del_flag == False,
     ).first()
 
     if not user or not security.verify_password(form_data.password, user.Password):

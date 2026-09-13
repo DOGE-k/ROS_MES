@@ -1,7 +1,10 @@
 <template>
-  <div class="hardwork-page">
-    <div class="page-header">
-      <h2>设备信息管理</h2>
+  <div class="hardwork-page mes-page">
+    <div class="mes-page-header">
+      <div>
+        <h2 class="mes-page-title">设备信息管理</h2>
+        <p class="mes-page-sub">型号 → 模块 → 机械臂 → 传感器 四层设备树维护</p>
+      </div>
     </div>
     <div class="page-body">
       <div class="tree-panel">
@@ -773,17 +776,6 @@ onMounted(async () => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 16px;
-  background: #f5f7fa;
-}
-
-.page-header {
-  margin-bottom: 16px;
-}
-.page-header h2 {
-  margin: 0;
-  font-size: 20px;
-  color: #303133;
 }
 
 .page-body {
@@ -797,11 +789,12 @@ onMounted(async () => {
   width: 300px;
   min-width: 280px;
   background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
+  border-radius: var(--mes-radius-lg);
+  border: 1px solid var(--mes-border-light);
+  box-shadow: var(--mes-shadow-card);
   display: flex;
   flex-direction: column;
-  padding: 12px;
+  padding: 14px;
   overflow: auto;
 }
 
@@ -832,9 +825,10 @@ onMounted(async () => {
 .form-panel {
   flex: 1;
   background: #fff;
-  border-radius: 8px;
-  border: 1px solid #e4e7ed;
-  padding: 16px;
+  border-radius: var(--mes-radius-lg);
+  border: 1px solid var(--mes-border-light);
+  box-shadow: var(--mes-shadow-card);
+  padding: 20px;
   overflow: auto;
 }
 

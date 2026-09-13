@@ -1,14 +1,17 @@
 <template>
-  <div class="user-manage-container">
-    <el-card class="header-card">
-      <h2 class="page-title">用户管理</h2>
-    </el-card>
+  <div class="user-manage-container mes-page">
+    <div class="mes-page-header">
+      <div>
+        <h2 class="mes-page-title">用户管理</h2>
+        <p class="mes-page-sub">账号创建、权限分配、锁定与批量导入导出</p>
+      </div>
+    </div>
     <el-row :gutter="20" class="dashboard-row">
       <el-col :span="6">
         <el-card shadow="hover" class="data-card border-blue">
           <div class="card-header">
             <span class="card-title">用户总数</span>
-            <el-icon class="card-icon" color="#409eff"><User /></el-icon>
+            <el-icon class="card-icon" color="#2563eb"><User /></el-icon>
           </div>
           <div class="card-value">{{ tableData.length }}</div>
           <div class="card-desc">系统注册用户总数</div>
@@ -19,7 +22,7 @@
         <el-card shadow="hover" class="data-card border-green">
           <div class="card-header">
             <span class="card-title">管理员人数</span>
-            <el-icon class="card-icon" color="#67c23a"><Avatar /></el-icon>
+            <el-icon class="card-icon" color="#16a34a"><Avatar /></el-icon>
           </div>
           <div class="card-value success-text">{{ adminCount }}</div>
           <div class="card-desc">权限为管理员的账号数</div>
@@ -30,7 +33,7 @@
         <el-card shadow="hover" class="data-card border-orange">
           <div class="card-header">
             <span class="card-title">正常账号</span>
-            <el-icon class="card-icon" color="#e6a23c"><CircleCheck /></el-icon>
+            <el-icon class="card-icon" color="#d97706"><CircleCheck /></el-icon>
           </div>
           <div class="card-value warning-text">{{ normalCount }}</div>
           <div class="card-desc">当前状态正常的账号数</div>
@@ -41,7 +44,7 @@
         <el-card shadow="hover" class="data-card border-red">
           <div class="card-header">
             <span class="card-title">锁定账号</span>
-            <el-icon class="card-icon" color="#f56c6c"><Warning /></el-icon>
+            <el-icon class="card-icon" color="#dc2626"><Warning /></el-icon>
           </div>
           <div class="card-value danger-text">{{ lockedCount }}</div>
           <div class="card-desc">当前已被锁定的账号数</div>
@@ -612,30 +615,13 @@ const handleExport = async () => {
 </script>
 
 <style scoped>
-.user-manage-container {
-  padding: 20px;
-  background-color: #f5f7fa;
-  min-height: calc(100vh - 60px);
-}
-
-.header-card {
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
-}
-
 .dashboard-row { margin-bottom: 20px; }
-.data-card { border: none; border-radius: 8px; transition: all 0.3s; }
-.data-card:hover { transform: translateY(-3px); }
-.border-blue { border-top: 4px solid #409eff; }
-.border-green { border-top: 4px solid #67c23a; }
-.border-red { border-top: 4px solid #f56c6c; }
-.border-orange { border-top: 4px solid #e6a23c; }
+.data-card { transition: all 0.3s; }
+.data-card:hover { transform: translateY(-3px); box-shadow: var(--mes-shadow-hover); }
+.border-blue { border-top: 3px solid var(--mes-primary); }
+.border-green { border-top: 3px solid var(--mes-success); }
+.border-red { border-top: 3px solid var(--mes-danger); }
+.border-orange { border-top: 3px solid var(--mes-warning); }
 
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
 .card-title { font-size: 14px; color: #606266; font-weight: bold; }

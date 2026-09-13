@@ -1,14 +1,15 @@
 <template>
-  <div class="common-layout" style="height:100%">
-    <el-container style="height:100%">
-       <el-aside :width="layoutStore.fold ? '64px' : '220px'" style="transition: width 0.3s ease;"><Aside></Aside></el-aside>
-      <el-container>
+  <div class="common-layout">
+    <el-container class="layout-root">
+       <el-aside :width="layoutStore.fold ? '64px' : '220px'" class="layout-aside"><Aside></Aside></el-aside>
+      <el-container class="layout-body">
         <el-header class="main-header">
           <div class="header-left">
             <el-icon class="fold-icon" @click="layoutStore.toggleFold">
               <Fold v-if="!layoutStore.fold" />
               <Expand v-else />
             </el-icon>
+            <span class="header-title">{{ pageTitle }}</span>
           </div>
           <div class="header-right">
             <el-button
@@ -17,16 +18,40 @@
               :icon="Link"
               :loading="serialTesting"
               plain
+              round
               @click="handleTestSerial"
             >串口连接测试</el-button>
-            <el-avatar :size="32" :src="userStore.avatar || ''" class="header-avatar">
-              <el-icon><User /></el-icon>
-            </el-avatar>
-            <span class="header-nickname">{{ userStore.nickname || userStore.account }}</span>
-            <el-button type="danger" size="small" plain @click="handleLogout">退出登录</el-button>
+
+            <el-divider direction="vertical" class="header-divider" />
+
+            <el-dropdown trigger="click" @command="handleUserCommand">
+              <div class="user-chip">
+                <el-avatar :size="30" :src="userStore.avatar || ''" class="header-avatar">
+                  <el-icon><User /></el-icon>
+                </el-avatar>
+                <span class="header-nickname">{{ userStore.nickname || userStore.account }}</span>
+                <el-icon class="chip-arrow"><ArrowDown /></el-icon>
+              </div>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="profile">
+                    <el-icon><Setting /></el-icon>个人中心
+                  </el-dropdown-item>
+                  <el-dropdown-item divided command="logout">
+                    <el-icon><SwitchButton /></el-icon>退出登录
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </el-header>
-        <el-main><router-view></router-view></el-main>
+        <el-main class="layout-main">
+          <router-view v-slot="{ Component }">
+            <transition name="fade-slide" mode="out-in">
+              <component :is="Component" />
+            </transition>
+          </router-view>
+        </el-main>
       </el-container>
     </el-container>
   </div>
@@ -34,9 +59,9 @@
 
 
 <script lang="ts" setup>
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { Fold, Expand, User, Link } from '@element-plus/icons-vue'
+import { ref, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
+import { Fold, Expand, User, Link, ArrowDown, Setting, SwitchButton } from '@element-plus/icons-vue'
 import Aside from '../Main/AsidePage.vue';
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
 import { useUserStore } from '@/stores/user';
@@ -44,8 +69,24 @@ import { ElMessageBox, ElMessage } from 'element-plus';
 import { testSerialConnection } from '@/api/rosApi';
 
 const router = useRouter()
+const route = useRoute()
 const layoutStore = useLayoutSettingStore();
 const userStore = useUserStore();
+
+const routeTitles: Record<string, string> = {
+  '/Dashboard': '首页仪表盘',
+  '/HardWorkPage': '设备信息管理',
+  '/ModuleManagement': '模块管理',
+  '/FineTuningPage': '姿态微调',
+  '/DrawingManage': '图纸管理',
+  '/WorkflowManage': '工作流管理',
+  '/TaskManagement': '任务管理',
+  '/UserManagement': '用户管理',
+  '/Profile': '个人中心',
+  '/RosTestPage': 'ROS 联调测试',
+}
+
+const pageTitle = computed(() => routeTitles[route.path] || '')
 
 const serialTesting = ref(false)
 
@@ -77,6 +118,14 @@ const handleTestSerial = async () => {
   }
 }
 
+const handleUserCommand = (command: string | number | object) => {
+  if (command === 'profile') {
+    router.push('/Profile')
+  } else if (command === 'logout') {
+    handleLogout()
+  }
+}
+
 const handleLogout = async () => {
   try {
     await ElMessageBox.confirm('确定要退出登录吗？', '提示', {
@@ -94,15 +143,25 @@ const handleLogout = async () => {
 </script>
 
 <style>
-.common-layout{
+.common-layout {
   height: 100%;
   width: 100%;
-  background-color: #ffff;
 }
-.common-layout .el-container{
-  background-color: #eff5f4;
+
+.common-layout .layout-root {
   height: 100%;
 }
+
+.common-layout .layout-aside {
+  transition: width 0.3s ease;
+  overflow: hidden;
+}
+
+.common-layout .layout-body {
+  height: 100%;
+  background: var(--mes-bg);
+}
+
 .common-layout .el-header {
   padding: 0;
   height: 60px;
@@ -112,40 +171,91 @@ const handleLogout = async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--mes-border);
   padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 
 .header-left {
   display: flex;
   align-items: center;
+  gap: 14px;
 }
 
 .fold-icon {
   font-size: 20px;
   cursor: pointer;
-  color: #606266;
-  transition: color 0.2s;
+  color: var(--mes-text-sub);
+  transition: color 0.2s, transform 0.2s;
+  padding: 6px;
+  border-radius: 8px;
 }
 
 .fold-icon:hover {
-  color: #409eff;
+  color: var(--mes-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.header-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mes-text-title);
+  letter-spacing: 0.3px;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: #606266;
+  gap: 12px;
+  color: var(--mes-text-main);
   font-size: 14px;
+}
+
+.header-divider {
+  height: 18px;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s;
+  outline: none;
+}
+
+.user-chip:hover {
+  background: var(--mes-bg);
 }
 
 .header-avatar {
   flex-shrink: 0;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px var(--mes-border);
 }
 
 .header-nickname {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--mes-text-title);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-arrow {
+  font-size: 12px;
+  color: var(--mes-text-faint);
+}
+
+.layout-main {
+  padding: 0;
+  overflow: auto;
 }
 </style>

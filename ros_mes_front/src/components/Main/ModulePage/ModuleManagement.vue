@@ -1,7 +1,12 @@
 <template>
-  <div class="module-management">
+  <div class="module-management mes-page">
+    <div class="mes-page-header">
+      <div>
+        <h2 class="mes-page-title">模块管理与姿态调度</h2>
+        <p class="mes-page-sub">选择矩阵坐标锁定目标模块，下发后进入姿态微调</p>
+      </div>
+    </div>
     <div class="outer-table">
-      <div class="title">模块管理与姿态调度</div>
       <div class="action-bar-restored">
         <div class="input-row">
           <div class="input-group">
@@ -230,17 +235,7 @@ const handleLockAndJump = async () => {
 
 <style scoped>
 .module-management {
-  padding: 20px;
-  background-color: #ffffff;
-  border-radius: 10px;
-  height: calc(100vh - 150px);
   overflow: auto;
-}
-.title {
-  font-size: 20px;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 10px;
 }
 /* 新的操作栏样式 */
 .action-bar {
@@ -264,7 +259,7 @@ const handleLockAndJump = async () => {
 }
 .info-value {
   font-weight: bold;
-  color: #409eff;
+  color: var(--mes-primary);
   margin-right: 8px;
 }
 .action-buttons {
@@ -288,38 +283,45 @@ const handleLockAndJump = async () => {
   overflow-x: auto;
 }
 .matrix {
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  padding: 10px;
+  border: 1px solid var(--mes-border-light);
+  border-radius: var(--mes-radius-lg);
+  padding: 14px;
   background-color: #ffffff;
+  box-shadow: var(--mes-shadow-card);
   display: inline-block;
 }
 .matrix-row {
   display: flex;
-  gap: 5px;
-  margin-bottom: 5px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 .matrix-cell {
   width: 70px;
   height: 50px;
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
+  border: 1px solid var(--mes-border);
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--mes-text-sub);
   cursor: pointer;
-  background-color: #f5f7fa;
+  background-color: #f8fafc;
   transition: all 0.2s ease;
 }
 .matrix-cell:hover {
-  background-color: #ecf5ff;
+  background-color: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+  color: var(--mes-primary);
   transform: translateY(-2px);
 }
 .matrix-cell.selected {
-  background-color: #409eff;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  border-color: transparent;
   color: #fff;
   font-weight: bold;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4);
 }
 
 /* 新增的还原截图样式 */
@@ -327,10 +329,11 @@ const handleLockAndJump = async () => {
 .action-bar-restored {
   background-color: #ffffff;
   padding: 16px 24px;
-  border-radius: 8px;
+  border-radius: var(--mes-radius-lg);
   margin-bottom: 24px;
-  border-left: 4px solid #409eff;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05); /* 增加轻微阴影，更有质感 */
+  border: 1px solid var(--mes-border-light);
+  border-left: 4px solid var(--mes-primary);
+  box-shadow: var(--mes-shadow-card);
   display: flex;
   flex-direction: column;
   align-items: center; /* 内部元素居中 */
@@ -391,7 +394,7 @@ const handleLockAndJump = async () => {
 }
 
 .hint-text .highlight {
-  color: #409eff;
+  color: var(--mes-primary);
   font-weight: bold;
   font-size: 14px;
 }

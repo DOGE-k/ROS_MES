@@ -1,10 +1,11 @@
 ﻿<template>
-  <div class="task-manage">
-    <el-card class="header-card">
-      <div class="header-row">
-        <h2 class="page-title">任务管理</h2>
+  <div class="task-manage mes-page">
+    <div class="mes-page-header">
+      <div>
+        <h2 class="mes-page-title">任务管理</h2>
+        <p class="mes-page-sub">任务创建、调度、进度追踪与工件执行记录</p>
       </div>
-    </el-card>
+    </div>
 
     <el-row :gutter="16" class="stat-row">
       <el-col :span="6">
@@ -787,57 +788,60 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.task-manage {
-  padding: 20px;
-}
-
-.header-card {
-  margin-bottom: 16px;
-}
-
-.header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
-}
-
 .stat-row {
   margin-bottom: 16px;
 }
 
 .stat-card {
   text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--mes-primary), transparent 70%);
 }
 
 .stat-card .stat-value {
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 700;
-  color: #303133;
+  color: var(--mes-text-title);
 }
 
 .stat-card .stat-label {
-  font-size: 14px;
-  color: #909399;
+  font-size: 13px;
+  color: var(--mes-text-sub);
   margin-top: 4px;
 }
 
+.stat-running::before {
+  background: linear-gradient(90deg, var(--mes-success), transparent 70%);
+}
+
+.stat-paused::before {
+  background: linear-gradient(90deg, var(--mes-warning), transparent 70%);
+}
+
+.stat-finished::before {
+  background: linear-gradient(90deg, #94a3b8, transparent 70%);
+}
+
 .stat-running .stat-value {
-  color: #67c23a;
+  color: var(--mes-success);
 }
 
 .stat-paused .stat-value {
-  color: #e6a23c;
+  color: var(--mes-warning);
 }
 
 .stat-finished .stat-value {
-  color: #909399;
+  color: var(--mes-text-sub);
 }
 
 .search-card {

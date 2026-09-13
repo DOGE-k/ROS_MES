@@ -1,8 +1,11 @@
 <template>
-  <div class="workflow-manage">
-    <el-card class="header-card">
-      <h2 class="page-title">工作流管理</h2>
-    </el-card>
+  <div class="workflow-manage mes-page">
+    <div class="mes-page-header">
+      <div>
+        <h2 class="mes-page-title">工作流管理</h2>
+        <p class="mes-page-sub">工作定义与工作流编排，支持步骤排序与复用</p>
+      </div>
+    </div>
 
     <el-card class="tab-card">
       <el-tabs v-model="activeTab">
@@ -795,21 +798,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.workflow-manage {
-  padding: 20px;
-}
-
-.header-card {
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
-}
-
 .tab-card {
   min-height: 400px;
 }
@@ -841,7 +829,7 @@ onMounted(async () => {
 .seq-index {
   font-weight: bold;
   min-width: 70px;
-  color: #409eff;
+  color: var(--mes-primary);
 }
 
 .seq-name {
@@ -869,7 +857,7 @@ onMounted(async () => {
 .step-header {
   font-size: 15px;
   font-weight: bold;
-  color: #409eff;
+  color: var(--mes-primary);
   margin-bottom: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid #ebeef5;

@@ -1,8 +1,11 @@
 <template>
-  <div class="profile-container">
-    <el-card class="header-card">
-      <h2 class="page-title">个人中心</h2>
-    </el-card>
+  <div class="profile-container mes-page">
+    <div class="mes-page-header">
+      <div>
+        <h2 class="mes-page-title">个人中心</h2>
+        <p class="mes-page-sub">个人资料、头像与账号安全设置</p>
+      </div>
+    </div>
     <el-row :gutter="20">
       
       <el-col :span="8">
@@ -276,27 +279,8 @@ function formatDate(dateStr: string): string {
 </script>
 
 <style scoped>
-.profile-container {
-  padding: 20px;
-  background-color: #f0f2f5;
-  min-height: calc(100vh - 60px);
-}
-
-.header-card {
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
-}
-
 .profile-card {
   text-align: center;
-  border: none;
-  border-radius: 8px;
 }
 
 .avatar-section {
@@ -352,8 +336,6 @@ function formatDate(dateStr: string): string {
 }
 
 .form-card {
-  border: none;
-  border-radius: 8px;
   min-height: 500px;
 }
 

@@ -1,11 +1,12 @@
 <template>
-  <div class="drawing-manage">
-    <el-card class="header-card">
-      <div class="header-row">
-        <h2 class="page-title">图纸管理</h2>
-        <el-button type="primary" @click="openImportDialog">导入 JSON 图纸数据</el-button>
+  <div class="drawing-manage mes-page">
+    <div class="mes-page-header">
+      <div>
+        <h2 class="mes-page-title">图纸管理</h2>
+        <p class="mes-page-sub">JSON 图纸数据的导入、预览与版本维护</p>
       </div>
-    </el-card>
+      <el-button type="primary" @click="openImportDialog">导入 JSON 图纸数据</el-button>
+    </div>
 
     <div class="search-bar">
       <div class="search-inner">
@@ -487,34 +488,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.drawing-manage {
-  padding: 20px;
-  min-height: calc(100vh - 100px);
-}
-
-.header-card {
-  margin-bottom: 16px;
-}
-
-.header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #303133;
-}
-
 .search-bar {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   background: #fff;
-  border-radius: 12px;
-  padding: 16px 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border: 1px solid var(--mes-border-light);
+  border-radius: var(--mes-radius-lg);
+  padding: 16px 20px;
+  box-shadow: var(--mes-shadow-card);
 }
 
 .search-inner {
@@ -539,9 +519,10 @@ onMounted(() => {
 
 .table-wrapper {
   background: #fff;
-  border-radius: 12px;
+  border: 1px solid var(--mes-border-light);
+  border-radius: var(--mes-radius-lg);
   padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--mes-shadow-card);
 }
 
 .drawing-table {

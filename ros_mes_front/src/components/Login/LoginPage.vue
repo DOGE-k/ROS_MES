@@ -1,115 +1,106 @@
 <template>
   <div class="login-container">
-    <el-card class="login-card" shadow="hover">
-      <div class="card-header">
-        <p class="title">{{ isLogin ? "系统登录" : "新用户注册" }}</p>
-      </div>
-
-      <el-form
-        v-if="isLogin"
-        ref="loginFormRef"
-        :model="loginForm"
-        :rules="formRules"
-        label-width="0px"
-      >
-        <el-form-item prop="account" label="账号" label-width="50px">
-          <el-input
-            v-model="loginForm.account"
-            placeholder="请输入操作员账号"
-            prefix-icon="User"
-            clearable
-          />
-        </el-form-item>
-
-        <el-form-item prop="password" label="密码" label-width="50px">
-          <el-input
-            v-model="loginForm.password"
-            type="password"
-            placeholder="请输入密码"
-            prefix-icon="Lock"
-            show-password
-            @keyup.enter="handleLogin"
-          />
-        </el-form-item>
-
-        <el-form-item>
-          <el-button
-            type="primary"
-            class="submit-btn"
-            @click="handleLogin"
-            :loading="loading"
-            >登 录</el-button
-          >
-        </el-form-item>
-
-        <div class="toggle-action">
-          <el-link type="info" underline="never" @click="router.push('/register')"
-            >没有账号？申请注册</el-link
-          >
+    <!-- 左侧品牌区 -->
+    <div class="brand-panel">
+      <div class="brand-grid"></div>
+      <div class="brand-content">
+        <div class="brand-logo">
+          <div class="brand-mark">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="9" width="16" height="11" rx="2"/>
+              <circle cx="9" cy="14.5" r="1.4" fill="currentColor" stroke="none"/>
+              <circle cx="15" cy="14.5" r="1.4" fill="currentColor" stroke="none"/>
+              <path d="M12 9V5"/>
+              <circle cx="12" cy="3.6" r="1.4"/>
+            </svg>
+          </div>
+          <span class="brand-name">ROS·MES</span>
         </div>
-      </el-form>
 
-      <!--      <el-form-->
-      <!--        v-else-->
-      <!--        ref="registerFormRef"-->
-      <!--        :model="registerForm"-->
-      <!--        :rules="formRules"-->
-      <!--        label-width="0px"-->
-      <!--      >-->
-      <!--        <el-form-item prop="account">-->
-      <!--          <el-input-->
-      <!--            v-model="registerForm.account"-->
-      <!--            placeholder="设置操作员账号"-->
-      <!--            prefix-icon="User"-->
-      <!--            clearable-->
-      <!--          />-->
-      <!--        </el-form-item>-->
+        <h1 class="brand-headline">智能制造执行系统</h1>
+        <p class="brand-desc">基于 ROS 的机械臂集群调度与生产管理平台</p>
 
-      <!--        <el-form-item prop="password">-->
-      <!--          <el-input-->
-      <!--            v-model="registerForm.password"-->
-      <!--            type="password"-->
-      <!--            placeholder="设置高强度密码"-->
-      <!--            prefix-icon="Lock"-->
-      <!--            show-password-->
-      <!--          />-->
-      <!--        </el-form-item>-->
+        <ul class="brand-features">
+          <li>
+            <span class="feature-icon">◈</span>
+            <div>
+              <p class="feature-title">设备全生命周期管理</p>
+              <p class="feature-text">型号 / 模块 / 机械臂 / 传感器 四层设备树</p>
+            </div>
+          </li>
+          <li>
+            <span class="feature-icon">◈</span>
+            <div>
+              <p class="feature-title">工作流与任务调度</p>
+              <p class="feature-text">图纸下发、工序编排、任务全程可追溯</p>
+            </div>
+          </li>
+          <li>
+            <span class="feature-icon">◈</span>
+            <div>
+              <p class="feature-title">实时姿态微调与监控</p>
+              <p class="feature-text">编码器 / 压力 / 陀螺仪数据实时反馈</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
 
-      <!--        <el-form-item prop="confirmPassword">-->
-      <!--          <el-input-->
-      <!--            v-model="registerForm.confirmPassword"-->
-      <!--            type="password"-->
-      <!--            placeholder="再次确认密码"-->
-      <!--            prefix-icon="Lock"-->
-      <!--            show-password-->
-      <!--          />-->
-      <!--        </el-form-item>-->
+    <!-- 右侧表单区 -->
+    <div class="form-panel">
+      <div class="login-box">
+        <div class="card-header">
+          <p class="title">{{ isLogin ? "欢迎登录" : "新用户注册" }}</p>
+          <p class="subtitle">请使用操作员账号登录系统</p>
+        </div>
 
-      <!--        <el-alert-->
-      <!--          title="注意：注册后需管理员审核通过方可登录"-->
-      <!--          type="warning"-->
-      <!--          show-icon-->
-      <!--          :closable="false"-->
-      <!--          class="audit-alert"-->
-      <!--        />-->
+        <el-form
+          v-if="isLogin"
+          ref="loginFormRef"
+          :model="loginForm"
+          :rules="formRules"
+          label-width="0px"
+          size="large"
+        >
+          <el-form-item prop="account">
+            <el-input
+              v-model="loginForm.account"
+              placeholder="请输入操作员账号"
+              prefix-icon="User"
+              clearable
+            />
+          </el-form-item>
 
-      <!--        <el-form-item>-->
-      <!--          <el-button-->
-      <!--            type="success"-->
-      <!--            class="submit-btn"-->
-      <!--            :loading="loading"-->
-      <!--            >提交注册申请</el-button-->
-      <!--          >-->
-      <!--        </el-form-item>-->
+          <el-form-item prop="password">
+            <el-input
+              v-model="loginForm.password"
+              type="password"
+              placeholder="请输入密码"
+              prefix-icon="Lock"
+              show-password
+              @keyup.enter="handleLogin"
+            />
+          </el-form-item>
 
-      <!--        <div class="toggle-action">-->
-      <!--          <el-link type="info" underline="never" @click="isLogin = true"-->
-      <!--            >返回登录</el-link-->
-      <!--          >-->
-      <!--        </div>-->
-      <!--      </el-form>-->
-      <!--    -->
-    </el-card>
+          <el-form-item>
+            <el-button
+              type="primary"
+              class="submit-btn"
+              @click="handleLogin"
+              :loading="loading"
+              >登 录</el-button
+            >
+          </el-form-item>
+
+          <div class="toggle-action">
+            <el-link type="info" underline="never" @click="router.push('/register')"
+              >没有账号？申请注册</el-link
+            >
+          </div>
+        </el-form>
+      </div>
+      <p class="copyright">ROS MES System · 智能制造执行系统</p>
+    </div>
   </div>
 </template>
 
@@ -174,8 +165,6 @@ const handleLogin = async () => {
       password: loginForm.password,
     });
 
-    console.log("登录返回：", response);
-
     if (response.code !== 200) {
       ElMessage.error(response.message || "登录失败");
       return;
@@ -200,56 +189,195 @@ const handleLogin = async () => {
 </script>
 
 <style scoped>
-/* 1. 容器：背景完全一致 */
-.login-container, .register-container {
+/* ===== 布局：左右分栏 ===== */
+.login-container {
   display: flex;
-  justify-content: center;
-  align-items: center;
   height: 100vh;
-  background: linear-gradient(135deg, #1f2430 0%, #2b3243 100%);
+  overflow: hidden;
+  background: #fff;
 }
 
-/* 2. 卡片：宽度设为 440px，精致且不局促 */
-.login-card{
-  width: 440px; 
+/* ===== 左侧品牌区 ===== */
+.brand-panel {
+  position: relative;
+  flex: 1.15;
+  min-width: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 70% 20%, rgba(59, 130, 246, 0.25), transparent),
+    linear-gradient(160deg, #0b1626 0%, #12233c 60%, #0e1f36 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+}
+
+/* 工业网格纹理 */
+.brand-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(148, 167, 196, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 167, 196, 0.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, #000 30%, transparent 100%);
+}
+
+.brand-content {
+  position: relative;
+  max-width: 460px;
+}
+
+.brand-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 48px;
+}
+
+.brand-mark {
+  width: 44px;
+  height: 44px;
   border-radius: 12px;
-  border: 1px solid #3d4556;
-  background-color: #ffffff;
-  padding: 35px 40px; /* 增加上下内边距，增加呼吸感 */
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.5);
+}
+
+.brand-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.brand-headline {
+  margin: 0 0 12px;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  line-height: 1.3;
+}
+
+.brand-desc {
+  margin: 0 0 44px;
+  font-size: 15px;
+  color: #94a7c4;
+  letter-spacing: 0.5px;
+}
+
+.brand-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.brand-features li {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.feature-icon {
+  color: #60a5fa;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.feature-title {
+  margin: 0 0 2px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.feature-text {
+  margin: 0;
+  font-size: 13px;
+  color: #7d90ad;
+}
+
+/* ===== 右侧表单区 ===== */
+.form-panel {
+  flex: 1;
+  min-width: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  position: relative;
+  padding: 40px;
+}
+
+.login-box {
+  width: 360px;
+  max-width: 100%;
 }
 
 .card-header {
-  text-align: center;
-  margin-bottom: 35px;
+  margin-bottom: 32px;
 }
 
-/* 3. 标题：24px 粗体，这是最协调的字号 */
 .title {
-  margin: 0;
-  font-size: 24px; 
-  color: #303133;
+  margin: 0 0 6px;
+  font-size: 26px;
+  color: var(--mes-text-title, #0f172a);
   font-weight: 700;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
 }
 
-/* 4. 按钮：取消文字间距，显得更现代 */
+.subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--mes-text-sub, #64748b);
+}
+
 .submit-btn {
   width: 100%;
-  height: 42px;
+  height: 44px;
   font-size: 16px;
-  letter-spacing: 0px; 
-  margin-top: 5px;
+  font-weight: 600;
+  letter-spacing: 6px;
+  margin-top: 4px;
+  background: linear-gradient(90deg, #2563eb, #1d4ed8);
+  border: none;
+}
+
+.submit-btn:hover {
+  background: linear-gradient(90deg, #3b82f6, #2563eb);
 }
 
 .toggle-action {
   text-align: center;
-  margin-top: 20px;
+  margin-top: 18px;
 }
 
-/* 重点：深度选择器，确保输入框高度统一 */
+.copyright {
+  position: absolute;
+  bottom: 20px;
+  font-size: 12px;
+  color: var(--mes-text-faint, #94a3b8);
+  letter-spacing: 1px;
+}
+
+/* 输入框高度统一 */
 :deep(.el-input__wrapper) {
-  height: 40px;
+  height: 44px;
+  border-radius: 10px;
+}
+
+/* 窄屏隐藏品牌区 */
+@media (max-width: 860px) {
+  .brand-panel {
+    display: none;
+  }
+  .form-panel {
+    min-width: 0;
+  }
 }
 </style>
-```

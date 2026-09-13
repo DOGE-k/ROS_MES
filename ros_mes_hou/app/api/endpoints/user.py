@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Upload
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_admin, get_current_user
 from app.core import security
 from app.db import models
 from app.db.database import get_db
@@ -85,7 +85,7 @@ def create_user(
     type_id: int = Body(2),
     name: Optional[str] = Body(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     if len(username.strip()) < 3:
         raise HTTPException(status_code=400, detail="用户名至少需要 3 位")
@@ -197,7 +197,9 @@ def update_profile(
     if sex is not None:
         current_user.Sex = sex
 
-    if type_id is not None:
+    # 安全修复：普通用户不能通过个人资料接口把自己改成管理员，
+    # 只有管理员才允许在这里调整用户类型
+    if type_id is not None and current_user.Type_ID == 1:
         current_user.Type_ID = type_id
 
     current_user.Modifytime = datetime.now(timezone.utc)
@@ -220,7 +222,7 @@ def update_user(
     password: Optional[str] = Body(None),
     name: Optional[str] = Body(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     user = db.query(models.User).filter(
         models.User.User_ID == user_id,
@@ -268,7 +270,7 @@ def update_user(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     if current_user.User_ID == user_id:
         raise HTTPException(status_code=400, detail="不能删除当前登录用户")
@@ -298,7 +300,7 @@ def delete_user(
 def lock_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     user = db.query(models.User).filter(
         models.User.User_ID == user_id,
@@ -331,7 +333,7 @@ def lock_user(
 def unlock_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     user = db.query(models.User).filter(
         models.User.User_ID == user_id,
@@ -362,7 +364,7 @@ def change_user_role(
     user_id: int,
     type_id: int = Body(..., embed=True),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     if type_id not in (1, 2):
         raise HTTPException(status_code=400, detail="无效的用户类型值")
@@ -394,7 +396,7 @@ def change_user_role(
 async def import_users(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     if not file.filename or not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="请上传 CSV 格式文件")
@@ -479,7 +481,7 @@ async def import_users(
 @router.get("/export")
 def export_users(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(get_current_admin),
 ):
     users = (
         db.query(models.User)

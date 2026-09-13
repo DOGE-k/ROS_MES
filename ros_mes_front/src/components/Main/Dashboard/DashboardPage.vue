@@ -1,8 +1,22 @@
 <template>
-  <div class="dashboard-container">
-    <div class="page-header">
-      <h1 class="page-title">首页仪表盘</h1>
-      <p class="page-subtitle">系统运行概览</p>
+  <div class="dashboard-container mes-page">
+    <!-- 欢迎横幅 -->
+    <div class="welcome-banner">
+      <div class="welcome-left">
+        <h1 class="welcome-title">
+          {{ greeting }}，{{ userStore.nickname || userStore.account || '操作员' }}
+        </h1>
+        <p class="welcome-sub">{{ todayText }} · 系统运行概览</p>
+      </div>
+      <div class="welcome-deco">
+        <svg viewBox="0 0 24 24" width="72" height="72" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="9" width="16" height="11" rx="2"/>
+          <circle cx="9" cy="14.5" r="1.4" fill="rgba(255,255,255,0.9)" stroke="none"/>
+          <circle cx="15" cy="14.5" r="1.4" fill="rgba(255,255,255,0.9)" stroke="none"/>
+          <path d="M12 9V5"/>
+          <circle cx="12" cy="3.6" r="1.4"/>
+        </svg>
+      </div>
     </div>
 
     <div class="stats-grid">
@@ -13,7 +27,7 @@
         :style="{ '--card-accent': card.color }"
       >
         <div class="card-icon-wrapper">
-          <el-icon :size="28"><component :is="card.icon" /></el-icon>
+          <el-icon :size="24"><component :is="card.icon" /></el-icon>
         </div>
         <div class="card-body">
           <div class="card-value" :class="{ 'loading': loading }">
@@ -27,12 +41,12 @@
           <div class="card-label">{{ card.label }}</div>
         </div>
         <div class="card-trend" v-if="!loading && card.trend !== undefined">
-          <el-icon :size="14">
-            <Top v-if="card.trend > 0" />
-            <Bottom v-else-if="card.trend < 0" />
-            <Minus v-else />
-          </el-icon>
-          <span :class="card.trend >= 0 ? 'trend-up' : 'trend-down'">
+          <span class="trend-chip" :class="card.trend >= 0 ? 'trend-up' : 'trend-down'">
+            <el-icon :size="12">
+              <Top v-if="card.trend > 0" />
+              <Bottom v-else-if="card.trend < 0" />
+              <Minus v-else />
+            </el-icon>
             {{ Math.abs(card.trend) }}%
           </span>
         </div>
@@ -42,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Monitor,
@@ -58,9 +72,26 @@ import {
 } from '@element-plus/icons-vue'
 import { getDashboardStats } from '@/api/rosApi'
 import { useMock, mockSuccess } from '@/api/mock'
+import { useUserStore } from '@/stores/user'
 import type { DashboardStats, DashboardStatItem } from '@/api/types'
 
 const loading = ref(true)
+const userStore = useUserStore()
+
+const greeting = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 6) return '夜深了'
+  if (hour < 12) return '早上好'
+  if (hour < 14) return '中午好'
+  if (hour < 18) return '下午好'
+  return '晚上好'
+})
+
+const todayText = computed(() => {
+  const now = new Date()
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  return `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日 ${weekdays[now.getDay()]}`
+})
 
 interface StatCard {
   key: string
@@ -73,13 +104,13 @@ interface StatCard {
 }
 
 const cardMeta: { key: string; icon: any; color: string }[] = [
-  { key: 'deviceStatus', icon: Monitor, color: '#409eff' },
-  { key: 'taskCount', icon: List, color: '#67c23a' },
-  { key: 'faultCount', icon: WarningFilled, color: '#f56c6c' },
-  { key: 'onlineUsers', icon: User, color: '#e6a23c' },
-  { key: 'responseTime', icon: Timer, color: '#909399' },
-  { key: 'concurrency', icon: Connection, color: '#b37feb' },
-  { key: 'deviceConnections', icon: Link, color: '#36cfc9' },
+  { key: 'deviceStatus', icon: Monitor, color: '#2563eb' },
+  { key: 'taskCount', icon: List, color: '#16a34a' },
+  { key: 'faultCount', icon: WarningFilled, color: '#dc2626' },
+  { key: 'onlineUsers', icon: User, color: '#d97706' },
+  { key: 'responseTime', icon: Timer, color: '#7c3aed' },
+  { key: 'concurrency', icon: Connection, color: '#0891b2' },
+  { key: 'deviceConnections', icon: Link, color: '#0d9488' },
 ]
 
 const statCards = reactive<StatCard[]>(
@@ -143,32 +174,46 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.dashboard-container {
-  padding: 24px;
+/* ===== 欢迎横幅 ===== */
+.welcome-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: var(--mes-radius-lg);
+  padding: 26px 32px;
+  margin-bottom: 20px;
+  color: #fff;
+  background:
+    radial-gradient(ellipse 70% 120% at 85% 20%, rgba(96, 165, 250, 0.35), transparent),
+    linear-gradient(120deg, #1e3a8a 0%, #1d4ed8 55%, #2563eb 100%);
+  box-shadow: 0 8px 24px rgba(29, 78, 216, 0.25);
+  overflow: hidden;
 }
 
-.page-header {
-  margin-bottom: 28px;
-}
-
-.page-title {
+.welcome-title {
   margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #303133;
-  letter-spacing: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
-.page-subtitle {
-  margin: 4px 0 0;
-  font-size: 14px;
-  color: #909399;
+.welcome-sub {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.5px;
 }
 
+.welcome-deco {
+  opacity: 0.9;
+  flex-shrink: 0;
+}
+
+/* ===== 统计卡片 ===== */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
+  gap: 16px;
 }
 
 .stat-card {
@@ -177,17 +222,29 @@ onMounted(() => {
   align-items: center;
   gap: 16px;
   background: #fff;
-  border-radius: 8px;
-  padding: 20px 24px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-  border-left: 4px solid var(--card-accent);
+  border-radius: var(--mes-radius-lg);
+  border: 1px solid var(--mes-border-light);
+  padding: 20px 22px;
+  box-shadow: var(--mes-shadow-card);
   transition: box-shadow 0.25s, transform 0.25s;
   overflow: hidden;
 }
 
+/* 顶部彩色光条 */
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--card-accent), transparent 70%);
+  opacity: 0.9;
+}
+
 .stat-card:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  transform: translateY(-2px);
+  box-shadow: var(--mes-shadow-hover);
+  transform: translateY(-3px);
 }
 
 .card-icon-wrapper {
@@ -195,9 +252,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 10px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
   color: var(--card-accent);
   background: color-mix(in srgb, var(--card-accent) 10%, transparent);
 }
@@ -208,52 +265,62 @@ onMounted(() => {
 }
 
 .card-value {
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
-  color: #303133;
+  color: var(--mes-text-title);
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-unit {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 400;
-  color: #909399;
+  color: var(--mes-text-faint);
   margin-left: 2px;
 }
 
 .card-label {
   margin-top: 4px;
   font-size: 13px;
-  color: #909399;
+  color: var(--mes-text-sub);
 }
 
 .card-trend {
   position: absolute;
-  top: 12px;
-  right: 16px;
-  display: flex;
+  top: 14px;
+  right: 14px;
+}
+
+.trend-chip {
+  display: inline-flex;
   align-items: center;
   gap: 2px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
 }
 
 .trend-up {
-  color: #67c23a;
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.1);
 }
 
 .trend-down {
-  color: #f56c6c;
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
 }
 
 .skeleton {
   display: inline-block;
   width: 80px;
-  height: 28px;
-  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  height: 26px;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
   background-size: 200% 100%;
-  border-radius: 4px;
+  border-radius: 6px;
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
