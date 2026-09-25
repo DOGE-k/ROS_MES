@@ -69,16 +69,13 @@ class RotationSimple:
                 data TEXT NOT NULL,
                 del_flag BOOL DEFAULT false,
                 Notes TEXT,
-                PRIMARY KEY (Createtime, sensor_ID),
-                FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
-                FOREIGN KEY (Work_ID) REFERENCES works(Work_ID),
-                FOREIGN KEY (sensor_id) REFERENCES sensors(id)
+                PRIMARY KEY (Createtime, sensor_ID)
             )
         """)
         self.conn.commit()
 
     def _insert_sensor_log(self, module_id, device_id, position, note_str):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.") + f"{datetime.now().microsecond:06d}"[:6]
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data_json = json.dumps({
             "module_id": module_id,
             "device_id": device_id,

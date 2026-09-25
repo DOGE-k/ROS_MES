@@ -13,7 +13,6 @@ import time
 import sqlite3
 import open3d as o3d
 import os
-import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from scipy.spatial import KDTree
@@ -335,8 +334,7 @@ class PointSelectorNode:
             rospy.logerr(f"节点A处理异常: {str(e)}", exc_info=True)
 
     def _save_module_record(self, module_id, coord_dict, position_dict):
-        now = datetime.now()
-        createtime = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}-{random.randint(0,9999):04d}"
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             self.conn.execute("""
                 INSERT INTO calculation

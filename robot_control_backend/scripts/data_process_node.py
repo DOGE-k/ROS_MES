@@ -25,7 +25,7 @@ if not os.path.exists(output_dir):
     rospy.loginfo(f"📂 已创建输出目录: {output_dir}")
 
 # ===================== 数据库配置 =====================
-DB_FILE = "ros_database.db"          # 与节点B共享的数据库文件
+DB_FILE = None                        # 从 .env 强制加载（DB_PATH），不再硬编码
 DEFAULT_CREATER_ID = 1
 DEFAULT_DEL_FLAG = 0
 DEFAULT_NOTES = None
@@ -120,6 +120,7 @@ def update_params_from_env():
     global MODULE_SIZE_X, MODULE_SIZE_Y
     global ARM_MIN_HEIGHT, ARM_SAFE_GAP
     global TOPIC_FRONTEND_INPUT, TOPIC_MODULE_ARM_TASK
+    global DB_FILE
 
     MODULE_ORIGIN_X = float(os.environ['MODULE_ORIGIN_X'])
     MODULE_ORIGIN_Y = float(os.environ['MODULE_ORIGIN_Y'])
@@ -131,6 +132,7 @@ def update_params_from_env():
 
     TOPIC_FRONTEND_INPUT = os.environ['ROS_TOPIC_FRONTEND_POINTCLOUD']
     TOPIC_MODULE_ARM_TASK = os.environ['ROS_TOPIC_MODULE_ARM_TASK']
+    DB_FILE = os.environ['DB_PATH']
 
 
 # ===================== 点云摆正 =====================

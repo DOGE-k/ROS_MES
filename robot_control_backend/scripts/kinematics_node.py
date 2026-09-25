@@ -16,7 +16,6 @@ import math
 import time
 import os
 import sqlite3
-import random
 from datetime import datetime
 from threading import Lock
 from collections import deque
@@ -317,9 +316,7 @@ class KinematicsNode:
             str(axis_tel): round(delta_tel, 1)
         }
 
-        now = datetime.now()
-        createtime = (now.strftime("%Y-%m-%d %H:%M:%S.") +
-                      f"{now.microsecond // 1000:03d}-{random.randint(0, 9999):04d}")
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
             self.conn.execute("""

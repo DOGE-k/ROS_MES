@@ -12,7 +12,6 @@ import math
 import numpy as np
 import sqlite3
 import json
-import random
 from datetime import datetime
 from std_msgs.msg import Header
 from robot_control_backend.msg import GyroFeedback, tuo_luo_yi
@@ -91,9 +90,7 @@ class ImuAnglePublisher:
 
     def _save_record(self, module_id, device_id, arm_id, swing, rotation, x, y, z):
         """保存 IMU 计算结果到 sensor_log：isread=1（上行），data 为 JSON"""
-        now = datetime.now()
-        createtime = (now.strftime("%Y-%m-%d %H:%M:%S.") +
-                      f"{now.microsecond // 1000:03d}-{random.randint(0, 9999):04d}")
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data_dict = {
             "module_id": module_id,
             "device_id": device_id,

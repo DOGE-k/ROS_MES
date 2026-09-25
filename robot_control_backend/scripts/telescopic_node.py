@@ -85,7 +85,7 @@ class TelescopeSimple:
 
     def _insert_sensor_log(self, module_id, device_id, position, note_str):
         """插入一条传感器日志，sensor_ID 填 device_id"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.") + f"{datetime.now().microsecond:06d}"[:6]
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data_json = json.dumps({
             "module_id": module_id,
             "device_id": device_id,

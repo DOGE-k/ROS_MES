@@ -3,7 +3,6 @@
 
 import os
 import json
-import random
 import struct
 import threading
 import sqlite3
@@ -532,10 +531,7 @@ class CANBusBridge:
 
     def _insert_sensor_log(self, module_id, device_id, payload, note):
         """写入 sensor_log：isread=1（上行），具体数据以 JSON 存入 data 字段"""
-        now = datetime.now()
-        # Createtime 带毫秒+随机后缀，避免高频上报时 (Createtime, sensor_ID) 主键冲突
-        createtime = (now.strftime("%Y-%m-%d %H:%M:%S.") +
-                      f"{now.microsecond // 1000:03d}-{random.randint(0, 9999):04d}")
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data_json = json.dumps(payload, ensure_ascii=False)
         self.db_conn.execute(
             "INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)"
