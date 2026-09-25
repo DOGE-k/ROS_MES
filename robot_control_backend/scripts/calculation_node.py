@@ -52,25 +52,25 @@ def load_env_config():
 
 
 def update_config_from_env():
-    """从环境变量读取配置，若未定义则使用内置默认值（算法参数）"""
-    Config.VOXEL_SIZE             = float(os.environ.get('VOXEL_SIZE', 0.1))
-    Config.MAX_WORKERS            = int(os.environ.get('MAX_WORKERS', 4))
-    Config.MAX_SWING_ANGLE        = float(os.environ.get('MAX_SWING_ANGLE', 20.0))
-    Config.ARM_MIN_EXTEND         = float(os.environ.get('ARM_MIN_EXTEND', 1.0))
-    Config.ARM_MAX_EXTEND         = float(os.environ.get('ARM_MAX_EXTEND', 60.0))
-    Config.VERTICAL_CHECK_RADIUS  = float(os.environ.get('VERTICAL_CHECK_RADIUS', 1.0))
-    Config.VERTICAL_FLAT_TOLERANCE = float(os.environ.get('VERTICAL_FLAT_TOLERANCE', 0.3))
-    Config.SURFACE_EXTRACT_K      = int(os.environ.get('SURFACE_EXTRACT_K', 20))
-    Config.SURFACE_ANGLE_THRESH   = float(os.environ.get('SURFACE_ANGLE_THRESH', 30.0))
-    Config.NORMAL_RADIUS          = float(os.environ.get('NORMAL_RADIUS', 2.0))
-    Config.HORIZONTAL_ANGLE_THRESH = float(os.environ.get('HORIZONTAL_ANGLE_THRESH', 5.0))
-    Config.HORIZONTAL_Z_STD       = float(os.environ.get('HORIZONTAL_Z_STD', 0.5))
-    Config.DEFAULT_HEIGHT         = float(os.environ.get('DEFAULT_HEIGHT', 11.0))
-    Config.MIN_POINTS_FOR_PCA     = int(os.environ.get('MIN_POINTS_FOR_PCA', 3))
-    Config.POINT_SELECT_STRATEGY  = os.environ.get('POINT_SELECT_STRATEGY', 'balanced')
-    Config.DISTANCE_WEIGHT        = float(os.environ.get('DISTANCE_WEIGHT', 0.6))
-    Config.ANGLE_WEIGHT           = float(os.environ.get('ANGLE_WEIGHT', 0.4))
-    Config.DB_PATH                = os.environ.get('DB_PATH', 'ros_database.db')
+    """配置全部只读 rob_arm.env（缺失即 KeyError 暴露；env 改了算法参数自动生效）"""
+    Config.VOXEL_SIZE             = float(os.environ['VOXEL_SIZE'])
+    Config.MAX_WORKERS            = int(os.environ['MAX_WORKERS'])
+    Config.MAX_SWING_ANGLE        = float(os.environ['MAX_SWING_ANGLE'])
+    Config.ARM_MIN_EXTEND         = float(os.environ['ARM_MIN_EXTEND'])
+    Config.ARM_MAX_EXTEND         = float(os.environ['ARM_MAX_EXTEND'])
+    Config.VERTICAL_CHECK_RADIUS  = float(os.environ['VERTICAL_CHECK_RADIUS'])
+    Config.VERTICAL_FLAT_TOLERANCE = float(os.environ['VERTICAL_FLAT_TOLERANCE'])
+    Config.SURFACE_EXTRACT_K      = int(os.environ['SURFACE_EXTRACT_K'])
+    Config.SURFACE_ANGLE_THRESH   = float(os.environ['SURFACE_ANGLE_THRESH'])
+    Config.NORMAL_RADIUS          = float(os.environ['NORMAL_RADIUS'])
+    Config.HORIZONTAL_ANGLE_THRESH = float(os.environ['HORIZONTAL_ANGLE_THRESH'])
+    Config.HORIZONTAL_Z_STD       = float(os.environ['HORIZONTAL_Z_STD'])
+    Config.DEFAULT_HEIGHT         = float(os.environ['DEFAULT_HEIGHT'])
+    Config.MIN_POINTS_FOR_PCA     = int(os.environ['MIN_POINTS_FOR_PCA'])
+    Config.POINT_SELECT_STRATEGY  = os.environ['POINT_SELECT_STRATEGY']
+    Config.DISTANCE_WEIGHT        = float(os.environ['DISTANCE_WEIGHT'])
+    Config.ANGLE_WEIGHT           = float(os.environ['ANGLE_WEIGHT'])
+    Config.DB_PATH                = os.environ['DB_PATH']
 
 
 # =============== 工具函数（修正默认参数） ===============

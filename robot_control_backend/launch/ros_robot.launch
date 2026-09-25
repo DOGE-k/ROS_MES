@@ -1,5 +1,13 @@
 <launch>
-  <!-- 1. 模块确认节点：初始化模块确认 -->
+  <!-- ====================================================================
+       ROS MES V2 启动文件
+       - CAN ID 位域：PRI(3)|GRP(4)|SEG(4)|NODE(5)|AXIS(5)|DIR(2)|MSG(4)|RSV(2)
+       - 5 臂系统，每臂 4 轴（J1旋转/J2摆动/J3空/J4伸缩），轴号 1~20
+       - 位置量：绝对角度（0.01°，int32），摆动角上限 ±15°
+       - 臂级传感器 axis 21~25（压力/IMU）
+       ==================================================================== -->
+
+  <!-- 1. 模块确认节点：基于到位通知（Angle+PosError+Status 三重校验） -->
   <node
     name="module_confirme_node"
     pkg="robot_control_backend"
@@ -7,7 +15,7 @@
     output="screen"
   />
 
-  <!-- 2. 反馈节点：数据解析与单位转换 -->
+  <!-- 2. 反馈节点：0.01°→° 单位转换 + 指令汇聚 -->
   <node
     name="feedback_node"
     pkg="robot_control_backend"
@@ -15,7 +23,7 @@
     output="screen"
   />
 
-  <!-- 3. STM32 串口桥接节点：下位机通信 -->
+  <!-- 3. CAN 硬件桥接节点：V2 位域编码 + 位置打包拆分 + 事件分发 -->
   <node
     name="stm32_bridge"
     pkg="robot_control_backend"
@@ -55,7 +63,7 @@
     output="screen"
   />
 
-  <!-- 8. 三轴控制节点 -->
+  <!-- 8. 三轴控制节点（V2：位置量直接输出 0.01°） -->
   <node
     name="rotation_simple_node"
     pkg="robot_control_backend"
@@ -75,7 +83,7 @@
     output="screen"
   />
 
-  <!-- 9. 压力传感器控制节点 -->
+  <!-- 9. 压力传感器控制节点（V2：臂级寻址 + RateIdx） -->
   <node
     name="pressure_sensor_control_node"
     pkg="robot_control_backend"
@@ -83,15 +91,15 @@
     output="screen"
   />
 
-  <!-- 10. 急停节点 -->
+  <!-- 10. 急停节点（V2：全局急停 0x01 / 解除 0x04） -->
   <node
     name="softstop_node"
     pkg="robot_control_backend"
-    type="softstop.node.py"
+    type="softstop_node.py"
     output="screen"
   />
 
-  <!-- 11. IMU姿态节点：陀螺仪数据融合 + 末端坐标计算 -->
+  <!-- 11. IMU姿态节点（V2：臂级 IMU axis 21~25） -->
   <node
     name="imu_angle_publisher"
     pkg="robot_control_backend"

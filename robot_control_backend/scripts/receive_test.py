@@ -22,8 +22,8 @@ class TestStopReceiver:
         load_env_config()
         rospy.init_node('test_stop_receiver', anonymous=True)
         
-        # 从环境变量获取话题名称
-        topic_arm_cmd = os.environ.get('ROS_TOPIC_ARM_CMD_VEL', '/arm/cmd_vel')
+        # 话题只读 rob_arm.env（env 改了自动生效，无硬编码默认值）
+        topic_arm_cmd = os.environ['ROS_TOPIC_ARM_CMD_VEL']
         rospy.Subscriber(topic_arm_cmd, IntCmd, self.stop_callback)
         rospy.loginfo("Test receiver ready, waiting for stop command on %s", topic_arm_cmd)
 

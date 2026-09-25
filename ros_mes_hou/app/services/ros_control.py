@@ -27,8 +27,10 @@ PYTHON_CMD = "python"
 
 # WebSocket 地址（web_data_node 的 rosbridge 桥接端口）
 WEBSOCKET_URI = "ws://localhost:8760"
-EMERGENCY_STOP_MODULE_ID = int(os.environ.get("EMERGENCY_STOP_MODULE_ID", "17"))
-EMERGENCY_STOP_DEVICE_ID = int(os.environ.get("EMERGENCY_STOP_DEVICE_ID", "1"))
+# V2：全局急停为系统级指令，module_id=0 / device_id=0（不使用静态模块编号），
+# softstop_node 收到后转发 position=[0x01] 全局急停
+SYSTEM_MODULE_ID = 0
+SYSTEM_DEVICE_ID = 0
 
 
 async def get_hardware_status() -> dict:
@@ -87,9 +89,9 @@ async def trigger_emergency_stop() -> bool:
         "topic": "/control/softstop",
         "msg": {
             "header": {"stamp": {"secs": 0, "nsecs": 0}, "frame_id": ""},
-            "module_id": EMERGENCY_STOP_MODULE_ID,
-            "device_id": EMERGENCY_STOP_DEVICE_ID,
-            "position": []
+            "module_id": SYSTEM_MODULE_ID,
+            "device_id": SYSTEM_DEVICE_ID,
+            "position": [0x01]
         }
     }, ensure_ascii=False)
 

@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+摆动轴节点 V2
+
+V2 变更：
+  - 支持 5 臂
+  - 摆动轴 axis ∈ {2,6,10,14,18}，arm_idx=(axis-1)//4
+  - 摆动角上限 ±15°（V1.1 为 ±20°，由 MAX_SWING_ANGLE 配置）
+  - 位置量从编码器 tick 改为绝对角度（0.01°，int32）
+"""
 import rospy
 import os
 import sqlite3
@@ -23,27 +32,26 @@ class SwingSimple:
     def __init__(self):
         load_env_config()
         rospy.init_node("swing_simple_node")
-        rospy.loginfo("✅ 摆动轴节点启动 (支持 Arm1/2/3，统一下发话题，反馈转角度)")
+        rospy.loginfo("✅ 摆动轴节点 V2 启动（5 臂，±15°，角度 0.01°）")
 
-        self.DEGREE_PER_TICK = float(os.environ.get('DEGREE_PER_TICK', '0.01248'))
-        self.MODULE_ID = int(os.environ.get('MODULE_ID', '17'))
-        self.ENC_MID = int(os.environ.get('ENC_MID', '15000'))
-        self.ENC_MIN = int(os.environ.get('ENC_MIN', '580'))
-        self.ENC_MAX = int(os.environ.get('ENC_MAX', '29420'))
+        # V2：module_id 不做静态配置，cmd_callback 从指令消息（msg.module_id）透传
+        self.MAX_SWING_ANGLE = float(os.environ['MAX_SWING_ANGLE'])
 
-        # 只订阅一个统一下发的话题（控制节点输出的 _sequenced）
-        TOPIC_CMD = os.environ.get('ROS_TOPIC_KINEMATICS_SWING_CMD_SEQ', '/control/kinematics_swing_cmd_sequenced')
-        TOPIC_SWING_FEEDBACK = os.environ.get('ROS_TOPIC_SWING_FEEDBACK', '/hardware/swing_feedback')
-        TOPIC_SWING_OUTPUT = os.environ.get('ROS_TOPIC_SWING_OUTPUT', '/hardware/swing_output')
+        # 只订阅一个统一下发的话题（控制节点输出的 _sequenced）；话题只读 rob_arm.env
+        TOPIC_CMD = os.environ['ROS_TOPIC_KINEMATICS_SWING_CMD_SEQ']
+        TOPIC_SWING_FEEDBACK = os.environ['ROS_TOPIC_SWING_FEEDBACK']
+        TOPIC_SWING_OUTPUT = os.environ['ROS_TOPIC_SWING_OUTPUT']
 
-        self.angles = {0: 0.0, 1: 0.0, 2: 0.0}   # 存储实际角度（度）
+        self.angles = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        # 各臂基准就绪标志：首帧反馈到达前拒绝增量指令（避免按 0 位累加跳变）
+        self.axis_ready = {0: False, 1: False, 2: False, 3: False, 4: False}
 
         rospy.Subscriber(TOPIC_CMD, SwingCmd, self.cmd_callback)
         rospy.Subscriber(TOPIC_SWING_FEEDBACK, SwingCmd, self.feedback_callback)
         self.output_pub = rospy.Publisher(TOPIC_SWING_OUTPUT, IntCmd, queue_size=10)
 
         # ------------------ 数据库初始化 ------------------
-        db_path = os.environ.get('DB_PATH', "ros_database.db")
+        db_path = os.environ['DB_PATH']
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_table()
         rospy.loginfo("✅ 数据库已连接，路径: %s", db_path)
@@ -70,11 +78,11 @@ class SwingSimple:
         """)
         self.conn.commit()
 
-    def _insert_sensor_log(self, model_id, device_id, position, note_str):
+    def _insert_sensor_log(self, module_id, device_id, position, note_str):
         """插入一条传感器日志，sensor_ID 填 device_id"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.") + f"{datetime.now().microsecond:06d}"[:6]
         data_json = json.dumps({
-            "model_id": model_id,
+            "module_id": module_id,
             "device_id": device_id,
             "position": position
         })
@@ -82,20 +90,17 @@ class SwingSimple:
             self.conn.execute("""
                 INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (now, 2, 1, device_id, 2, data_json, 0, note_str))
+            """, (now, 1, 1, device_id, 2, data_json, 0, note_str))
             self.conn.commit()
         except Exception as e:
             rospy.logerr("数据库写入失败: %s", e)
 
     def _device_to_arm_idx(self, device_id):
-        if device_id == 34: return 0
-        if device_id == 66: return 1
-        if device_id == 98: return 2
+        """V2：device_id 即轴号；摆动轴 axis ∈ {2,6,10,14,18}，arm_idx=(axis-1)//4"""
+        axis = int(device_id)
+        if axis in (2, 6, 10, 14, 18):
+            return (axis - 1) // 4
         return -1
-
-    def _tick_to_angle(self, tick):
-        """编码器 tick → 角度（°）"""
-        return (tick - self.ENC_MID) * self.DEGREE_PER_TICK
 
     def cmd_callback(self, msg):
         device_id = msg.device_id
@@ -105,30 +110,37 @@ class SwingSimple:
             return
 
         target_delta_deg = msg.position[0]
+        # 基准保护：首帧反馈到达前不知道当前角，拒绝增量累加
+        if not self.axis_ready[arm_idx]:
+            rospy.logwarn_throttle(2.0,
+                f"⚠️ Arm{arm_idx+1} 摆动轴尚无反馈基准，请先回零/等待反馈，本次增量 {target_delta_deg:+.4f}° 已拒绝")
+            return
         current_angle = self.angles[arm_idx]
         target_reach_deg = current_angle + target_delta_deg
+        # V2 摆动角限幅 ±15°
+        target_reach_deg = max(-self.MAX_SWING_ANGLE, min(target_reach_deg, self.MAX_SWING_ANGLE))
 
-        target_tick = self.ENC_MID + int(round(target_reach_deg / self.DEGREE_PER_TICK))
-        target_tick = max(self.ENC_MIN, min(target_tick, self.ENC_MAX))
+        # V2：直接输出绝对角度（0.01°）
+        target_centi_deg = int(round(target_reach_deg * 100))
 
         int_cmd_msg = IntCmd()
         int_cmd_msg.header = Header(stamp=rospy.Time.now())
         int_cmd_msg.module_id = msg.module_id
         int_cmd_msg.device_id = device_id
-        int_cmd_msg.position = [target_tick]
+        int_cmd_msg.position = [target_centi_deg]
         self.output_pub.publish(int_cmd_msg)
 
-        # 写入数据库
-        self._insert_sensor_log(msg.module_id, device_id, target_tick, "下发摆动指令数据")
-
-        rospy.loginfo(f"Arm{arm_idx+1} 摆动指令：{target_delta_deg:+.4f}° → 下发编码：{target_tick}")
+        self._insert_sensor_log(msg.module_id, device_id, target_centi_deg, "下发摆动指令数据")
+        rospy.loginfo(f"Arm{arm_idx+1} 摆动指令：{target_delta_deg:+.4f}° → 下发角度(0.01°)：{target_centi_deg}")
 
     def feedback_callback(self, msg):
-        """将编码器 tick 转换为角度后存储"""
+        """V2：feedback_node 已换算为角度（°），存储并置基准就绪标志"""
         arm_idx = self._device_to_arm_idx(msg.device_id)
         if arm_idx >= 0:
-            tick = msg.position[0]
-            self.angles[arm_idx] = self._tick_to_angle(tick)
+            self.angles[arm_idx] = msg.position[0]
+            if not self.axis_ready[arm_idx]:
+                self.axis_ready[arm_idx] = True
+                rospy.loginfo(f"✅ Arm{arm_idx+1} 摆动轴基准已建立（首帧反馈 {msg.position[0]:+.3f}°），允许增量控制")
 
     def shutdown_hook(self):
         self.conn.close()

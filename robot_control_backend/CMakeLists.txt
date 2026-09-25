@@ -58,6 +58,15 @@ find_package(catkin REQUIRED COMPONENTS
  IntCmd.msg
  GyroFeedback.msg
  TuoLuoYi.msg
+ Heartbeat.msg
+ AxisStatus.msg
+ ArriveNotification.msg
+ StopNotification.msg
+ CmdAck.msg
+ HomeStatus.msg
+ AxisFault.msg
+ LimitEvent.msg
+ VacuumLoss.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -204,6 +213,10 @@ catkin_install_python(PROGRAMS
   scripts/swing_node.py
   scripts/telescopic_node.py
   scripts/hardware_node.py
+  scripts/softstop_node.py
+  scripts/control_node.py
+  scripts/tuo_luo_yi.py
+  scripts/imu_average_calculator_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

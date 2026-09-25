@@ -30,17 +30,24 @@ class PressureAverageCalculator:
         load_env_config()
         rospy.init_node('pressure_average_calculator')
         
-        # 从环境变量读取配置参数
-        self.SAMPLE_WINDOW = float(os.environ.get('PRESSURE_SAMPLE_WINDOW', '5.0'))
-        self.WINDOW_SIZE = int(os.environ.get('PRESSURE_WINDOW_SIZE', '50'))
-        self.MODULE_ID = int(os.environ.get('MODULE_ID', '17'))
-        self.DEV_SENSOR = int(os.environ.get('DEV_SENSOR', '49'))
-        
-        # 从环境变量读取话题名称
-        TOPIC_SENSOR_RAW = os.environ.get('ROS_TOPIC_SENSOR_RAW', '/hardware/sensor_raw')
-        TOPIC_SENSOR_AVG = os.environ.get('ROS_TOPIC_SENSOR_AVG', '/hardware/sensor_feedback')
-        TOPIC_SAMPLE_TRIGGER = os.environ.get('ROS_TOPIC_PRESSURE_SAMPLE_TRIGGER', '/control/pressure_sample_trigger')
-        
+        # 仅从 rob_arm.env 读取静态配置（配置文件一改无需改代码，配置缺失则 KeyError 立即暴露）
+        # 采集参数
+        self.SAMPLE_WINDOW = float(os.environ['PRESSURE_SAMPLE_WINDOW'])
+        self.WINDOW_SIZE = int(os.environ['PRESSURE_WINDOW_SIZE'])
+        # V2：压力为臂级传感器，device_id 即 AXIS = 21 + arm_idx（21~25）
+        arm_base = int(os.environ['CAN_SENSOR_ARM_BASE'])
+        pressure_arm = int(os.environ['PRESSURE_SENSOR_ARM']) - 1
+        self.DEV_SENSOR = arm_base + pressure_arm
+
+        # 从 rob_arm.env 读取话题名
+        TOPIC_SENSOR_RAW = os.environ['ROS_TOPIC_SENSOR_RAW']
+        TOPIC_SENSOR_AVG = os.environ['ROS_TOPIC_SENSOR_AVG']
+        TOPIC_SAMPLE_TRIGGER = os.environ['ROS_TOPIC_PRESSURE_SAMPLE_TRIGGER']
+
+        # 当前采集上下文：runtime 值，只来自 trigger 消息，不走 env / 不硬编码
+        self.current_module_id = None
+        self.current_device_id = None
+
         # 数据缓存
         self.data_buffer = []  # 存储原始数据
         self.is_collecting = False  # 是否正在采集数据
@@ -76,15 +83,28 @@ class PressureAverageCalculator:
     def trigger_callback(self, msg):
         """
         采集触发回调函数
-        收到触发信号后，开始采集数据窗口
+
+        关键约束：
+        1. module_id 只取前端下发（IntCmd.module_id），**绝不**从 env 读取，也不硬编码；
+           前端改了 module_id，本节点跟着走——不需要重启、不需要改代码。
+        2. device_id 必须取触发消息中携带的值；若缺失/为 0 视为非法触发。
         """
-        rospy.loginfo(f"📡 收到采集触发信号，module_id={msg.module_id}")
-        
+        mid = int(msg.module_id)
+        did = int(msg.device_id)
+
+        if mid == 0 or did == 0:
+            rospy.logwarn(f"⚠️ 触发消息 module_id={mid} / device_id={did} 无效，已拒绝本次采集")
+            return
+
+        self.current_module_id = mid
+        self.current_device_id = did
+        rospy.loginfo(f"📡 收到采集触发信号，module_id={mid}，device_id={did}")
+
         # 清空缓存，开始新的采集窗口
         self.data_buffer = []
         self.is_collecting = True
         self.collect_start_time = rospy.Time.now().to_sec()
-        
+
         rospy.loginfo(f"⏱️  开始采集 {self.SAMPLE_WINDOW} 秒的压力传感器数据")
     
     def sensor_callback(self, msg):
@@ -105,6 +125,12 @@ class PressureAverageCalculator:
             
             # 将数据加入缓存
             if len(msg.position) > 0:
+                # 采集期间 device_id 应与触发一致，不一致则 warn（多臂场景下可用于诊断）
+                if (self.current_device_id is not None
+                        and int(msg.device_id) != self.current_device_id):
+                    rospy.logwarn_throttle(2.0,
+                        f"⚠️ 采集期间收到 device_id={msg.device_id} 的原始数据"
+                        f"（触发为 {self.current_device_id}），可能多臂数据串扰")
                 self.data_buffer.append(msg.position[0])
                 
                 # 如果缓存超过窗口大小，移除最旧的数据
@@ -115,32 +141,45 @@ class PressureAverageCalculator:
     
     def calculate_and_publish_average(self):
         """
-        计算平均值并发布结果
+        计算平均值并发布结果。
+        module_id / device_id **必须**来自本次 trigger 上下文，缺失则拒绝发布（理论上不会走到）。
         """
         if not self.data_buffer:
             rospy.logwarn("⚠️  没有采集到数据，无法计算平均值")
             return
-        
+
+        # 理论上正常流程一定有 trigger 上下文；如果没有（异常路径：比如手动切了 is_collecting），拒绝发布
+        module_id = self.current_module_id
+        device_id = self.current_device_id
+        if module_id is None or device_id is None:
+            rospy.logerr("❌ 采集窗口结束但没有 trigger 上下文（module_id/device_id=None），已拒绝发布——检查触发链路")
+            self.data_buffer = []
+            return
+
         # 计算平均值
         average_value = np.mean(self.data_buffer)
-        
+
         # 构建平均值消息
         avg_msg = SensorCmd()
         avg_msg.header = Header()
         avg_msg.header.stamp = rospy.Time.now()
         avg_msg.header.frame_id = "pressure_avg"
         avg_msg.id = 0
-        avg_msg.module_id = self.MODULE_ID
-        avg_msg.device_id = self.DEV_SENSOR
+        avg_msg.module_id = module_id   # 只认触发消息中的 module_id（前端下发）
+        avg_msg.device_id = device_id   # 只认触发消息中的 device_id
         avg_msg.position = [average_value]
-        
+
         # 发布平均值结果
         self.avg_pub.publish(avg_msg)
-        
-        rospy.loginfo(f"✅ 已发布压力传感器平均值: {average_value:.2f} N (采集了 {len(self.data_buffer)} 个数据点)")
-        
-        # 清空缓存
+
+        rospy.loginfo(f"✅ 已发布压力传感器平均值: {average_value:.2f} N "
+                      f"(module_id={module_id}, device_id={device_id}, "
+                      f"采集了 {len(self.data_buffer)} 个数据点)")
+
+        # 清空缓存 + 清空本次采集的上下文
         self.data_buffer = []
+        self.current_module_id = None
+        self.current_device_id = None
 
 if __name__ == '__main__':
     try:

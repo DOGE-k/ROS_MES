@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-压力传感器控制节点 - 独立节点（立即响应版）
-订阅话题：/control/sensor_cmd
-发布话题：/arm/cmd_vel (IntCmd), /control/pressure_sample_trigger (IntCmd)
+压力传感器控制节点 V2 - 臂级寻址 + RateIdx
 
-功能：接收触发信号后，立即发送压力传感器开关序列（关→0.5s→开）
-      并触发5秒数据采集窗口
+V2 关键变更：
+  - 压力传感器为臂级（device_id 即 AXIS：21~25，臂号=device_id-20）
+  - position = [cmd_type, cmd_value, rate_idx]，新增 RateIdx 上报速率索引
+  - 默认臂 = PRESSURE_SENSOR_ARM（env，默认1），速率索引 = CAN_SENSOR_RATE_DEFAULT（env，默认1）
 """
 
 import rospy
 import os
-import time
 import sqlite3
 import json
 from std_msgs.msg import Header
@@ -31,8 +30,8 @@ def load_env_config():
 
 # ====================== 数据库：强制建表，绝对成功 ======================
 def setup_database():
-    # 直接用工作目录下的 ros_database.db，和节点A/B 完全一致
-    db_path = os.environ.get('DB_PATH', "ros_database.db")
+    # 数据库路径只读 rob_arm.env，和节点A/B 完全一致
+    db_path = os.environ['DB_PATH']
     
     # 线程安全，防止ROS报错
     conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -40,7 +39,7 @@ def setup_database():
 
     # 强制建表，不存在就创建
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS sensor_logs (
+    CREATE TABLE IF NOT EXISTS sensor_log (
         Createtime DATETIME NOT NULL,
         creater_id INTEGER NOT NULL,
         Work_ID INTEGER NOT NULL,
@@ -53,7 +52,7 @@ def setup_database():
     );
     """)
     conn.commit()
-    rospy.loginfo("✅ 数据库表 sensor_logs 已创建/已存在")
+    rospy.loginfo("✅ 数据库表 sensor_log 已创建/已存在")
     return conn
 
 # ====================== 写入数据库 ======================
@@ -64,8 +63,8 @@ def log_sensor_state(conn, sensor_id, state, action_desc):
         notes_json = json.dumps({"action": action_desc}, ensure_ascii=False)
 
         cursor.execute("""
-        INSERT INTO sensor_logs (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
-        VALUES (datetime('now'), 1, 1, ?, 2, ?, 0, ?)
+        INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
+        VALUES (datetime.now(), 1, 1, ?, 2, ?, 0, ?)
         """, (sensor_id, data_json, notes_json))
         conn.commit()
         rospy.loginfo(f"✅ 数据库写入成功：sensor={sensor_id}, state={state}")
@@ -77,14 +76,22 @@ class PressureSensorControlNode:
         load_env_config()
         rospy.init_node("pressure_sensor_control_node")
         
-        # 配置参数（从环境变量读取）
-        self.DEV_SENSOR = int(os.environ.get('DEV_SENSOR', '49'))
-        self.SAMPLE_WINDOW = float(os.environ.get('PRESSURE_SAMPLE_WINDOW', '5.0'))
-        
-        # 话题名称（从环境变量读取）
-        TOPIC_ARM_CMD_VEL = os.environ.get('ROS_TOPIC_ARM_CMD_VEL', '/arm/cmd_vel')
-        TOPIC_SENSOR_CMD = os.environ.get('ROS_TOPIC_SENSOR_CMD', '/control/sensor_cmd')
-        TOPIC_SAMPLE_TRIGGER = os.environ.get('ROS_TOPIC_PRESSURE_SAMPLE_TRIGGER', '/control/pressure_sample_trigger')
+        # V2：压力传感器为臂级，device_id 即 AXIS = 21 + arm_idx（21~25）
+        arm_base = int(os.environ['CAN_SENSOR_ARM_BASE'])
+        pressure_arm = int(os.environ['PRESSURE_SENSOR_ARM']) - 1  # 0-based
+        self.DEV_SENSOR = arm_base + pressure_arm
+        # 传感器命令字
+        self.CMD_TYPE_PRESSURE = 1
+        self.CMD_VALUE_STOP = 0x00
+        self.CMD_VALUE_START = 0x01
+        # V2：RateIdx 上报速率索引
+        self.RATE_IDX = int(os.environ['CAN_SENSOR_RATE_DEFAULT'])
+        self.SAMPLE_WINDOW = float(os.environ['PRESSURE_SAMPLE_WINDOW'])
+
+        # 话题名称（只读 rob_arm.env，无硬编码默认值）
+        TOPIC_ARM_CMD_VEL = os.environ['ROS_TOPIC_ARM_CMD_VEL']
+        TOPIC_SENSOR_CMD = os.environ['ROS_TOPIC_SENSOR_CMD']
+        TOPIC_SAMPLE_TRIGGER = os.environ['ROS_TOPIC_PRESSURE_SAMPLE_TRIGGER']
         
         rospy.loginfo(f"压力传感器控制节点已启动（立即响应模式）")
         rospy.loginfo(f"📥 订阅触发话题: {TOPIC_SENSOR_CMD}")
@@ -110,36 +117,33 @@ class PressureSensorControlNode:
         self.send_sensor_sequence(target_module_id)
 
     def send_sensor_sequence(self, module_id):
-        """发送压力传感器开关序列（2帧，间隔0.5秒）并触发数据采集"""
-        rospy.loginfo("🔌 发送压力传感器指令序列")
+        """V2：压力通道显式停止/开启（含 RateIdx），并触发数据采集"""
+        rospy.loginfo("🔌 发送压力传感器 CAN 显式启停命令（臂级 device_id=%d）", self.DEV_SENSOR)
 
-        # 第1帧：关闭
+        # 第1帧：显式停止 position=[cmd_type, cmd_value, rate_idx]
         cmd1 = IntCmd()
         cmd1.header = Header()
         cmd1.header.stamp = rospy.Time.now()
         cmd1.module_id = module_id
         cmd1.device_id = self.DEV_SENSOR
-        cmd1.position = [0]
+        cmd1.position = [self.CMD_TYPE_PRESSURE, self.CMD_VALUE_STOP, self.RATE_IDX]
         self.pub_sensor_cmd.publish(cmd1)
-        log_sensor_state(self.db_conn, self.DEV_SENSOR, 0, "关闭压力传感器")
-        rospy.loginfo(f"压力传感器指令1: module={module_id}, pos=0")
+        log_sensor_state(self.db_conn, self.DEV_SENSOR, 0, "显式停止压力通道")
+        rospy.loginfo(f"压力通道停止: module={module_id}, device_id={self.DEV_SENSOR}")
 
-        # 延迟0.5秒发送第2帧
-        time.sleep(0.5)
-
-        # 第2帧：打开
+        # 第2帧：显式开启
         cmd2 = IntCmd()
         cmd2.header = Header()
         cmd2.header.stamp = rospy.Time.now()
         cmd2.module_id = module_id
         cmd2.device_id = self.DEV_SENSOR
-        cmd2.position = [1]
+        cmd2.position = [self.CMD_TYPE_PRESSURE, self.CMD_VALUE_START, self.RATE_IDX]
         self.pub_sensor_cmd.publish(cmd2)
-        log_sensor_state(self.db_conn, self.DEV_SENSOR, 1, "打开压力传感器")
-        rospy.loginfo(f"压力传感器指令2: module={module_id}, pos=1")
+        log_sensor_state(self.db_conn, self.DEV_SENSOR, 1, "显式开启压力通道")
+        rospy.loginfo(f"压力通道开启: module={module_id}, device_id={self.DEV_SENSOR}")
 
-        rospy.loginfo("✅ 压力传感器指令序列发送完成")
-        
+        rospy.loginfo("✅ 压力传感器显式启停命令发送完成")
+
         # 发送采集触发信号，通知平均值计算节点开始采集5秒数据
         trigger_msg = IntCmd()
         trigger_msg.header = Header()

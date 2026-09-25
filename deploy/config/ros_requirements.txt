@@ -11,10 +11,10 @@ scipy>=1.7.0
 # ---- 点云处理 ----
 open3d>=0.15.0
 
-# ---- 串口通信 ----
+# ---- 串口通信（V1.1 主链路已迁移至 CAN；serial_test_node 等调试工具仍在使用，保留）----
 pyserial>=3.5
 
-# ---- CAN 总线（可选，仅硬件节点 CAN 版本需要）----
+# ---- CAN 总线（V1.1 起为 hardware_node 必需依赖，CAN 2.0B 29位扩展帧）----
 python-can>=4.0.0
 
 # ---- Web 服务（data_process_node 内嵌 Flask）----

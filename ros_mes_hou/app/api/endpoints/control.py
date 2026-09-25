@@ -31,11 +31,14 @@ def send_fine_tuning(
         record=record,
         creater_id=1,
     )
+    business_module_id = int(record.module_id or 0)
     business_device_id = int(record.device_id or 0)
     position = float(record.position if record.position is not None else db_record.new_value)
-    payload = build_fine_tuning_publish_payload(db_record.parameter_name, position)
+    # V2：module_id/device_id 直接透传前端请求，网关不再写死 17/33/34/35
+    payload = build_fine_tuning_publish_payload(
+        db_record.parameter_name, position, business_module_id, business_device_id)
     payload["business"] = {
-        "module_id": record.module_id,
+        "module_id": business_module_id,
         "device_id": business_device_id,
         "unit_id": record.unit_id,
     }

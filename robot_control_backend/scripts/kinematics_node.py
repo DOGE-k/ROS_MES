@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-节点B：角度解算与控制指令发布（所有参数与话题强制从 .env 读取，无默认值）
+节点B（V2）：角度解算与控制指令发布（所有参数与话题强制从 .env 读取）
+
+V2 关键变更：
+  - 5 臂映射（V1.1 为 3 臂）
+  - device_id 即 AXIS 寻址单元（1~20轴/21~25臂级），每臂 4 轴（J1旋转/J2摆动/J3空/J4伸缩）
+  - 摆动角上限 ±15°（V1.1 为 ±20°，由 rob_arm.env 中 MAX_SWING_ANGLE 控制）
 """
 
 import rospy
@@ -48,6 +53,10 @@ def update_config_from_env():
     Config.ARM_MAX_EXTEND   = float(os.environ['ARM_MAX_EXTEND'])       # cm
     Config.MIN_LENGTH_MM    = float(os.environ['MIN_LENGTH_MM'])
     Config.MAX_LENGTH_MM    = float(os.environ['MAX_LENGTH_MM'])
+    # 伸缩轴丝杠导程（mm/转），用于 角度(°) ↔ 长度(mm) 换算
+    Config.MM_PER_REV       = float(os.environ['MM_PER_REV'])
+    # 单次伸缩增量限幅（mm），publish_cmd 增量限幅用；与 telescopic_node 共用同一配置键
+    Config.TELESCOPIC_MAX_DELTA_MM = float(os.environ['TELESCOPIC_MAX_DELTA_MM'])
     Config.MAX_WORKERS      = int(os.environ['MAX_WORKERS'])
     Config.CYCLE_INTERVAL   = float(os.environ['CYCLE_INTERVAL'])       # 指令周期间隔
 
@@ -103,7 +112,7 @@ class KinematicsNode:
         self.pub_telescopic = rospy.Publisher(topic_tel_cmd, TelescopicCmd, queue_size=10)
 
         # ---------- 数据库初始化 ----------
-        db_path = os.environ.get('DB_PATH', 'ros_database.db')   # 数据库路径可保留默认值（非强制性配置）
+        db_path = os.environ['DB_PATH']   # 只读 rob_arm.env
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_table()
         rospy.loginfo("✅ 节点B 数据库已连接，路径: %s", db_path)
@@ -131,24 +140,27 @@ class KinematicsNode:
 
     @staticmethod
     def arm_to_unit(arm_id):
-        """臂编号 -> 单元号映射"""
-        return {1: 32, 2: 64, 3: 96}.get(arm_id, 0)
+        """V2：5 臂映射，单元号即臂号"""
+        return {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}.get(arm_id, 0)
 
-    # ----- 硬件反馈回调（新 device_id 规则） -----
+    # ----- 硬件反馈回调（V2：device_id 即轴号，臂号=(轴号-1)//4+1）-----
     def rotation_feedback_cb(self, msg):
-        arm_id = (msg.device_id - 1) // 32        # 33→1, 65→2, 97→3
+        arm_id = (int(msg.device_id) - 1) // 4 + 1
         self._ensure_arm(arm_id)
         self.current_state[arm_id]["rotation"] = msg.position[0]
 
     def swing_feedback_cb(self, msg):
-        arm_id = (msg.device_id - 2) // 32        # 34→1, 66→2, 98→3
+        arm_id = (int(msg.device_id) - 1) // 4 + 1
         self._ensure_arm(arm_id)
         self.current_state[arm_id]["swing"] = msg.position[0]
 
     def telescopic_feedback_cb(self, msg):
-        arm_id = (msg.device_id - 3) // 32        # 35→1, 67→2, 99→3
+        """伸缩轴反馈为角度(°)，需换算为 mm 后存入 current_state（cur_tel 按 mm 使用）"""
+        arm_id = (int(msg.device_id) - 1) // 4 + 1
         self._ensure_arm(arm_id)
-        self.current_state[arm_id]["telescopic"] = msg.position[0]
+        angle_deg = msg.position[0]
+        length_mm = angle_deg * (Config.MM_PER_REV / 360.0)
+        self.current_state[arm_id]["telescopic"] = length_mm
 
     def _ensure_arm(self, arm_id):
         if arm_id not in self.current_state:
@@ -170,8 +182,10 @@ class KinematicsNode:
 
             for mod_res in all_module_results:
                 mid = mod_res["module_id"]
+                active_arm_ids = set()
                 for arm_res in mod_res["arm_result"]:
                     arm_id = arm_res["arm_id"]
+                    active_arm_ids.add(arm_id)
                     cmd = {
                         "module_id": mid,
                         "arm_id": arm_id,
@@ -183,6 +197,17 @@ class KinematicsNode:
                         self._ensure_arm(arm_id)
                         self.arm_states[arm_id]["pending_cmds"].append(cmd)
                 rospy.loginfo(f"📥 模块{mid} 指令已加入队列")
+
+                # V2 空指令占位：本模块未分配到的臂无需动作，补齐 position=0 的空指令，
+                # 保证控制节点能收齐 5 臂×3 轴（否则其指令缓冲会永久等待）
+                for arm_id in range(1, 6):
+                    if arm_id in active_arm_ids:
+                        continue
+                    zero_cmd = {"module_id": mid, "arm_id": arm_id, "empty": True}
+                    with self.lock:
+                        self._ensure_arm(arm_id)
+                        self.arm_states[arm_id]["pending_cmds"].append(zero_cmd)
+                    rospy.loginfo(f"📥 模块{mid} Arm{arm_id} 无需动作，已生成 position=0 空指令占位")
 
             for arm_id in self.arm_states.keys():
                 self.process_arm_queue(arm_id)
@@ -218,30 +243,43 @@ class KinematicsNode:
         """发布一条指令（三个轴）并写入数据库"""
         mid = cmd["module_id"]
         arm_id = cmd["arm_id"]
-        target_j1 = cmd["target_j1"]
-        target_j2 = cmd["target_j2"]
-        target_j3_cm = cmd["target_j3_cm"]
+        # 空指令无目标值，用 0 占位（后续分支不会使用）
+        target_j1 = cmd.get("target_j1", 0.0)
+        target_j2 = cmd.get("target_j2", 0.0)
+        target_j3_cm = cmd.get("target_j3_cm", 0.0)
 
         self._ensure_arm(arm_id)
-        cur_rot = self.current_state[arm_id]["rotation"]
-        cur_sw  = self.current_state[arm_id]["swing"]
-        cur_tel = self.current_state[arm_id]["telescopic"]
 
-        # 计算增量
-        delta_rot = cur_rot - target_j1
-        delta_sw  = target_j2 - cur_sw
-        target_j3_mm = target_j3_cm * 10.0
-        delta_tel = target_j3_mm - cur_tel
+        # V2 空指令：该臂本模块无需动作，三轴增量精确为 0（不读取反馈基准，避免缺反馈时取不到状态）
+        if cmd.get("empty"):
+            delta_rot = delta_sw = delta_tel = 0.0
+        else:
+            cur_rot = self.current_state[arm_id]["rotation"]
+            cur_sw  = self.current_state[arm_id]["swing"]
+            cur_tel = self.current_state[arm_id]["telescopic"]
 
-        # 增量限幅
-        delta_rot = max(-180, min(delta_rot, 180))
-        delta_sw  = max(-Config.MAX_SWING_ANGLE, min(delta_sw, Config.MAX_SWING_ANGLE))
-        delta_tel = max(-100, min(delta_tel, 100))
+            # 计算增量（目标 - 当前 = 应移动的增量）
+            delta_rot = target_j1 - cur_rot
+            delta_sw  = target_j2 - cur_sw
+            target_j3_mm = target_j3_cm * 10.0
+            delta_tel = target_j3_mm - cur_tel
 
-        # 新 device_id 规则
-        dev_rot = arm_id * 32 + 1
-        dev_sw  = arm_id * 32 + 2
-        dev_tel = arm_id * 32 + 3
+            # 增量限幅
+            delta_rot = max(-180, min(delta_rot, 180))
+            delta_sw  = max(-Config.MAX_SWING_ANGLE, min(delta_sw, Config.MAX_SWING_ANGLE))
+            delta_tel = max(-Config.TELESCOPIC_MAX_DELTA_MM, min(delta_tel, Config.TELESCOPIC_MAX_DELTA_MM))
+
+        # V2 device_id 规则（device_id 即 AXIS 寻址单元，不再乘 100）：
+        #   每臂 4 轴（J1旋转/J2摆动/J3空置/J4伸缩），轴号=1~20
+        #   Arm1: axis 1/2/4 → device_id 1/2/4
+        #   Arm2: axis 5/6/8 → device_id 5/6/8  ...
+        #   Arm5: axis17/18/20 → device_id 17/18/20
+        axis_rot = (arm_id - 1) * 4 + 1
+        axis_sw  = (arm_id - 1) * 4 + 2
+        axis_tel = (arm_id - 1) * 4 + 4
+        dev_rot = axis_rot
+        dev_sw  = axis_sw
+        dev_tel = axis_tel
 
         now = rospy.Time.now()
         # 旋转增量
@@ -270,10 +308,13 @@ class KinematicsNode:
         unit = self.arm_to_unit(arm_id)
 
         coord_dict = {str(unit): alpha}
+        axis_rot = (arm_id - 1) * 4 + 1
+        axis_sw  = (arm_id - 1) * 4 + 2
+        axis_tel = (arm_id - 1) * 4 + 4
         position_dict = {
-            str(arm_id * 32 + 1): round(delta_rot, 2),
-            str(arm_id * 32 + 2): round(delta_sw, 2),
-            str(arm_id * 32 + 3): round(delta_tel, 1)
+            str(axis_rot): round(delta_rot, 2),
+            str(axis_sw): round(delta_sw, 2),
+            str(axis_tel): round(delta_tel, 1)
         }
 
         now = datetime.now()

@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+伸缩轴节点 V2
+
+V2 变更：
+  - 支持 5 臂
+  - 伸缩轴 axis ∈ {4,8,12,16,20}，arm_idx=(axis-1)//4（J4，每臂第4轴）
+  - 位置量从编码器 tick 改为绝对角度（0.01°，int32）
+  - mm ↔ 角度机械换算：angle_deg = length_mm × (360 / MM_PER_REV)
+  - 删除 ENC_MID/ENC_MIN/ENC_MAX/DEGREE_PER_TICK 等编码器系数
+"""
 import rospy
 import os
 import sqlite3
@@ -23,33 +33,33 @@ class TelescopeSimple:
     def __init__(self):
         load_env_config()
         rospy.init_node("telescope_simple_node")
-        rospy.loginfo("伸缩轴节点启动 (支持 Arm1/2/3，统一下发话题)")
+        rospy.loginfo("✅ 伸缩轴节点 启动（5 臂，mm↔角度 0.01°）")
 
-        self.DEGREE_PER_TICK = float(os.environ.get('DEGREE_PER_TICK', '0.01248'))
-        self.MM_PER_REV = float(os.environ.get('MM_PER_REV', '0.7'))
-        self.TICK_PER_MM = (360.0 / self.MM_PER_REV) / self.DEGREE_PER_TICK
-        self.MODULE_ID = int(os.environ.get('MODULE_ID', '17'))
+        # V2：module_id 不做静态配置，cmd_callback 从指令消息（msg.module_id）透传
+        # V2 机械换算：每转导程 MM_PER_REV mm → 360°，即 1mm = 360/MM_PER_REV 度
+        mm_per_rev = float(os.environ['MM_PER_REV'])
+        self.deg_per_mm = 360.0 / mm_per_rev
+        self.mm_per_deg = mm_per_rev / 360.0
 
-        self.ENC_MID = int(os.environ.get('ENC_MID', '15000'))
-        self.ENC_MIN = int(os.environ.get('ENC_MIN', '580'))
-        self.ENC_MAX = int(os.environ.get('ENC_MAX', '29420'))
+        self.MIN_LENGTH = float(os.environ['MIN_LENGTH_MM'])
+        self.MAX_LENGTH = float(os.environ['MAX_LENGTH_MM'])
+        # V2：单次伸缩增量限幅（mm），与 kinematics_node 共用同一配置
+        self.MAX_DELTA_MM = float(os.environ['TELESCOPIC_MAX_DELTA_MM'])
 
-        self.MIN_LENGTH = float(os.environ.get('MIN_LENGTH', '0.0'))
-        self.MAX_LENGTH = float(os.environ.get('MAX_LENGTH', '150.0'))
+        # 只订阅一个统一下发的话题（控制节点输出的 _sequenced）；话题只读 rob_arm.env
+        TOPIC_CMD = os.environ['ROS_TOPIC_KINEMATICS_TELESCOPIC_CMD_SEQ']
+        TOPIC_TELESCOPE_FEEDBACK = os.environ['ROS_TOPIC_TELESCOPE_FEEDBACK']
+        TOPIC_TELESCOPE_OUTPUT = os.environ['ROS_TOPIC_TELESCOPE_OUTPUT']
 
-        # 只订阅一个统一下发的话题（控制节点输出的 _sequenced）
-        TOPIC_CMD = os.environ.get('ROS_TOPIC_KINEMATICS_TELESCOPIC_CMD', '/control/kinematics_telescopic_cmd_sequenced')
-        TOPIC_TELESCOPE_FEEDBACK = os.environ.get('ROS_TOPIC_TELESCOPE_FEEDBACK', '/hardware/telescope_feedback')
-        TOPIC_TELESCOPE_OUTPUT = os.environ.get('ROS_TOPIC_TELESCOPE_OUTPUT', '/hardware/telescope_output')
-
-        self.lengths = {0: 0.0, 1: 0.0, 2: 0.0}   # 存储实际长度（mm）
+        self.lengths = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        self.axis_ready = {0: False, 1: False, 2: False, 3: False, 4: False}
 
         rospy.Subscriber(TOPIC_CMD, TelescopicCmd, self.cmd_callback)
         rospy.Subscriber(TOPIC_TELESCOPE_FEEDBACK, TelescopicCmd, self.feedback_callback)
         self.output_pub = rospy.Publisher(TOPIC_TELESCOPE_OUTPUT, IntCmd, queue_size=10)
 
         # ------------------ 数据库初始化 ------------------
-        db_path = os.environ.get('DB_PATH', "ros_database.db")
+        db_path = os.environ['DB_PATH']
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_table()
         rospy.loginfo("✅ 数据库已连接，路径: %s", db_path)
@@ -73,11 +83,11 @@ class TelescopeSimple:
         """)
         self.conn.commit()
 
-    def _insert_sensor_log(self, model_id, device_id, position, note_str):
+    def _insert_sensor_log(self, module_id, device_id, position, note_str):
         """插入一条传感器日志，sensor_ID 填 device_id"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.") + f"{datetime.now().microsecond:06d}"[:6]
         data_json = json.dumps({
-            "model_id": model_id,
+            "module_id": module_id,
             "device_id": device_id,
             "position": position
         })
@@ -91,14 +101,11 @@ class TelescopeSimple:
             rospy.logerr("数据库写入失败: %s", e)
 
     def _device_to_arm_idx(self, device_id):
-        if device_id == 35: return 0
-        if device_id == 67: return 1
-        if device_id == 99: return 2
+        """V2：device_id 即轴号；伸缩轴 axis ∈ {4,8,12,16,20}，arm_idx=(axis-1)//4"""
+        axis = int(device_id)
+        if axis in (4, 8, 12, 16, 20):
+            return (axis - 1) // 4
         return -1
-
-    def _tick_to_length(self, tick):
-        """编码器 tick → 长度（mm）"""
-        return (tick - self.ENC_MID) / self.TICK_PER_MM
 
     def cmd_callback(self, msg):
         device_id = msg.device_id
@@ -108,33 +115,40 @@ class TelescopeSimple:
             return
 
         target_delta_mm = msg.position[0]
-        target_delta_mm = max(-50, min(target_delta_mm, 50))
+        # 基准保护：首帧反馈到达前不知道当前长度，拒绝增量累加
+        if not self.axis_ready[arm_idx]:
+            rospy.logwarn_throttle(2.0,
+                f"⚠️ Arm{arm_idx+1} 伸缩轴尚无反馈基准，请先回零/等待反馈，本次增量 {target_delta_mm:+.2f}mm 已拒绝")
+            return
+        target_delta_mm = max(-self.MAX_DELTA_MM, min(target_delta_mm, self.MAX_DELTA_MM))
 
         current_length = self.lengths[arm_idx]
         target_reach_mm = current_length + target_delta_mm
         target_reach_mm = max(self.MIN_LENGTH, min(target_reach_mm, self.MAX_LENGTH))
 
-        target_tick = self.ENC_MID + int(round(target_reach_mm * self.TICK_PER_MM))
-        target_tick = max(self.ENC_MIN, min(target_tick, self.ENC_MAX))
+        # V2：mm → 角度 → 0.01°（int32）
+        target_deg = target_reach_mm * self.deg_per_mm
+        target_centi_deg = int(round(target_deg * 100))
 
         int_cmd_msg = IntCmd()
         int_cmd_msg.header = Header(stamp=rospy.Time.now())
         int_cmd_msg.module_id = msg.module_id
         int_cmd_msg.device_id = device_id
-        int_cmd_msg.position = [target_tick]
+        int_cmd_msg.position = [target_centi_deg]
         self.output_pub.publish(int_cmd_msg)
 
-        # 写入数据库
-        self._insert_sensor_log(msg.module_id, device_id, target_tick, "下发伸缩指令数据")
-
-        rospy.loginfo(f"Arm{arm_idx+1} 伸缩指令：{target_delta_mm:+.2f}mm → 下发编码：{target_tick}")
+        self._insert_sensor_log(msg.module_id, device_id, target_centi_deg, "下发伸缩指令数据")
+        rospy.loginfo(f"Arm{arm_idx+1} 伸缩指令：{target_delta_mm:+.2f}mm → 下发角度(0.01°)：{target_centi_deg}")
 
     def feedback_callback(self, msg):
-        """将编码器 tick 转换为长度后更新"""
+        """V2：feedback_node 已换算为角度（°），再换算回 mm 存储，并置基准就绪标志"""
         arm_idx = self._device_to_arm_idx(msg.device_id)
         if arm_idx >= 0:
-            tick = msg.position[0]
-            self.lengths[arm_idx] = self._tick_to_length(tick)
+            angle_deg = msg.position[0]
+            self.lengths[arm_idx] = angle_deg * self.mm_per_deg
+            if not self.axis_ready[arm_idx]:
+                self.axis_ready[arm_idx] = True
+                rospy.loginfo(f"✅ Arm{arm_idx+1} 伸缩轴基准已建立（首帧反馈 {self.lengths[arm_idx]:+.2f}mm），允许增量控制")
 
     def shutdown_hook(self):
         self.conn.close()

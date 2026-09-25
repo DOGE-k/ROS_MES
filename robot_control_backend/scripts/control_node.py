@@ -33,6 +33,9 @@ class ArmSequenceController:
         load_env_config()   # 先加载配置
         rospy.init_node("arm_sequence_controller")
 
+        # V2 空指令判定阈值：position 增量绝对值小于该值视为无需轴动（单位 °/mm）
+        self.EMPTY_CMD_EPS = 1e-6
+
         # ---------- 输出话题（发布给功能节点，强制从 .env 读取）----------
         self.pub_rot_seq = rospy.Publisher(
             os.environ['ROS_TOPIC_KINEMATICS_ROTATION_CMD_SEQ'],       # 如 /control/kinematics_rotation_cmd_sequenced
@@ -86,14 +89,22 @@ class ArmSequenceController:
 
         rospy.loginfo("🔧 控制节点启动（所有话题强制从 .env 读取）")
 
-    # ---------- device_id 解析 ----------
+    # ---------- device_id 解析（V2：device_id 即 AXIS 寻址单元）----------
     def _parse_device(self, device_id):
-        """根据新规则 (33/34/35, 65/66/67, 97/98/99) 返回 (臂索引, 关节名)"""
-        base = 32
-        arm_idx = (device_id - 1) // base - 1           # 33→0, 65→1, 97→2
-        joint_code = (device_id - 1) % base + 1         # 1=旋转, 2=摆动, 3=伸缩
-        joint_map = {1: "rotate", 2: "swing", 3: "extend"}
-        return arm_idx, joint_map[joint_code]
+        """V2 规则：device_id 即 AXIS（1~20）
+        每臂 4 轴：J1旋转/J2摆动/J3空置/J4伸缩
+        臂索引 arm_idx = (axis-1)//4（0~4，共5臂）
+        关节：axis%4==1→rotate, ==2→swing, ==0→extend（J3 即 axis%4==3 空置）
+        """
+        axis = int(device_id)
+        if axis < 1 or axis > 20:
+            raise ValueError(f"非法 device_id={axis}（允许轴号 1~20）")
+        arm_idx = (axis - 1) // 4
+        remainder = axis % 4
+        joint_map = {1: "rotate", 2: "swing", 0: "extend"}
+        if remainder not in joint_map:
+            raise ValueError(f"device_id={axis} 对应 J3 空置轴，不可下发控制")
+        return arm_idx, joint_map[remainder]
 
     # ---------- 压力传感器触发管理 ----------
     def _send_pressure_trigger(self, module_id):
@@ -147,13 +158,13 @@ class ArmSequenceController:
         self._store_cmd(msg, "extend")
 
     def _store_cmd(self, msg, joint_name):
-        """将一条指令存入缓冲，当模块的3臂×3关节都集齐后打包放入执行队列"""
+        """将一条指令存入缓冲，当模块的 5 臂×3 轴都集齐后打包放入执行队列"""
         arm_idx, _ = self._parse_device(msg.device_id)
         mid = msg.module_id
         with self.buffer_lock:
             self.cmd_buffer[mid][arm_idx][joint_name] = msg
-            if len(self.cmd_buffer[mid]) >= 3 and all(
-                len(self.cmd_buffer[mid].get(i, {})) == 3 for i in range(3)
+            if len(self.cmd_buffer[mid]) >= 5 and all(
+                len(self.cmd_buffer[mid].get(i, {})) == 3 for i in range(5)
             ):
                 pkg = {
                     "module_id": mid,
@@ -162,7 +173,7 @@ class ArmSequenceController:
                 self.ready_queue.append(pkg)
                 del self.cmd_buffer[mid]
                 rospy.loginfo(f"✅ 模块{mid} 指令集齐，加入队列")
-
+ 
     def _sequence_worker(self):
         """顺序执行线程，不断从队列取出模块指令，按阶段发送"""
         while not rospy.is_shutdown():
@@ -181,29 +192,46 @@ class ArmSequenceController:
         """执行一个完整模块的逆解指令：旋转→8s→摆动→8s→伸缩→7s后触发压力传感器"""
         mid = task["module_id"]
         arms = task["arms"]
+
+        def stage_all_empty(joint_name):
+            """V2 空指令判定：该阶段五臂的 position 增量均≈0，视为整阶段无需动作"""
+            return all(
+                abs(arms[a][joint_name].position[0]) < self.EMPTY_CMD_EPS
+                for a in arms
+            )
+
         try:
-            # 旋转阶段：同时向三臂发布旋转指令
-            for arm_idx in sorted(arms.keys()):
-                msg = arms[arm_idx]["rotate"]
-                msg.header.stamp = rospy.Time.now()
-                self.pub_rot_seq.publish(msg)
-                rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 旋转增量 {msg.position[0]:.2f}°")
-            rospy.sleep(8.0)
+            # 旋转阶段：同时向五臂发布旋转指令；五臂全为空指令则不下发、不等待
+            if stage_all_empty("rotate"):
+                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} 旋转阶段全部为空指令，直接下发下一阶段")
+            else:
+                for arm_idx in sorted(arms.keys()):
+                    msg = arms[arm_idx]["rotate"]
+                    msg.header.stamp = rospy.Time.now()
+                    self.pub_rot_seq.publish(msg)
+                    rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 旋转增量 {msg.position[0]:.2f}°")
+                rospy.sleep(8.0)
 
             # 摆动阶段
-            for arm_idx in sorted(arms.keys()):
-                msg = arms[arm_idx]["swing"]
-                msg.header.stamp = rospy.Time.now()
-                self.pub_sw_seq.publish(msg)
-                rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 摆动增量 {msg.position[0]:.2f}°")
-            rospy.sleep(8.0)
+            if stage_all_empty("swing"):
+                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} 摆动阶段全部为空指令，直接下发下一阶段")
+            else:
+                for arm_idx in sorted(arms.keys()):
+                    msg = arms[arm_idx]["swing"]
+                    msg.header.stamp = rospy.Time.now()
+                    self.pub_sw_seq.publish(msg)
+                    rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 摆动增量 {msg.position[0]:.2f}°")
+                rospy.sleep(8.0)
 
-            # 伸缩阶段
-            for arm_idx in sorted(arms.keys()):
-                msg = arms[arm_idx]["extend"]
-                msg.header.stamp = rospy.Time.now()
-                self.pub_tel_seq.publish(msg)
-                rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 伸缩增量 {msg.position[0]:.1f}mm")
+            # 伸缩阶段（阶段后无等待；全空则同样跳过下发）
+            if stage_all_empty("extend"):
+                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} 伸缩阶段全部为空指令，跳过下发")
+            else:
+                for arm_idx in sorted(arms.keys()):
+                    msg = arms[arm_idx]["extend"]
+                    msg.header.stamp = rospy.Time.now()
+                    self.pub_tel_seq.publish(msg)
+                    rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 伸缩增量 {msg.position[0]:.1f}mm")
 
             # 7秒后触发压力传感器（去抖）
             self._schedule_pressure(mid)
@@ -234,7 +262,7 @@ class ArmSequenceController:
         try:
             device_id = msg.device_id
             arm_idx, _ = self._parse_device(device_id)
-            if arm_idx < 0 or arm_idx > 2:
+            if arm_idx < 0 or arm_idx > 4:
                 rospy.logerr(f"device_id {device_id} 非法")
                 return
 
