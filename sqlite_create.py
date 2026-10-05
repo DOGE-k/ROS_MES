@@ -477,11 +477,25 @@ def create_database(db_path=DB_PATH):
         print("所有初始数据插入完成！")
 
         # 向后兼容：修复可能存在的 del_flag=NULL 数据
-        tables_with_del_flag = ['Module', 'Type', 'Unit', 'sensors', 'works', 'workflows', 'work_flow_relations',
-                                'sensor_log', 'calculation', 'point_data', 'Users', 'Drawings',
-                                'DrawingsVersion', 'Tasks']
-        for tbl in tables_with_del_flag:
-            cursor.execute(f"UPDATE {tbl} SET del_flag = 0 WHERE del_flag IS NULL")
+        # 语句全部预构建为字面常量，不含任何动态拼接（表名不可参数化，故逐表列出）
+        del_flag_fix_statements = (
+            "UPDATE Module SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE Type SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE Unit SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE sensors SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE works SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE workflows SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE work_flow_relations SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE sensor_log SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE calculation SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE point_data SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE Users SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE Drawings SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE DrawingsVersion SET del_flag = 0 WHERE del_flag IS NULL",
+            "UPDATE Tasks SET del_flag = 0 WHERE del_flag IS NULL",
+        )
+        for stmt in del_flag_fix_statements:
+            cursor.execute(stmt)
         conn.commit()
     except Exception as e:
         print(f"插入初始数据时出现异常：{e}")

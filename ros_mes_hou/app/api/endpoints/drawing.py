@@ -206,6 +206,14 @@ async def import_drawing(
     ext = os.path.splitext(file.filename)[1] or ".json"
     unique_name = f"{uuid.uuid4().hex}{ext}"
     file_path = os.path.join(UPLOAD_DIR, unique_name)
+    # 路径穿越防护：ext 源自用户上传文件名，最终写入路径必须仍在上传目录内
+    _base = os.path.realpath(UPLOAD_DIR)
+    _target = os.path.realpath(file_path)
+    try:
+        if os.path.commonpath([_base, _target]) != _base:
+            raise HTTPException(status_code=400, detail="非法的文件保存路径")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="非法的文件保存路径")
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(json_data, f, ensure_ascii=False, indent=2)
 

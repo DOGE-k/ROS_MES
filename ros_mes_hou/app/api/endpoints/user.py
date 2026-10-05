@@ -162,6 +162,14 @@ async def upload_avatar(
 
     filename = f"user_{current_user.User_ID}_{uuid.uuid4().hex[:8]}{safe_ext}"
     filepath = os.path.join(AVATAR_DIR, filename)
+    # 路径穿越防护：ext 源自用户上传文件名（已有白名单），写入路径必须仍在头像目录内
+    _base = os.path.realpath(AVATAR_DIR)
+    _target = os.path.realpath(filepath)
+    try:
+        if os.path.commonpath([_base, _target]) != _base:
+            raise HTTPException(status_code=400, detail="非法的文件保存路径")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="非法的文件保存路径")
 
     content = await file.read()
     with open(filepath, "wb") as f:

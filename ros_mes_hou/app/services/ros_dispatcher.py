@@ -8,7 +8,8 @@
 ROS_DISPATCH_COMMAND 示例：
   export ROS_DISPATCH_COMMAND="python /path/to/ros_bridge.py"
 
-后端会把 action 和 payload 以 JSON 形式通过 stdin 传给该命令。
+命令按 shell 词法拆分后直接执行（不经过 shell 解释），路径含空格请用引号包裹；
+Windows 下路径请使用正斜杠或双反斜杠。
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import subprocess
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -51,10 +53,10 @@ class RosDispatcher:
 
         try:
             completed = subprocess.run(
-                self.command,
+                shlex.split(self.command),
                 input=json.dumps(message, ensure_ascii=False),
                 text=True,
-                shell=True,
+                shell=False,
                 capture_output=True,
                 timeout=self.timeout,
                 check=True,

@@ -1,6 +1,7 @@
 import os
 import time
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
@@ -33,7 +34,15 @@ def fetch_pointcloud_view(view_name: str) -> tuple[bytes, str]:
     if view_name not in POINTCLOUD_VIEW_NAMES:
         raise HTTPException(status_code=404, detail="unknown pointcloud view")
 
+    # SSRF 防护：目标 URL 的协议与主机必须与配置的视图服务完全一致，且 view_name 已白名单
+    base = urlsplit(POINTCLOUD_VIEW_BASE_URL)
+    if base.scheme not in ("http", "https") or not base.netloc:
+        raise HTTPException(status_code=502, detail="pointcloud view service config invalid")
     url = f"{POINTCLOUD_VIEW_BASE_URL.rstrip('/')}/get_view/{view_name}"
+    target = urlsplit(url)
+    if (target.scheme, target.netloc) != (base.scheme, base.netloc):
+        raise HTTPException(status_code=502, detail="pointcloud view service config invalid")
+
     request = Request(url, headers={"Cache-Control": "no-cache"})
     try:
         with urlopen(request, timeout=2.0) as response:

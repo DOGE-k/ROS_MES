@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-10-05（五）
+
+- 安全整改：修复 Mimosa 扫描 8 个高危中用户批准的 5 项（已完成，py_compile + 冒烟通过，pytest 无回归）
+  - ① 命令注入 `ros_dispatcher.py:53`：`shell=True` → `shlex.split` + `shell=False`。⚠ 行为变化：`ROS_DISPATCH_COMMAND` 现按 shell 词法拆分后直连执行，Windows 路径需用正斜杠/引号（默认未配置该变量，现网不受影响）
+  - ② SSRF `coordination.py`：请求点云视图前校验目标 URL 的协议与主机必须与 `POINTCLOUD_VIEW_BASE_URL` 配置完全一致
+  - ③④ 路径穿越 `drawing.py` / `user.py`：上传文件写入前增加 `realpath` 包含性断言（最终路径必须仍在上传/头像目录内）
+  - ⑥ SQL 拼接 `sqlite_create.py:484`：f-string 循环 → 14 条预构建字面语句（表名无法参数化，逐表列出）
+  - **未修（用户决定）**：⑤ `sqlite_create.py:351` 默认密码种子；⑦⑧ robot_control_backend 两处 exec（队友侧，已需转告）
+- 发现：后端 13 个测试为 v1.1 之前的陈旧用例（仍在断言旧编码 41/42/43 等），修复前后对照实验确认与本侧改动无关（均 13 failed / 19 passed）
+  - `???` 待办：把 `tests/` 更新到 V1.1 预期（FEEDBACK_LABELS 1~20/21~25 等），否则测试套件长期红着失去回归价值
+- Mimosa 门禁当晚已失效（插件缓存清空），本次修复后若插件恢复，剩余高危为 ⑤⑦⑧ 三项
+
 ## 2026-10-05（四）
 
 - 全部积压改动已提交并推送 GitHub（已完成）
