@@ -11,6 +11,14 @@
 
 ---
 
+## 2026-10-05（七）
+
+- 文档目录整理（已完成）
+  - 新建 `docs/`：4 份活文档移入（接口字段 / 命名规范 / 改动记录 / V1.1 修改清单）；`docs/archive/`：3 份归档（优化建议报告、UI改版预览.html、ROS_MES-v1.0版本代码.zip），均用 `git mv` 保留历史
+  - 新增根 `README.md`（项目简介 / 启动方式 / 文档索引 / 分工说明）；`.gitignore` 补充 `.mimosa/`、`.zcodeignore`
+  - 归档前已把《优化建议报告》全部未完成 📌 待办搬迁至本文件"后面版本考虑"，未丢项
+  - `???` 提醒：交接日志位置变更为 `docs/ROS_MES_前后端改动记录.md`，此后在此更新
+
 ## 2026-10-05（六）
 
 - 修复 4 个陈旧测试文件至 V1.1 预期（已完成，**全套 27 passed + 6 subtests 全绿**，此前 13 failed）
@@ -91,7 +99,33 @@
 
 ## 后面版本考虑的事情
 
-- 认证缺口整改（前后端一起改，约半小时）：后端给 `/module`、`/coordination`、`/finetuning`、四层 CRUD、`/dashboard/stats` 等裸奔接口加鉴权；前端 `request.ts` 白名单缩减为 `/login`、`/register`；`/RosTestPage` 仅开发模式开放
-- 路由懒加载：当前打包为单个 1.24MB JS 巨包，改 `() => import(...)` 收益最大
+> 2026-10-05（七）：《优化建议报告》归档，其全部未完成 📌 待办并入本清单，原报告见 `docs/archive/`。
+
+**安全 / 接口**
+
+- 认证缺口整改（前后端一起改，约半小时）：后端给 `/module`、`/coordination`、`/finetuning`、四层 CRUD、`/dashboard/stats` 等裸奔接口加鉴权；前端 `request.ts` 白名单缩减为 `/login`、`/register`；`/RosTestPage` 仅开发模式开放（原报告 待办1）
+- 种子账号 `admin/123456`：部署前改密码（用户决定暂不修 `sqlite_create.py` 的默认密码种子）
+
+**性能**
+
+- 路由懒加载：12 个页面静态 import 打成 1.24MB 单包，改 `() => import(...)` 按路由分包，收益最大（原报告 性能1）
+- 同步接口阻塞等待（原报告 性能5，报告认为最值得改）：`coordination /send` 的 5 秒 `time.sleep` 轮询 + `rosbridge_gateway.dispatch()` 每次 `asyncio.run()` 新建连接，并发图纸下发会占满 FastAPI 线程池；改 `async def` + `httpx.AsyncClient` + rosbridge 长连接复用
+- 表格无分页：任务/图纸/工作流列表全量拉取渲染，数据量大后卡顿；可复用用户管理页的前端分页或后端加 limit/offset（原报告 性能4）
+- Element Plus 按需引入：`unplugin-vue-components` + `unplugin-auto-import`，产物可减 50%+（原报告 性能3）
+- SQLite 并发写入：`create_engine` 加 `timeout: 15` + 开 WAL；多工位部署时迁 MySQL/PostgreSQL（原报告 性能6）
+
+**代码质量**
+
 - 遗留死代码清理：`AddItem.vue`（调用不存在的 `/hardware` 接口）、未被页面调用的 API 封装（`GET /finetuning/`、`GET /drawing/{id}`、`GET /task/{id}` 等）
 - work/workflow 写接口参数迁移到 JSON body（现走 query string，与其它模块不一致）
+- `on_event("startup")` 已弃用 → 改 FastAPI lifespan 写法（原报告 质量7）
+- `datetime.utcnow()` 已弃用 + 时区混用：`security.py`(utcnow) / `user.py`(now+utc) / `login.py`(now 本地) 三处统一为 `datetime.now(timezone.utc)`（原报告 质量8）
+- crud 层被绕过：`user.py`/`task.py`/`workflow.py` 在 endpoint 里直接写查询，与 device/unit/sensor 走 crud 层的风格不统一（原报告 质量5）
+- 响应格式手工拼接：每接口手写 `{code, message, data}`，建议抽 `ok(data, message)` 帮助函数（原报告 质量6）
+- 命名不一致集中重命名（`Modeldescripte`/`Taskdescripte` 拼写、Module↔device 双命名等）：《命名规范》已管住新增代码，存量重命名比赛后统一做（原报告 质量3）
+- echarts 依赖：package.json 有 `echarts@^6` 但全项目零 import；要么删掉，要么仪表盘加趋势图（比赛演示加分项，数据源 `/dashboard/stats` 现成）（原报告 性能2）
+
+**已解决（备查）**
+
+- ~~`ros_dispatcher.py` shell=True~~ → 2026-10-05（五）已修
+- ~~venv/__pycache__/dist 未忽略~~ → `.gitignore` 已覆盖

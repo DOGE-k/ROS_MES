@@ -17,3 +17,7 @@ dist/
 # 编辑器配置 (VS Code 等)
 .vscode/
 .idea/
+
+# 工具产物（Mimosa 安全扫描 / ZCode）
+.mimosa/
+.zcodeignore
