@@ -11,22 +11,36 @@ export interface LoginForm {
 	password: string;
 }
 
+/** 登录响应 data —— 字段与《ROS_MES_前后端接口字段文档》5.1（POST /api/login）一致 */
 export interface LoginResponse {
-	access_token: string;
-	token_type: string;
+	account: string;
+	name: string;
+	typeId: number;
+	token: string;
+	tokenType: string;
+	headImage: string;
+	updateTime: string;
 }
 
 // 用户信息相关
-export interface UserInfo {
+/** 用户列表/详情行 —— 字段与《ROS_MES_前后端接口字段文档》9.1（后端 user_to_dict）一致 */
+export interface UserItem {
 	id: number;
+	account: string;
 	username: string;
-	role: string;
-	email: string;
-	phone: string;
-	avatar: string;
-	status: number;
-	lastLogin: string;
-	createdAt: string;
+	name: string | null;
+	typeId: number;
+	typeLabel: string;
+	headImage: string;
+	isLock: boolean;
+	birthday: string | null;
+	sex: number | null;
+	creatorId: number;
+	createtime: string;
+	locktime: string | null;
+	modifytime: string | null;
+	delFlag: boolean;
+	notes: string | null;
 }
 
 // 硬件相关

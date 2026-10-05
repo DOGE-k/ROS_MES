@@ -47,7 +47,7 @@
             <div class="label-box">
               <div class="input-box">
                 <span class="label-title"
-                  >{{ armList.device[0].label }}(度)</span
+                  >{{ armList.device[0].label }}(°)</span
                 >
                 <el-input-number
                   v-model="armList.device[0].adjust"
@@ -73,7 +73,7 @@
             <div class="label-box">
               <div class="input-box">
                 <span class="label-title"
-                  >{{ armList.device[1].label }}(度)</span
+                  >{{ armList.device[1].label }}(°)</span
                 >
                 <el-input-number
                   v-model="armList.device[1].adjust"
@@ -214,11 +214,18 @@ import { ArrowLeft } from "@element-plus/icons-vue";
 import {
   getDrawingListApi,
   getUnitsByDeviceApi,
+  getSensorsByUnitApi,
   sendCoordination,
   sendFineTuning,
   saveFineTuningConfig,
 } from "@/api/rosApi";
 import { noRosDebug } from "@/api/noRosDebug";
+import {
+  armIndexFromUnitId,
+  axisDeviceId,
+  armLevelDeviceId,
+  type AxisParameterName,
+} from "@/api/deviceEncoding";
 
 const router = useRouter();
 
@@ -243,10 +250,11 @@ const moduleId = ref<number>(0);
 const moduleDisplay = ref("");
 const armList = reactive({
   id: 0,
+  // deviceId 由 applyAxisEncoding 按 V2 轴号编码动态填充（1~20 轴级 / 21~25 臂级），禁止硬编码
   device: [
-    { deviceId: 41, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "底座旋转调整值" },
-    { deviceId: 42, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "摆动调整值" },
-    { deviceId: 43, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "伸缩杆调整值" },
+    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "底座旋转调整值" },
+    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "摆动调整值" },
+    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "伸缩杆调整值" },
     { deviceId: 0, initial: 0.0, current: 0.0 },
   ],
 });
@@ -263,14 +271,54 @@ const formatUnitOption = (item: any) => {
   return `机械臂 ${item.Unit_ID}${desc}`;
 };
 
-const adjustmentKeys = ["rotation", "swing", "telescopic"];
-const feedbackDeviceIndex: Record<number, number> = {
-  33: 0,
-  34: 1,
-  35: 2,
-  41: 0,
-  42: 1,
-  43: 2,
+const adjustmentKeys: AxisParameterName[] = ["rotation", "swing", "telescopic"];
+// 反馈 device_id → 轴下标映射：按选中机械臂的 V2 轴号动态构建，见 rebuildFeedbackIndex
+let feedbackDeviceIndex: Record<number, number> = {};
+// 当前选中机械臂的臂级传感器（压力/IMU 共用）device_id 与压力传感器 sensor_ID
+let armLevelId = 0;
+let lastLoadedUnitRowId = 0;
+const pressureSensorId = ref<number>(0);
+
+// 依据机械臂 Unit_ID（32/64/96 → 臂1/2/3）计算 V2 轴号，填充三轴与臂级 deviceId
+const applyAxisEncoding = (unitId: number) => {
+  const armIndex = armIndexFromUnitId(unitId);
+  const axisIds = adjustmentKeys.map((key) => axisDeviceId(armIndex, key));
+  armList.device.forEach((item: any, index: number) => {
+    item.deviceId = index < 3 ? axisIds[index] : armLevelDeviceId(armIndex);
+  });
+  armLevelId = armLevelDeviceId(armIndex);
+  rebuildFeedbackIndex();
+};
+
+const rebuildFeedbackIndex = () => {
+  feedbackDeviceIndex = {};
+  armList.device.slice(0, 3).forEach((item: any, index: number) => {
+    if (item.deviceId) {
+      feedbackDeviceIndex[Number(item.deviceId)] = index;
+    }
+  });
+};
+
+// 拉取选中机械臂的传感器列表，取压力传感器的 sensor_ID 供配置保存使用
+const loadSensorsForUnit = async (unitRowId: number) => {
+  pressureSensorId.value = 0;
+  try {
+    const res: any = await getSensorsByUnitApi(unitRowId);
+    const sensors: any[] = Array.isArray(res)
+      ? res
+      : Array.isArray(res?.data)
+        ? res.data
+        : [];
+    const pressure =
+      sensors.find((s) => String(s.sensordescript || "").includes("压力")) ||
+      sensors.find((s) => Number(s.Unit_address) === 0);
+    if (pressure) {
+      pressureSensorId.value = Number(pressure.sensor_ID || pressure.id || 0);
+    }
+  } catch (err) {
+    console.warn("获取传感器列表失败：", err);
+  }
+  initConfig.sensorId = pressureSensorId.value;
 };
 
 const formatFeedbackValue = (value: number) => Number(value || 0).toFixed(2);
@@ -397,6 +445,13 @@ const confirmInitConfig = async () => {
 
   initConfig.unitId = Number(selectedUnit.Unit_ID);
 
+  // 用户切换机械臂时按新臂号重算 V2 轴号，并刷新压力传感器 ID
+  applyAxisEncoding(initConfig.unitId);
+  if (Number(initConfig.unitRowId) !== lastLoadedUnitRowId) {
+    await loadSensorsForUnit(Number(initConfig.unitRowId));
+    lastLoadedUnitRowId = Number(initConfig.unitRowId);
+  }
+
   const payload = {
     device_id: Number(initConfig.deviceId),
     module_id: Number(moduleId.value),
@@ -453,7 +508,7 @@ const sendSingleAdjust = async (value: number) => {
   try {
     const res: any = await sendFineTuning({
       module_id: Number(moduleId.value),
-      device_id: Number(initConfig.deviceId),
+      device_id: Number(armList.device[value].deviceId),
       unit_id: Number(initConfig.unitId),
       parameter_name: parameterName,
       position: adjustValue,
@@ -466,7 +521,7 @@ const sendSingleAdjust = async (value: number) => {
 
       if (Array.isArray(res.data)) {
         for (const i of res.data) {
-          if (i.type === "imu_pose" || Number(i.device_id) === 50) {
+          if (i.type === "imu_pose") {
             applyImuFeedback(i);
           } else if (i.parameter_name === parameterName || Number(i.device_id) === Number(armList.device[value].deviceId)) {
             updateAxisCurrent(value, Number(i.position));
@@ -515,16 +570,21 @@ const handleSaveConfig = async () => {
       unit_id: Number(initConfig.unitId),
       sensor_id: Number(initConfig.sensorId),
       drawing_id: Number(initConfig.drawingId),
-      devices: armList.device.map((item: any, index: number) => ({
-        device_id: Number(item.deviceId || initConfig.deviceId),
-        sensor_id: Number(item.deviceId || initConfig.sensorId),
-        unit_id: Number(initConfig.unitId),
-        parameter_name: index === 3 ? "pressure" : adjustmentKeys[index],
-        label: item.label || "压力传感器",
-        initial: Number(item.initial || 0),
-        adjust: Number(item.adjust || 0),
-        current: Number(item.current || 0),
-      })),
+      devices: armList.device.map((item: any, index: number) => {
+        const base = {
+          device_id: Number(item.deviceId || 0),
+          unit_id: Number(initConfig.unitId),
+          parameter_name: index === 3 ? "pressure" : adjustmentKeys[index],
+          label: item.label || "压力传感器",
+          initial: Number(item.initial || 0),
+          adjust: Number(item.adjust || 0),
+          current: Number(item.current || 0),
+        };
+        // 轴的 device_id 与传感器的 sensor_id 是两套编码：仅臂级压力项携带 sensor_id
+        return index === 3
+          ? { ...base, sensor_id: pressureSensorId.value || undefined }
+          : base;
+      }),
     };
 
     const res: any = await saveFineTuningConfig(payload);
@@ -603,7 +663,10 @@ onMounted(async () => {
 
     initConfig.unitRowId = Number(armIdList.value[0].id);
     initConfig.unitId = Number(armIdList.value[0].Unit_ID);
-    initConfig.sensorId = Number(armList.device[0].deviceId);
+    // 按 V2 轴号编码填充三轴/臂级 deviceId，并拉取压力传感器 sensor_ID
+    applyAxisEncoding(initConfig.unitId);
+    lastLoadedUnitRowId = initConfig.unitRowId;
+    await loadSensorsForUnit(initConfig.unitRowId);
     initConfig.drawingId = Number(drawingList.value[0].drawingId);
     armList.id = initConfig.unitId;
     connectFeedbackSocket();

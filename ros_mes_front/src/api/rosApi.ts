@@ -12,7 +12,7 @@ import type {
 	TaskForm,
 	TaskItem,
 	TaskTracingItem,
-	UserInfo,
+	UserItem,
 	WorkItem,
 	WorkSubsetItem,
 	WorkflowItem,
@@ -44,14 +44,14 @@ export function loginApi(data: LoginForm) {
 
 // ==================== 用户信息 ====================
 export function getUserInfoApi() {
-	return request<any, ApiResponse<UserInfo>>({
+	return request<any, ApiResponse<UserItem>>({
 		url: '/user/me',
 		method: 'get'
 	});
 }
 
 export function getUserListApi(params?: { keyword?: string; type_id?: number }) {
-	return request<any, ApiResponse<UserInfo[]>>({
+	return request<any, ApiResponse<UserItem[]>>({
 		url: '/user/',
 		method: 'get',
 		params

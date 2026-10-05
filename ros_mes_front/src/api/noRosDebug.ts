@@ -1,4 +1,5 @@
 import { mockSuccess } from "./mock";
+import { axisDeviceId, armLevelDeviceId } from "./deviceEncoding";
 
 export const noRosDebug = import.meta.env.VITE_DEBUG_NO_ROS === "true";
 
@@ -81,10 +82,11 @@ export async function sendNoRosDebugCoordination(data: any) {
 
 export function sendNoRosDebugFineTuning(data: any) {
   const position = Number(data?.position || 0);
+  // 调试模式固定按一号臂的 V2 轴号模拟（旋转=1 / 摆动=2 / 伸缩=4），臂级 21（压力/IMU 共用）
   const feedbackDeviceMap: Record<string, number> = {
-    rotation: 41,
-    swing: 42,
-    telescopic: 43,
+    rotation: axisDeviceId(1, "rotation"),
+    swing: axisDeviceId(1, "swing"),
+    telescopic: axisDeviceId(1, "telescopic"),
   };
 
   return mockSuccess(
@@ -101,7 +103,7 @@ export function sendNoRosDebugFineTuning(data: any) {
         type: "pressure",
       },
       {
-        device_id: 50,
+        device_id: armLevelDeviceId(1),
         swing_angle: data?.parameter_name === "swing" ? position : Number((position * 0.3).toFixed(2)),
         rotation_angle: data?.parameter_name === "rotation" ? position : Number((position * 0.2).toFixed(2)),
         x: Number((10 + position * 0.05).toFixed(2)),

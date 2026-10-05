@@ -12,6 +12,15 @@ import {
 const msg = ref("前进");
 const result = ref("");
 
+// 测试用 ID 改为输入框可调（默认值为 V2 有效编码：模块18=(1,2)，device_id 1=一号臂旋转轴）
+const testModuleId = ref(18);
+const testDeviceId = ref(1);
+const testUnitId = ref(32);
+const testUnitRowId = ref(1);
+const testDrawingId = ref(1);
+const testParameter = ref<"rotation" | "swing" | "telescopic">("rotation");
+const testPosition = ref(5);
+
 const showResult = (data: any) => {
   result.value = JSON.stringify(data, null, 2);
 };
@@ -32,9 +41,9 @@ const handleCreateModule = async () => {
   const res = await createModule({
     x: 1,
     y: 2,
-    module_id: 18,
-    device_id: 1,
-    position: 18,
+    module_id: Number(testModuleId.value),
+    device_id: Number(testDeviceId.value),
+    position: 0,
   });
 
   showResult(res);
@@ -42,23 +51,27 @@ const handleCreateModule = async () => {
 };
 
 const handleCoordination = async () => {
+  // 后端 /coordination/send 五元组必填
   const res = await sendCoordination({
-    module_id: 18,
-    device_id: 1,
-    x: 100,
-    y: 200,
-    z: 50,
+    device_id: Number(testDeviceId.value),
+    module_id: Number(testModuleId.value),
+    unit_id: Number(testUnitId.value),
+    unit_row_id: Number(testUnitRowId.value),
+    drawing_id: Number(testDrawingId.value),
   });
 
   showResult(res);
   ElMessage.success(res.message || "坐标下发成功");
 };
 
-const handleFineTuning = async (position: string) => {
+const handleFineTuning = async () => {
+  // 后端 /control/finetuning：parameter_name 必填且 device_id ∈ 1~20
   const res = await sendFineTuning({
-    module_id: 18,
-    device_id: 1,
-    position,
+    module_id: Number(testModuleId.value),
+    device_id: Number(testDeviceId.value),
+    unit_id: Number(testUnitId.value),
+    parameter_name: testParameter.value,
+    position: Number(testPosition.value),
   });
 
   showResult(res);
@@ -90,6 +103,19 @@ const handleFineTuning = async (position: string) => {
       </div>
 
       <div class="row">
+        <span>module_id：</span>
+        <el-input-number v-model="testModuleId" :min="17" :max="136" />
+        <span>device_id：</span>
+        <el-input-number v-model="testDeviceId" :min="1" :max="25" />
+        <span>unit_id：</span>
+        <el-input-number v-model="testUnitId" :min="32" :max="160" :step="32" />
+        <span>unit_row_id：</span>
+        <el-input-number v-model="testUnitRowId" :min="1" />
+        <span>drawing_id：</span>
+        <el-input-number v-model="testDrawingId" :min="1" />
+      </div>
+
+      <div class="row">
         <el-button @click="handleCreateModule">
           模拟创建模块
         </el-button>
@@ -97,21 +123,19 @@ const handleFineTuning = async (position: string) => {
         <el-button @click="handleCoordination">
           模拟下发坐标
         </el-button>
+      </div>
 
-        <el-button @click="handleFineTuning('x+')">
-          X+
-        </el-button>
-
-        <el-button @click="handleFineTuning('x-')">
-          X-
-        </el-button>
-
-        <el-button @click="handleFineTuning('y+')">
-          Y+
-        </el-button>
-
-        <el-button @click="handleFineTuning('y-')">
-          Y-
+      <div class="row">
+        <span>parameter_name：</span>
+        <el-select v-model="testParameter" style="width: 140px">
+          <el-option label="rotation" value="rotation" />
+          <el-option label="swing" value="swing" />
+          <el-option label="telescopic" value="telescopic" />
+        </el-select>
+        <span>position：</span>
+        <el-input-number v-model="testPosition" :min="-360" :max="360" />
+        <el-button type="primary" @click="handleFineTuning">
+          模拟微调下发
         </el-button>
       </div>
 

@@ -80,14 +80,14 @@
 
   </div>
 
-  <!-- 急停遮罩层
+  <!-- 急停遮罩层：长按急停触发后全局提示（解除按钮仅调试用，生产环境需加权限控制） -->
   <div v-if="isEmergencyActive" class="emergency-overlay">
     <div class="emergency-content">
       <h1 style="color: white;">SYSTEM EMERGENCY STOP</h1>
       <h1 style="color: white;">系统已触发急停</h1>
       <el-button type="danger" @click="resetEmergency" class="reset-button">解除急停 (仅调试)</el-button>
     </div>
-  </div> -->
+  </div>
 
 </template>
 

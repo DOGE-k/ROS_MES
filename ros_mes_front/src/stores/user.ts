@@ -1,17 +1,6 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
-
-interface UserInfo {
-  account: string;
-  nickname?: string;
-  role?: string;
-  typeId?: number;
-  name?: string;
-  token: string;
-  avatar?: string;
-  headImage?: string;
-  updateTime: string;
-}
+import type { LoginResponse } from "@/api/types";
 
 export const useUserStore = defineStore("user", () => {
   const account = ref(localStorage.getItem("account") || "");
@@ -21,19 +10,20 @@ export const useUserStore = defineStore("user", () => {
   const avatar = ref(localStorage.getItem("avatar") || "");
   const updateTime = ref(localStorage.getItem("updateTime") || "");
 
-  const setUserInfo = (data: UserInfo) => {
+  // 入参为登录接口返回的 data，字段见《ROS_MES_前后端接口字段文档》5.1
+  const setUserInfo = (data: LoginResponse) => {
     account.value = data.account;
-    nickname.value = data.nickname || data.name || data.account;
-    role.value = data.typeId === 1 ? "admin" : (data.role || "");
+    nickname.value = data.name || data.account;
+    role.value = data.typeId === 1 ? "admin" : "";
     token.value = data.token;
-    avatar.value = data.avatar || data.headImage || "";
+    avatar.value = data.headImage || "";
     updateTime.value = data.updateTime;
 
     localStorage.setItem("account", data.account);
-    localStorage.setItem("nickname", data.nickname || data.name || data.account);
-    localStorage.setItem("role", data.typeId === 1 ? "admin" : (data.role || ""));
+    localStorage.setItem("nickname", data.name || data.account);
+    localStorage.setItem("role", data.typeId === 1 ? "admin" : "");
     localStorage.setItem("token", data.token);
-    localStorage.setItem("avatar", data.avatar || data.headImage || "");
+    localStorage.setItem("avatar", data.headImage || "");
     localStorage.setItem("updateTime", data.updateTime);
   };
 
