@@ -1,0 +1,67 @@
+# ROS_MES 前后端改动记录（交接日志）
+
+> 参照 ROS 侧的记录方式：**边改边记录，一事一条**，状态标注、未定事项打 `???`、详情交叉引用到对应文档，便于随时交接。
+>
+> **记录规则：**
+> - 每次改动前后端代码/文档，在本文件新增一条（新日期写在最上面）
+> - 状态标注：（已完成）/（进行中）/（未做）/（暂缓，写明理由）
+> - 未定事项、待确认事项用 `???` 开头
+> - 具体内容不在这里展开的，注明"见《文档名》章节"
+> - 涉及 robot_control_backend（队友侧）的条目只作背景记录，不由本侧修改
+
+---
+
+## 2026-10-05（三）
+
+- 修复 `types.ts` 类型与后端实际响应不一致问题（已完成，vue-tsc 通过）
+  - `UserInfo`（含 email/phone/status 等后端不存在的字段，模板遗留）删除 → 新增 `UserItem`，字段逐字对齐文档 9.1 的 `user_to_dict`
+  - `LoginResponse` 原为 `access_token/token_type`（FastAPI 默认形状，本系统并非如此）→ 改为文档 5.1 的 `account/name/typeId/token/tokenType/headImage/updateTime`
+  - `rosApi.ts`：`getUserInfoApi`/`getUserListApi` 返回类型改用 `UserItem`
+  - `stores/user.ts`：删除局部假 `UserInfo` 接口，`setUserInfo` 入参改用 `LoginResponse`；去掉对 `data.nickname/data.role/data.avatar`（登录响应中不存在）的兜底
+  - **约定：前端类型字段名必须与《接口字段文档》记录的后端字段逐字一致，不允许自行新增/改名**（已存为持久记忆）
+- 遗留说明：`profile/me` 编辑提交的字段（name/birthday/sex）与文档一致，未受影响；UserManagement/Profile 字段访问经类型检查验证全部兼容
+
+## 2026-10-05（二）
+
+- 按《前端V1.0到V1.1修改清单》完成前端 V1.1 适配（已完成，vue-tsc 通过）
+  - 逐项先核对 V1.1 事实再改：26 项中**已修改 10 项、无需修改 9 项（附证据）、暂缓 7 项**，执行版清单落库见《ROS_MES_前端V1.0到V1.1修改清单.md》
+  - 新增 `src/api/deviceEncoding.ts`：V2 轴号编码唯一出处（臂号由 Unit_ID 32/64/96 推算，轴号 = (臂-1)*4+偏移，臂级 21~25）
+  - FineTuningPage：三轴 deviceId 动态化、微调下发改用各轴自身 device_id（原 bug：三轴都发模块级 ID）、反馈映射动态构建（删 33/34/35、41/42/43 硬编码）、IMU 判断改按 type、保存配置的 device_id/sensor_id 两套编码分离、sensorId 改从传感器列表获取（原 bug：误取轴 deviceId）
+  - noRosDebug：模拟反馈改用 V2 编码（1/2/4、臂级 21）
+  - RosTestPage：测试 ID 输入框化，修正 coordination/finetuning 测试 payload 与后端契约不符问题
+  - AsidePage：启用急停遮罩（"解除急停(仅调试)"保留，注明生产需权限控制）
+  - 单位显示统一：度→°；mm/cm 与 V2 消息定义一致保留
+- 清单中暂缓项的依赖条件（后续触发点）：
+  - 心跳/急停通知/限位故障处理（P1-08/P1-09/P2-07）→ 等后端 `rosbridge_gateway.py` 订阅 Heartbeat / StopNotification / LimitEvent / AxisFault 话题后在 `applyFeedback` 补分支
+  - 轴数动态化（P2-02）、真空吸盘（P2-08）→ 等 V2 规范变更或后端支持
+
+## 2026-10-05
+
+- 同步远端 v1.1（commit `b03b57a`）：拉取队友更新——robot_control_backend 新增 9 个消息定义（Heartbeat、CmdAck、AxisStatus 等）、hardware_node.py 大幅重构（队友侧，背景记录）
+  - `???` 后端 `rosbridge_gateway.py` 是否需要适配新增消息类型（如订阅 Heartbeat/CmdAck 用于链路健康监测）——未评估
+- 新增《ROS_MES_前后端接口字段文档.md》，并按团队基准《ROS_MES_前后端ROS接口清单》重构（已完成）
+  - 基准文档逐项对照代码核验，3 处修正见该文档 8.9 节：finetuning 系列实际免认证；`/hardware/imu_angles` 消息类型实为 TuoLuoYi；web_data_node.py 整文件被注释导致大屏 WS 无数据
+- 新增《ROS_MES_前后端命名规范.md》（已完成）
+  - 规则从现有代码提炼，含 10 条历史遗留不一致清单；新代码按规范执行，旧代码保持兼容
+- Mimosa 深度安全扫描完成（scanId `scan-2026-10-05T08-41-29...`，封印 sha256:2727...）＋ 未修复
+  - 前后端范围 6 个高危：`ros_dispatcher.py:53` 命令注入、`coordination.py:39` SSRF、`drawing.py:209` / `user.py:167` 路径穿越、`sqlite_create.py:351` 硬编码凭据、`sqlite_create.py:484` SQL 拼接
+  - 队友侧 2 个（需转告）：`robot_control_backend/scripts/rosbridge_wrapper.py:91`、`test/fix_rosbridge.py:23` 代码注入
+- git 提交被 Mimosa 门禁拦截：门禁在代理层实现（非 git 钩子，`--no-verify` 无效），存在高危即阻断一切 commit（进行中，阻塞项）
+  - 《接口字段文档》重构版已暂存未提交，《命名规范》未跟踪
+  - `???` 待决定：手动在终端提交 / 先修复 6 个范围内部高危再重扫
+- 已写入持久记忆：分工范围（只动前后端）、基准文档约定、门禁机制
+
+## 遗留问题清单（跨日期跟踪）
+
+- `???` 大屏 WebSocket `/api/ws/ws/robot_status`：数据源 `web_data_node.py` 被整文件注释，前端大屏当前无实时数据。恢复脚本后前端是否需要改动待确认（队友侧脚本）
+- `???` FineTuningPage 硬编码 `deviceId: 41/42/43` 与 V2 轴号规范 1~20 不一致，真实 ROS 环境需从设备树动态获取轴号（见《接口字段文档》6.1）
+- `???` `/control/finetuning` 免认证路径下写库 `creater_id=1` 写死，无法区分实际操作人
+- `???` `types.ts` 的 `UserInfo` 与登录实际响应字段不一致（`username/role/email` vs `account/name/typeId`），类型定义需对齐
+- 前后端交互接口已总结完毕 → 见《ROS_MES_前后端接口字段文档.md》（对应 ROS 侧"总结与前端交互的接口"条目）
+
+## 后面版本考虑的事情
+
+- 认证缺口整改（前后端一起改，约半小时）：后端给 `/module`、`/coordination`、`/finetuning`、四层 CRUD、`/dashboard/stats` 等裸奔接口加鉴权；前端 `request.ts` 白名单缩减为 `/login`、`/register`；`/RosTestPage` 仅开发模式开放
+- 路由懒加载：当前打包为单个 1.24MB JS 巨包，改 `() => import(...)` 收益最大
+- 遗留死代码清理：`AddItem.vue`（调用不存在的 `/hardware` 接口）、未被页面调用的 API 封装（`GET /finetuning/`、`GET /drawing/{id}`、`GET /task/{id}` 等）
+- work/workflow 写接口参数迁移到 JSON body（现走 query string，与其它模块不一致）
