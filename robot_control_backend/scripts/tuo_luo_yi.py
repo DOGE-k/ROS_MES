@@ -3,7 +3,7 @@
 """
 IMU 角度 + 末端坐标发布节点（正运动学，不漂移）
 订阅：/hardware/gyroscope_feedback (GyroFeedback)
-发布：/hardware/imu_angles (tuo_luo_yi)
+发布：/hardware/imu_angles (TuoLuoYi)
 """
 
 import rospy
@@ -14,7 +14,7 @@ import sqlite3
 import json
 from datetime import datetime
 from std_msgs.msg import Header
-from robot_control_backend.msg import GyroFeedback, tuo_luo_yi
+from robot_control_backend.msg import GyroFeedback, TuoLuoYi
 
 def load_env_config():
     """从 .env 文件加载配置"""
@@ -23,7 +23,7 @@ def load_env_config():
         with open(env_path, 'r') as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith('#'):
+                if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
                     os.environ[key] = value
         rospy.loginfo("✅ 已从 rob_arm.env 加载配置")
@@ -61,7 +61,7 @@ class ImuAnglePublisher:
         self.states = {}       # key: (module_id, arm_id)
 
         rospy.Subscriber(self.TOPIC_GYROSCOPE_FEEDBACK, GyroFeedback, self.imu_callback)
-        self.angle_pub = rospy.Publisher(self.TOPIC_IMU_ANGLES, tuo_luo_yi, queue_size=10)
+        self.angle_pub = rospy.Publisher(self.TOPIC_IMU_ANGLES, TuoLuoYi, queue_size=10)
 
         # ------------------ 数据库初始化 ------------------
         db_path = os.environ['DB_PATH']
@@ -256,7 +256,7 @@ class ImuAnglePublisher:
         z = self.BASE_Z + dz_rel
 
         # 发布消息
-        angle_msg = tuo_luo_yi()
+        angle_msg = TuoLuoYi()
         angle_msg.header = Header(stamp=rospy.Time.now(), frame_id="world")
         angle_msg.module_id = module_id
         angle_msg.device_id = device_id

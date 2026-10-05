@@ -19,7 +19,7 @@ def load_env_config():
         with open(env_path, 'r') as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith('#'):
+                if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
                     os.environ[key] = value
         rospy.loginfo("✅ 已从 rob_arm.env 加载配置")
