@@ -10,23 +10,24 @@ class RosbridgeGatewayTest(unittest.TestCase):
             {
                 "header": {"stamp": {"secs": 1, "nsecs": 2}},
                 "module_id": 17,
-                "device_id": 33,
+                "device_id": 1,
                 "position": 45.5,
             },
         )
 
         self.assertEqual(feedback["topic"], "/hardware/rotation_feedback")
         self.assertEqual(feedback["module_id"], 17)
-        self.assertEqual(feedback["device_id"], 33)
+        self.assertEqual(feedback["device_id"], 1)
         self.assertEqual(feedback["position"], 45.5)
-        self.assertEqual(feedback["data_type"], "axis_encoder")
-        self.assertEqual(feedback["feedback_type"], "旋转轴编码器")
+        self.assertEqual(feedback["data_type"], "rotation_axis_encoder")
+        self.assertEqual(feedback["feedback_type"], "臂1旋转轴编码器")
 
     def test_normalize_axis_feedback_uses_feedback_device_ids(self):
+        # V2 4 轴 ID 布局：每臂 J1 旋转 / J2 摆动 / J3 空置 / J4 伸缩
         cases = [
-            ("/hardware/rotation_feedback", 41, "rotation_axis_encoder", "旋转轴编码器"),
-            ("/hardware/swing_feedback", 42, "swing_axis_encoder", "摆动轴编码器"),
-            ("/hardware/telescope_feedback", 43, "telescope_axis_encoder", "伸缩轴编码器"),
+            ("/hardware/rotation_feedback", 1, "rotation_axis_encoder", "臂1旋转轴编码器"),
+            ("/hardware/swing_feedback", 6, "swing_axis_encoder", "臂2摆动轴编码器"),
+            ("/hardware/telescope_feedback", 12, "telescope_axis_encoder", "臂3伸缩轴编码器"),
         ]
 
         for topic, device_id, data_type, feedback_type in cases:
@@ -50,22 +51,22 @@ class RosbridgeGatewayTest(unittest.TestCase):
             "/hardware/sensor_feedback",
             {
                 "module_id": 17,
-                "device_id": 49,
+                "device_id": 21,
                 "position": 12.75,
             },
         )
 
-        self.assertEqual(feedback["device_id"], 49)
+        self.assertEqual(feedback["device_id"], 21)
         self.assertEqual(feedback["position"], 12.75)
         self.assertEqual(feedback["data_type"], "pressure_sensor")
-        self.assertEqual(feedback["feedback_type"], "压力传感器")
+        self.assertEqual(feedback["feedback_type"], "臂1压力传感器")
 
     def test_normalize_imu_pose_feedback_keeps_pose_fields(self):
         feedback = normalize_feedback_message(
             "/hardware/imu_angles",
             {
                 "module_id": 17,
-                "device_id": 50,
+                "device_id": 21,
                 "swing_angle": 12.5,
                 "rotation_angle": -8.25,
                 "x": 1.2,
@@ -75,14 +76,23 @@ class RosbridgeGatewayTest(unittest.TestCase):
         )
 
         self.assertEqual(feedback["topic"], "/hardware/imu_angles")
-        self.assertEqual(feedback["device_id"], 50)
+        self.assertEqual(feedback["device_id"], 21)
         self.assertEqual(feedback["data_type"], "imu_pose")
-        self.assertEqual(feedback["feedback_type"], "陀螺仪姿态")
+        self.assertEqual(feedback["feedback_type"], "臂1陀螺仪姿态")
         self.assertEqual(feedback["swing_angle"], 12.5)
         self.assertEqual(feedback["rotation_angle"], -8.25)
         self.assertEqual(feedback["x"], 1.2)
         self.assertEqual(feedback["y"], 3.4)
         self.assertEqual(feedback["z"], 5.6)
+
+    def test_normalize_imu_topic_with_axis_device_id_falls_back_to_labels(self):
+        # 臂级 21~25 之外的 device_id 走 FEEDBACK_LABELS，不按 IMU 处理
+        feedback = normalize_feedback_message(
+            "/hardware/imu_angles",
+            {"module_id": 17, "device_id": 9},
+        )
+
+        self.assertEqual(feedback["data_type"], "rotation_axis_encoder")
 
 
 if __name__ == "__main__":

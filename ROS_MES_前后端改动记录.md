@@ -11,6 +11,15 @@
 
 ---
 
+## 2026-10-05（六）
+
+- 修复 4 个陈旧测试文件至 V1.1 预期（已完成，**全套 27 passed + 6 subtests 全绿**，此前 13 failed）
+  - `test_rosbridge_gateway.py`：喂旧编码 33/41/42/43/49/50 → 改 V2 轴号（臂1 旋转=1/臂2 摆动=6/臂3 伸缩=12、臂级 21），标签断言加"臂N"前缀；新增 1 条用例覆盖"IMU 话题遇非臂级 device_id 回退 FEEDBACK_LABELS"分支
+  - `test_control_finetuning_endpoint.py`：旧"请求 2 → 消息 33"换算断言 → V2 透传语义（请求 device_id 原样进消息），三参数分别用规范轴号 1/2/4
+  - `test_finetuning_device_fields.py`：payload 补上 V1.1 必填的 module_id/unit_id；crud 签名 username → creater_id；自动参数名断言更新为 `module_18_unit_32_position`
+  - `test_emergency_stop_payload.py`：旧载荷（module_id=17/device_id=1/position=[]）→ V2 系统级急停（module_id=0/device_id=0/position=[0x01]）
+  - 结论：4 个文件均为断言过期，**未发现 v1.1 后端真 bug**；仅动 tests/，业务代码零改动
+
 ## 2026-10-05（五）
 
 - 安全整改：修复 Mimosa 扫描 8 个高危中用户批准的 5 项（已完成，py_compile + 冒烟通过，pytest 无回归）

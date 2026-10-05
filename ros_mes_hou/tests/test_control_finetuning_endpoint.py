@@ -51,7 +51,8 @@ class ControlFineTuningEndpointTest(unittest.TestCase):
             self.assertEqual(response["dispatch"]["action"], "fine_tuning")
             self.assertEqual(response["dispatch"]["payload"]["topic"], "/control/adjust_rotation_cmd")
             self.assertEqual(response["dispatch"]["payload"]["message"]["module_id"], 17)
-            self.assertEqual(response["dispatch"]["payload"]["message"]["device_id"], 33)
+            # V2：device_id 即轴号（1~20），请求值直接透传进 ROS 消息
+            self.assertEqual(response["dispatch"]["payload"]["message"]["device_id"], 2)
             self.assertEqual(response["dispatch"]["payload"]["message"]["position"], [8.5])
             self.assertEqual(response["dispatch"]["payload"]["business"]["device_id"], 2)
             self.assertEqual(response["dispatch"]["payload"]["business"]["unit_id"], 32)
@@ -64,10 +65,11 @@ class ControlFineTuningEndpointTest(unittest.TestCase):
             db.close()
 
     def test_send_fine_tuning_maps_all_axis_parameters_to_ros_topics(self):
+        # V2 轴号：一号臂 J1 旋转=1 / J2 摆动=2 / J4 伸缩=4，请求 device_id 原样透传
         cases = [
-            ("rotation", "/control/adjust_rotation_cmd", 33),
-            ("swing", "/control/adjust_swing_cmd", 34),
-            ("telescopic", "/control/adjust_telescopic_cmd", 35),
+            ("rotation", "/control/adjust_rotation_cmd", 1),
+            ("swing", "/control/adjust_swing_cmd", 2),
+            ("telescopic", "/control/adjust_telescopic_cmd", 4),
         ]
 
         for parameter_name, expected_topic, expected_device_id in cases:
@@ -81,7 +83,7 @@ class ControlFineTuningEndpointTest(unittest.TestCase):
                     control.send_fine_tuning(
                         record=FineTuningCreate(
                             module_id=17,
-                            device_id=5,
+                            device_id=expected_device_id,
                             unit_id=32,
                             parameter_name=parameter_name,
                             position=3.25,
