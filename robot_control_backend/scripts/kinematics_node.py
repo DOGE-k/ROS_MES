@@ -316,7 +316,7 @@ class KinematicsNode:
             str(axis_tel): round(delta_tel, 1)
         }
 
-        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
 
         try:
             self.conn.execute("""

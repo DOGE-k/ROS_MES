@@ -78,7 +78,7 @@ def save_modules_to_database(modules):
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         success_count = 0
         for module in modules:
             point_json = json.dumps(module["points"])

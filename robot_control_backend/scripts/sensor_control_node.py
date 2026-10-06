@@ -13,6 +13,7 @@ import rospy
 import os
 import sqlite3
 import json
+from datetime import datetime
 from std_msgs.msg import Header
 from robot_control_backend.msg import IntCmd
 
@@ -62,10 +63,11 @@ def log_sensor_state(conn, sensor_id, state, action_desc):
         data_json = json.dumps({"state": state}, ensure_ascii=False)
         notes_json = json.dumps({"action": action_desc}, ensure_ascii=False)
 
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         cursor.execute("""
         INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
-        VALUES (datetime.now(), 1, 1, ?, 2, ?, 0, ?)
-        """, (sensor_id, data_json, notes_json))
+        VALUES (?, 1, 1, ?, 2, ?, 0, ?)
+        """, (createtime, sensor_id, data_json, notes_json))
         conn.commit()
         rospy.loginfo(f"✅ 数据库写入成功：sensor={sensor_id}, state={state}")
     except Exception as e:

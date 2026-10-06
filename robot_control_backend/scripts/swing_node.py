@@ -77,7 +77,7 @@ class SwingSimple:
 
     def _insert_sensor_log(self, module_id, device_id, position, note_str):
         """插入一条传感器日志，sensor_ID 填 device_id"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         data_json = json.dumps({
             "module_id": module_id,
             "device_id": device_id,

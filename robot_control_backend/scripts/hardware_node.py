@@ -531,7 +531,7 @@ class CANBusBridge:
 
     def _insert_sensor_log(self, module_id, device_id, payload, note):
         """写入 sensor_log：isread=1（上行），具体数据以 JSON 存入 data 字段"""
-        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         data_json = json.dumps(payload, ensure_ascii=False)
         self.db_conn.execute(
             "INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)"

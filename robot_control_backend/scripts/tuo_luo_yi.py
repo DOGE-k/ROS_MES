@@ -90,7 +90,7 @@ class ImuAnglePublisher:
 
     def _save_record(self, module_id, device_id, arm_id, swing, rotation, x, y, z):
         """保存 IMU 计算结果到 sensor_log：isread=1（上行），data 为 JSON"""
-        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         data_dict = {
             "module_id": module_id,
             "device_id": device_id,

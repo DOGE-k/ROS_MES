@@ -75,7 +75,7 @@ class RotationSimple:
         self.conn.commit()
 
     def _insert_sensor_log(self, module_id, device_id, position, note_str):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         data_json = json.dumps({
             "module_id": module_id,
             "device_id": device_id,

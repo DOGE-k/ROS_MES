@@ -334,7 +334,7 @@ class PointSelectorNode:
             rospy.logerr(f"节点A处理异常: {str(e)}", exc_info=True)
 
     def _save_module_record(self, module_id, coord_dict, position_dict):
-        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        createtime = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         try:
             self.conn.execute("""
                 INSERT INTO calculation
