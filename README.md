@@ -7,47 +7,57 @@
 ```
 ┌────────────────────┐   HTTP / WebSocket (/api/*)   ┌──────────────────┐   rosbridge (:9010)   ┌───────────────────────┐
 │  ros_mes_front     │ ────────────────────────────► │   ros_mes_hou    │ ────────────────────► │ robot_control_backend │
-│  Vue3 + TS + EP    │ ◄──────────────────────────── │  FastAPI + SQLite│ ◄──────────────────── │  ROS 节点（队友维护）  │
+│  Vue3 + TS + EP    │ ◄──────────────────────────── │  FastAPI + SQLite│ ◄──────────────────── │  ROS 机器人控制节点   │
 │  dev 端口 5173     │                               │   端口 8000      │                       │  机械臂 CAN 控制      │
 └────────────────────┘                               └──────────────────┘                       └───────────────────────┘
 ```
 
 | 目录 | 说明 | 技术栈 |
 |---|---|---|
-| `ros_mes_front/` | 前端（本侧维护） | Vue 3 · TypeScript · Vite · Element Plus · Pinia |
-| `ros_mes_hou/` | 后端（本侧维护） | FastAPI · SQLAlchemy · SQLite · rosbridge-websocket |
-| `robot_control_backend/` | ROS 机器人控制节点（**队友维护，本侧不修改**） | ROS · Python |
+| `ros_mes_front/` | Web 前端 | Vue 3 · TypeScript · Vite · Element Plus · Pinia |
+| `ros_mes_hou/` | 业务后端 | FastAPI · SQLAlchemy · SQLite · rosbridge-websocket |
+| `robot_control_backend/` | ROS 机器人控制节点 | ROS · Python |
 | `deploy/` | 部署配置与说明（见 `deploy/README_DEPLOY.md`） | — |
 
 ## 快速启动
 
-环境要求：Python 3.10+、Node.js 18+。
+Windows 本地已验证环境：标准 Python 3.12、Node.js 20。创建虚拟环境时使用 `py -3.12`，避免 PATH 中的 MSYS2 Python 被选中。
 
-**1. 初始化数据库**（项目根目录执行，含种子数据；后端启动时也会自动建表）
+**1. 首次准备后端环境**（项目根目录执行；已有可用虚拟环境时无需重复创建）
 
-```bash
-python sqlite_create.py        # 生成 ros_database.db
-```
-
-**2. 启动后端**（端口 8000）
-
-```bash
+```powershell
 cd ros_mes_hou
-python -m venv venv
-venv\Scripts\activate                  # Windows；Linux/macOS: source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+cd ..
 ```
 
-**3. 启动前端**（端口 5173，`/api` 自动代理到 127.0.0.1:8000）
+**2. 首次初始化数据库**（项目根目录执行，含种子数据；已有数据库时无需重复执行）
+
+```powershell
+.\ros_mes_hou\venv\Scripts\python.exe .\sqlite_create.py
+```
+
+后端启动时会创建缺失的表，初始数据由 `sqlite_create.py` 插入。
+
+**3. 日常启动后端**（终端一，端口 8000）
+
+```powershell
+cd ros_mes_hou
+.\venv\Scripts\Activate.ps1
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+**4. 日常启动前端**（终端二，从项目根目录执行；端口 5173，`/api` 自动代理到 127.0.0.1:8000）
 
 ```bash
 cd ros_mes_front
-npm install
+npm install                   # 首次安装或依赖变更后执行
 npm run dev
 ```
 
-**4. 登录**：浏览器访问 http://localhost:5173 ，默认管理员 `admin / 123456`（⚠ 比赛部署前务必修改密码）。
+**5. 登录**：浏览器访问 http://localhost:5173 ，默认管理员 `admin / 123456`（⚠ 比赛部署前务必修改密码）。
 
 > 无 ROS 环境调试：前端 `.env.development` 中 `VITE_DEBUG_NO_ROS=true` 时，模块下发/微调等走前端模拟，无需机器人在线。
 
@@ -63,5 +73,8 @@ npm run dev
 
 ## 团队分工
 
-- **软件前后端**（本仓库维护范围）：`ros_mes_front/` 与 `ros_mes_hou/` 的全部开发与修复。
-- **机器人控制**：`robot_control_backend/` 的 ROS 节点、CAN 通信与消息定义由队友维护；本侧只通过 `docs/ROS_MES_前后端接口字段文档.md` 中记录的话题接口与其对接，不直接修改其代码。
+本仓库由团队共同维护，按模块分工协作：
+
+- **前后端开发**：负责 `ros_mes_front/` 与 `ros_mes_hou/` 的页面交互、业务接口、数据库及与 ROS 的通信对接。
+- **机器人控制开发**：负责 `robot_control_backend/` 的 ROS 节点、机械臂控制、CAN 通信与消息定义。
+- **联调与接口约定**：前后端与 ROS 端通过 `docs/ROS_MES_前后端接口字段文档.md` 中记录的话题与消息进行对接；涉及话题、消息字段或交互流程的变更，由相关模块负责人协同确认并同步更新文档。
