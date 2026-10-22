@@ -2,8 +2,8 @@
   <!-- ====================================================================
        ROS MES V2 启动文件
        - CAN ID 位域：PRI(3)|GRP(4)|SEG(4)|NODE(5)|AXIS(5)|DIR(2)|MSG(4)|RSV(2)
-       - 5 臂系统，每臂 4 轴（J1旋转/J2摆动/J3空/J4伸缩），轴号 1~20
-       - 位置量：绝对角度（0.01°，int32），摆动角上限 ±15°
+       - 5 臂系统，每臂 3 轴（J1旋转/J2摆动/J3伸缩），轴号 1~15
+       - 下行只发相对增量（0.01°，int16），摆动角范围 0~15°
        - 臂级传感器 axis 21~25（压力/IMU）
        ==================================================================== -->
 
@@ -63,7 +63,15 @@
     output="screen"
   />
 
-  <!-- 8. 三轴控制节点（V2：位置量直接输出 0.01°） -->
+  <!-- 8. 控制节点：逆解时序转发 + 前端微调转发 + 压力传感器触发 -->
+  <node
+    name="arm_sequence_controller"
+    pkg="robot_control_backend"
+    type="control_node.py"
+    output="screen"
+  />
+
+  <!-- 9. 三轴控制节点（V2：软件位置变量 + 超位检查 + 增量透传 0.01°） -->
   <node
     name="rotation_simple_node"
     pkg="robot_control_backend"
@@ -104,6 +112,14 @@
     name="imu_angle_publisher"
     pkg="robot_control_backend"
     type="tuo_luo_yi.py"
+    output="screen"
+  />
+
+  <!-- 12. 压力平均值计算节点（V2：收 sensor_raw、采 5s 窗口、发独立 pressure_avg 话题） -->
+  <node
+    name="pressure_average_calculator_node"
+    pkg="robot_control_backend"
+    type="imu_average_calculator_node.py"
     output="screen"
   />
 

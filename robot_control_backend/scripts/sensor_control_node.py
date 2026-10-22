@@ -113,48 +113,55 @@ class PressureSensorControlNode:
         self.db_conn = setup_database()
 
     def trigger_callback(self, msg):
-        """收到触发信号 → 立即发送压力传感器开关序列"""
-        target_module_id = msg.module_id
-        rospy.loginfo(f"📡 收到传感器触发指令，module_id={target_module_id}，立即执行")
-        self.send_sensor_sequence(target_module_id)
+        """收到触发信号 → 立即发送压力传感器开关序列
 
-    def send_sensor_sequence(self, module_id):
+        V2：优先使用消息携带的 device_id（臂级，21~25），未携带则回退到 env 配置的默认臂；
+        module_id 始终取消息值，不做静态配置。
+        """
+        target_module_id = int(msg.module_id)
+        sensor_axis = int(msg.device_id) if hasattr(msg, 'device_id') and msg.device_id else self.DEV_SENSOR
+        rospy.loginfo(f"📡 收到传感器触发指令，module_id={target_module_id}, device_id={sensor_axis}，立即执行")
+        self.send_sensor_sequence(target_module_id, sensor_axis)
+
+    def send_sensor_sequence(self, module_id, sensor_axis=None):
         """V2：压力通道显式停止/开启（含 RateIdx），并触发数据采集"""
-        rospy.loginfo("🔌 发送压力传感器 CAN 显式启停命令（臂级 device_id=%d）", self.DEV_SENSOR)
+        if sensor_axis is None:
+            sensor_axis = self.DEV_SENSOR
+        rospy.loginfo("🔌 发送压力传感器 CAN 显式启停命令（臂级 device_id=%d）", sensor_axis)
 
         # 第1帧：显式停止 position=[cmd_type, cmd_value, rate_idx]
         cmd1 = IntCmd()
         cmd1.header = Header()
         cmd1.header.stamp = rospy.Time.now()
         cmd1.module_id = module_id
-        cmd1.device_id = self.DEV_SENSOR
+        cmd1.device_id = sensor_axis
         cmd1.position = [self.CMD_TYPE_PRESSURE, self.CMD_VALUE_STOP, self.RATE_IDX]
         self.pub_sensor_cmd.publish(cmd1)
-        log_sensor_state(self.db_conn, self.DEV_SENSOR, 0, "显式停止压力通道")
-        rospy.loginfo(f"压力通道停止: module={module_id}, device_id={self.DEV_SENSOR}")
+        log_sensor_state(self.db_conn, sensor_axis, 0, "显式停止压力通道")
+        rospy.loginfo(f"压力通道停止: module={module_id}, device_id={sensor_axis}")
 
         # 第2帧：显式开启
         cmd2 = IntCmd()
         cmd2.header = Header()
         cmd2.header.stamp = rospy.Time.now()
         cmd2.module_id = module_id
-        cmd2.device_id = self.DEV_SENSOR
+        cmd2.device_id = sensor_axis
         cmd2.position = [self.CMD_TYPE_PRESSURE, self.CMD_VALUE_START, self.RATE_IDX]
         self.pub_sensor_cmd.publish(cmd2)
-        log_sensor_state(self.db_conn, self.DEV_SENSOR, 1, "显式开启压力通道")
-        rospy.loginfo(f"压力通道开启: module={module_id}, device_id={self.DEV_SENSOR}")
+        log_sensor_state(self.db_conn, sensor_axis, 1, "显式开启压力通道")
+        rospy.loginfo(f"压力通道开启: module={module_id}, device_id={sensor_axis}")
 
         rospy.loginfo("✅ 压力传感器显式启停命令发送完成")
 
-        # 发送采集触发信号，通知平均值计算节点开始采集5秒数据
+        # 发送采集触发信号，通知平均值计算节点开始采集窗口数据
         trigger_msg = IntCmd()
         trigger_msg.header = Header()
         trigger_msg.header.stamp = rospy.Time.now()
         trigger_msg.module_id = module_id
-        trigger_msg.device_id = self.DEV_SENSOR
+        trigger_msg.device_id = sensor_axis
         trigger_msg.position = [1]  # 触发信号
         self.pub_sample_trigger.publish(trigger_msg)
-        rospy.loginfo(f"📡 已发送采集触发信号，开始采集 {self.SAMPLE_WINDOW} 秒数据")
+        rospy.loginfo(f"📡 已发送采集触发信号 (module={module_id}, device_id={sensor_axis})，开始采集 {self.SAMPLE_WINDOW} 秒数据")
 
     def shutdown_hook(self):
         self.db_conn.close()

@@ -4,19 +4,21 @@
 伸缩轴节点 V2
 
 V2 变更：
-  - 支持 5 臂
-  - 伸缩轴 axis ∈ {4,8,12,16,20}，arm_idx=(axis-1)//4（J4，每臂第4轴）
-  - 位置量从编码器 tick 改为绝对角度（0.01°，int32）
+  - 支持 5 臂，每臂 3 轴：伸缩轴 axis ∈ {3,6,9,12,15}，arm_idx=(axis-1)//3（J3，每臂第3轴）
+  - 伸缩长度绝对范围 0~30mm（TELESCOPIC_MIN_MM / TELESCOPIC_MAX_MM）
+  - 控制语义：输入相对增量（mm），维护软件长度变量，未超限时把增量换算为 0.01° 原样透传
+  - 下发前检查：长度变量 + 增量超限则丢弃该指令、变量不变，并回执超位 CmdAck
   - mm ↔ 角度机械换算：angle_deg = length_mm × (360 / MM_PER_REV)
-  - 删除 ENC_MID/ENC_MIN/ENC_MAX/DEGREE_PER_TICK 等编码器系数
+  - 反馈只用于定初值；反馈中断超过 FEEDBACK_TIMEOUT 后恢复时用新反馈重建变量
 """
 import rospy
 import os
+import time
 import sqlite3
 import json
 from datetime import datetime
 from std_msgs.msg import Header
-from robot_control_backend.msg import TelescopicCmd, IntCmd
+from robot_control_backend.msg import TelescopicCmd, IntCmd, CmdAck
 
 def load_env_config():
     env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
@@ -33,7 +35,7 @@ class TelescopeSimple:
     def __init__(self):
         load_env_config()
         rospy.init_node("telescope_simple_node")
-        rospy.loginfo("✅ 伸缩轴节点 启动（5 臂，mm↔角度 0.01°）")
+        rospy.loginfo("✅ 伸缩轴节点 启动（5 臂×3 轴，0~30mm，增量透传，mm↔角度 0.01°）")
 
         # V2：module_id 不做静态配置，cmd_callback 从指令消息（msg.module_id）透传
         # V2 机械换算：每转导程 MM_PER_REV mm → 360°，即 1mm = 360/MM_PER_REV 度
@@ -41,10 +43,11 @@ class TelescopeSimple:
         self.deg_per_mm = 360.0 / mm_per_rev
         self.mm_per_deg = mm_per_rev / 360.0
 
-        self.MIN_LENGTH = float(os.environ['MIN_LENGTH_MM'])
-        self.MAX_LENGTH = float(os.environ['MAX_LENGTH_MM'])
-        # V2：单次伸缩增量限幅（mm），与 kinematics_node 共用同一配置
-        self.MAX_DELTA_MM = float(os.environ['TELESCOPIC_MAX_DELTA_MM'])
+        # 伸缩长度绝对软限位（mm）
+        self.MIN_MM = float(os.environ['TELESCOPIC_MIN_MM'])
+        self.MAX_MM = float(os.environ['TELESCOPIC_MAX_MM'])
+        # 反馈中断阈值（秒）：超过该时长后恢复反馈，用新反馈重建软件长度变量
+        self.FEEDBACK_TIMEOUT = 1.0
 
         # 只订阅一个统一下发的话题（控制节点输出的 _sequenced）；话题只读 rob_arm.env
         TOPIC_CMD = os.environ['ROS_TOPIC_KINEMATICS_TELESCOPIC_CMD_SEQ']
@@ -53,10 +56,12 @@ class TelescopeSimple:
 
         self.lengths = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
         self.axis_ready = {0: False, 1: False, 2: False, 3: False, 4: False}
+        self.last_fb_time = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
 
         rospy.Subscriber(TOPIC_CMD, TelescopicCmd, self.cmd_callback)
         rospy.Subscriber(TOPIC_TELESCOPE_FEEDBACK, TelescopicCmd, self.feedback_callback)
         self.output_pub = rospy.Publisher(TOPIC_TELESCOPE_OUTPUT, IntCmd, queue_size=10)
+        self.pub_cmd_ack = rospy.Publisher(os.environ['ROS_TOPIC_CMD_ACK'], CmdAck, queue_size=10)
 
         # ------------------ 数据库初始化 ------------------
         db_path = os.environ['DB_PATH']
@@ -101,11 +106,22 @@ class TelescopeSimple:
             rospy.logerr("数据库写入失败: %s", e)
 
     def _device_to_arm_idx(self, device_id):
-        """V2：device_id 即轴号；伸缩轴 axis ∈ {4,8,12,16,20}，arm_idx=(axis-1)//4"""
+        """V2：device_id 即轴号；伸缩轴 axis ∈ {3,6,9,12,15}，arm_idx=(axis-1)//3"""
         axis = int(device_id)
-        if axis in (4, 8, 12, 16, 20):
-            return (axis - 1) // 4
+        if axis in (3, 6, 9, 12, 15):
+            return (axis - 1) // 3
         return -1
+
+    def _publish_over_limit(self, msg, detail, new_len):
+        """回执超位 CmdAck：ack_msg=1、result=3（参数越界）、detail=1 上限 / 2 下限"""
+        ack = CmdAck()
+        ack.header = Header(stamp=rospy.Time.now())
+        ack.module_id = msg.module_id
+        ack.device_id = msg.device_id
+        ack.ack_msg = 1
+        ack.result = 3
+        ack.detail = detail
+        self.pub_cmd_ack.publish(ack)
 
     def cmd_callback(self, msg):
         device_id = msg.device_id
@@ -114,41 +130,53 @@ class TelescopeSimple:
             rospy.logwarn(f"伸缩节点收到无法识别的 device_id: {device_id}")
             return
 
-        target_delta_mm = msg.position[0]
         # 基准保护：首帧反馈到达前不知道当前长度，拒绝增量累加
         if not self.axis_ready[arm_idx]:
             rospy.logwarn_throttle(2.0,
-                f"⚠️ Arm{arm_idx+1} 伸缩轴尚无反馈基准，请先回零/等待反馈，本次增量 {target_delta_mm:+.2f}mm 已拒绝")
+                f"⚠️ Arm{arm_idx+1} 伸缩轴尚无反馈基准，请等待反馈，本次增量 {msg.position[0]:+.2f}mm 已拒绝")
             return
-        target_delta_mm = max(-self.MAX_DELTA_MM, min(target_delta_mm, self.MAX_DELTA_MM))
 
-        current_length = self.lengths[arm_idx]
-        target_reach_mm = current_length + target_delta_mm
-        target_reach_mm = max(self.MIN_LENGTH, min(target_reach_mm, self.MAX_LENGTH))
+        delta_mm = float(msg.position[0])
+        new_len = self.lengths[arm_idx] + delta_mm
 
-        # V2：mm → 角度 → 0.01°（int32）
-        target_deg = target_reach_mm * self.deg_per_mm
-        target_centi_deg = int(round(target_deg * 100))
+        # 下发前检查：超限则丢弃指令、软件长度变量保持不变
+        if new_len > self.MAX_MM or new_len < self.MIN_MM:
+            detail = 1 if new_len > self.MAX_MM else 2
+            self._publish_over_limit(msg, detail, new_len)
+            rospy.logwarn("⚠️ Arm%d 伸缩超位：当前 %.3fmm + 增量 %.3fmm = %.3fmm 超出 [%.1f, %.1f]，指令已丢弃",
+                          arm_idx + 1, self.lengths[arm_idx], delta_mm, new_len,
+                          self.MIN_MM, self.MAX_MM)
+            return
 
+        self.lengths[arm_idx] = new_len
+
+        # 未超限：增量 mm → 角度 → 0.01°，原样透传
+        delta_centi_deg = int(round(delta_mm * self.deg_per_mm * 100))
         int_cmd_msg = IntCmd()
         int_cmd_msg.header = Header(stamp=rospy.Time.now())
         int_cmd_msg.module_id = msg.module_id
         int_cmd_msg.device_id = device_id
-        int_cmd_msg.position = [target_centi_deg]
+        int_cmd_msg.position = [delta_centi_deg]
         self.output_pub.publish(int_cmd_msg)
 
-        self._insert_sensor_log(msg.module_id, device_id, target_centi_deg, "下发伸缩指令数据")
-        rospy.loginfo(f"Arm{arm_idx+1} 伸缩指令：{target_delta_mm:+.2f}mm → 下发角度(0.01°)：{target_centi_deg}")
+        self._insert_sensor_log(msg.module_id, device_id, delta_centi_deg, "下发伸缩增量数据")
+        rospy.loginfo(f"Arm{arm_idx+1} 伸缩增量：{delta_mm:+.3f}mm → 下发 {delta_centi_deg}(0.01°) | 长度变量 {new_len:+.3f}mm")
 
     def feedback_callback(self, msg):
-        """V2：feedback_node 已换算为角度（°），再换算回 mm 存储，并置基准就绪标志"""
+        """反馈为角度(°)，换算回 mm；仅用于定初值，中断超过阈值后恢复时重建长度变量"""
         arm_idx = self._device_to_arm_idx(msg.device_id)
-        if arm_idx >= 0:
-            angle_deg = msg.position[0]
-            self.lengths[arm_idx] = angle_deg * self.mm_per_deg
-            if not self.axis_ready[arm_idx]:
-                self.axis_ready[arm_idx] = True
-                rospy.loginfo(f"✅ Arm{arm_idx+1} 伸缩轴基准已建立（首帧反馈 {self.lengths[arm_idx]:+.2f}mm），允许增量控制")
+        if arm_idx < 0:
+            return
+        now = time.time()
+        length_mm = msg.position[0] * self.mm_per_deg
+        if not self.axis_ready[arm_idx]:
+            self.lengths[arm_idx] = length_mm
+            self.axis_ready[arm_idx] = True
+            rospy.loginfo(f"✅ Arm{arm_idx+1} 伸缩轴基准已建立（首帧反馈 {length_mm:+.3f}mm），允许增量控制")
+        elif now - self.last_fb_time[arm_idx] > self.FEEDBACK_TIMEOUT:
+            self.lengths[arm_idx] = length_mm
+            rospy.logwarn(f"♻️ Arm{arm_idx+1} 伸缩反馈中断 {now - self.last_fb_time[arm_idx]:.2f}s 后恢复，已用新反馈 {length_mm:+.3f}mm 重建长度变量")
+        self.last_fb_time[arm_idx] = now
 
     def shutdown_hook(self):
         self.conn.close()

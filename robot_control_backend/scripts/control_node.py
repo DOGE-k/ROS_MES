@@ -91,19 +91,17 @@ class ArmSequenceController:
 
     # ---------- device_id 解析（V2：device_id 即 AXIS 寻址单元）----------
     def _parse_device(self, device_id):
-        """V2 规则：device_id 即 AXIS（1~20）
-        每臂 4 轴：J1旋转/J2摆动/J3空置/J4伸缩
-        臂索引 arm_idx = (axis-1)//4（0~4，共5臂）
-        关节：axis%4==1→rotate, ==2→swing, ==0→extend（J3 即 axis%4==3 空置）
+        """V2 规则：device_id 即 AXIS（1~15）
+        每臂 3 轴：J1旋转/J2摆动/J3伸缩
+        臂索引 arm_idx = (axis-1)//3（0~4，共5臂）
+        关节：axis%3==1→rotate, ==2→swing, ==0→extend
         """
         axis = int(device_id)
-        if axis < 1 or axis > 20:
-            raise ValueError(f"非法 device_id={axis}（允许轴号 1~20）")
-        arm_idx = (axis - 1) // 4
-        remainder = axis % 4
+        if axis < 1 or axis > 15:
+            raise ValueError(f"非法 device_id={axis}（允许轴号 1~15）")
+        arm_idx = (axis - 1) // 3
+        remainder = axis % 3
         joint_map = {1: "rotate", 2: "swing", 0: "extend"}
-        if remainder not in joint_map:
-            raise ValueError(f"device_id={axis} 对应 J3 空置轴，不可下发控制")
         return arm_idx, joint_map[remainder]
 
     # ---------- 压力传感器触发管理 ----------

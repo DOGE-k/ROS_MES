@@ -5,7 +5,7 @@
 
 V2 关键变更：
   - 5 臂映射（V1.1 为 3 臂）
-  - device_id 即 AXIS 寻址单元（1~20轴/21~25臂级），每臂 4 轴（J1旋转/J2摆动/J3空/J4伸缩）
+  - device_id 即 AXIS 寻址单元（1~15轴/21~25臂级），每臂 3 轴（J1旋转/J2摆动/J3伸缩）
   - 摆动角上限 ±15°（V1.1 为 ±20°，由 rob_arm.env 中 MAX_SWING_ANGLE 控制）
 """
 
@@ -50,8 +50,6 @@ def update_config_from_env():
     Config.MAX_SWING_ANGLE = float(os.environ['MAX_SWING_ANGLE'])
     Config.ARM_MIN_EXTEND   = float(os.environ['ARM_MIN_EXTEND'])       # cm
     Config.ARM_MAX_EXTEND   = float(os.environ['ARM_MAX_EXTEND'])       # cm
-    Config.MIN_LENGTH_MM    = float(os.environ['MIN_LENGTH_MM'])
-    Config.MAX_LENGTH_MM    = float(os.environ['MAX_LENGTH_MM'])
     # 伸缩轴丝杠导程（mm/转），用于 角度(°) ↔ 长度(mm) 换算
     Config.MM_PER_REV       = float(os.environ['MM_PER_REV'])
     # 单次伸缩增量限幅（mm），publish_cmd 增量限幅用；与 telescopic_node 共用同一配置键
@@ -142,20 +140,20 @@ class KinematicsNode:
         """V2：5 臂映射，单元号即臂号"""
         return {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}.get(arm_id, 0)
 
-    # ----- 硬件反馈回调（V2：device_id 即轴号，臂号=(轴号-1)//4+1）-----
+    # ----- 硬件反馈回调（V2：device_id 即轴号，臂号=(轴号-1)//3+1）-----
     def rotation_feedback_cb(self, msg):
-        arm_id = (int(msg.device_id) - 1) // 4 + 1
+        arm_id = (int(msg.device_id) - 1) // 3 + 1
         self._ensure_arm(arm_id)
         self.current_state[arm_id]["rotation"] = msg.position[0]
 
     def swing_feedback_cb(self, msg):
-        arm_id = (int(msg.device_id) - 1) // 4 + 1
+        arm_id = (int(msg.device_id) - 1) // 3 + 1
         self._ensure_arm(arm_id)
         self.current_state[arm_id]["swing"] = msg.position[0]
 
     def telescopic_feedback_cb(self, msg):
         """伸缩轴反馈为角度(°)，需换算为 mm 后存入 current_state（cur_tel 按 mm 使用）"""
-        arm_id = (int(msg.device_id) - 1) // 4 + 1
+        arm_id = (int(msg.device_id) - 1) // 3 + 1
         self._ensure_arm(arm_id)
         angle_deg = msg.position[0]
         length_mm = angle_deg * (Config.MM_PER_REV / 360.0)
@@ -269,13 +267,13 @@ class KinematicsNode:
             delta_tel = max(-Config.TELESCOPIC_MAX_DELTA_MM, min(delta_tel, Config.TELESCOPIC_MAX_DELTA_MM))
 
         # V2 device_id 规则（device_id 即 AXIS 寻址单元，不再乘 100）：
-        #   每臂 4 轴（J1旋转/J2摆动/J3空置/J4伸缩），轴号=1~20
-        #   Arm1: axis 1/2/4 → device_id 1/2/4
-        #   Arm2: axis 5/6/8 → device_id 5/6/8  ...
-        #   Arm5: axis17/18/20 → device_id 17/18/20
-        axis_rot = (arm_id - 1) * 4 + 1
-        axis_sw  = (arm_id - 1) * 4 + 2
-        axis_tel = (arm_id - 1) * 4 + 4
+        #   每臂 3 轴（J1旋转/J2摆动/J3伸缩），轴号=1~15
+        #   Arm1: axis 1/2/3 → device_id 1/2/3
+        #   Arm2: axis 4/5/6 → device_id 4/5/6  ...
+        #   Arm5: axis13/14/15 → device_id 13/14/15
+        axis_rot = (arm_id - 1) * 3 + 1
+        axis_sw  = (arm_id - 1) * 3 + 2
+        axis_tel = (arm_id - 1) * 3 + 3
         dev_rot = axis_rot
         dev_sw  = axis_sw
         dev_tel = axis_tel
@@ -307,9 +305,9 @@ class KinematicsNode:
         unit = self.arm_to_unit(arm_id)
 
         coord_dict = {str(unit): alpha}
-        axis_rot = (arm_id - 1) * 4 + 1
-        axis_sw  = (arm_id - 1) * 4 + 2
-        axis_tel = (arm_id - 1) * 4 + 4
+        axis_rot = (arm_id - 1) * 3 + 1
+        axis_sw  = (arm_id - 1) * 3 + 2
+        axis_tel = (arm_id - 1) * 3 + 3
         position_dict = {
             str(axis_rot): round(delta_rot, 2),
             str(axis_sw): round(delta_sw, 2),

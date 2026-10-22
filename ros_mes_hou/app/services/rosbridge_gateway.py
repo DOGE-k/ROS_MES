@@ -37,6 +37,9 @@ FEEDBACK_TOPICS: List[str] = [
     "/hardware/telescope_feedback",
     "/hardware/sensor_feedback",
     "/hardware/imu_angles",
+    # V2：新增两路
+    "/hardware/pressure_avg",
+    "/hardware/vacuum_loss",
 ]
 
 DRAWING_PATH_TOPIC = "/frontend_pointcloud_topic"
@@ -70,6 +73,9 @@ FEEDBACK_LABELS = _build_feedback_labels()
 IMU_FEEDBACK_LABEL = ("imu_pose", "陀螺仪姿态")
 IMU_ANGLES_TOPIC = "/hardware/imu_angles"
 SENSOR_FEEDBACK_TOPIC = "/hardware/sensor_feedback"
+# V2 新增：独立平均值话题（不再与瞬时值同话题混流）与失压事件话题
+PRESSURE_AVG_TOPIC = "/hardware/pressure_avg"
+VACUUM_LOSS_TOPIC = "/hardware/vacuum_loss"
 
 
 class RosbridgeError(RuntimeError):
@@ -156,8 +162,14 @@ def _float_value(value: Any) -> float:
 
 def normalize_feedback_message(topic: str, msg: Dict[str, Any]) -> Dict[str, Any]:
     device_id = int(msg.get("device_id", 0))
-    # 臂级 21~25：IMU 话题识别为陀螺仪，其余按压力传感器
-    if topic == IMU_ANGLES_TOPIC and 21 <= device_id <= 25:
+    # 新话题分支：先于默认表查找，保证标签稳定（即使 FEEDBACK_LABELS 未覆盖）
+    if topic == PRESSURE_AVG_TOPIC and 21 <= device_id <= 25:
+        data_type = "pressure_average"
+        feedback_type = f"臂{device_id - 20}压力平均值(5s窗口)"
+    elif topic == VACUUM_LOSS_TOPIC and 21 <= device_id <= 25:
+        data_type = "vacuum_loss_event"
+        feedback_type = f"臂{device_id - 20}吸盘失压告警"
+    elif topic == IMU_ANGLES_TOPIC and 21 <= device_id <= 25:
         data_type, feedback_type = IMU_FEEDBACK_LABEL[0], f"臂{device_id - 20}陀螺仪姿态"
     else:
         data_type, feedback_type = FEEDBACK_LABELS.get(device_id, ("unknown", "unknown feedback"))
