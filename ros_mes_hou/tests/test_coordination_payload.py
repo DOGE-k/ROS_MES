@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import Mock, patch
 
@@ -7,6 +8,11 @@ from sqlalchemy.orm import sessionmaker
 from app.api.endpoints.coordination import proxy_pointcloud_view, send_coordination
 from app.db import models
 from app.db.database import Base
+
+# 以仓库实际位置定位图纸文件，避免写死某台机器的盘符路径（Ubuntu 上 D:\ 不可用）
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DRAWING_FILE = os.path.join(PROJECT_ROOT, "Drawing", "零件.json")
+PART_DRAWING_FILE = os.path.join("drawings", "part.json")
 
 
 class DummyDispatcher:
@@ -40,7 +46,7 @@ class CoordinationPayloadTest(unittest.TestCase):
                 Drawing_ID=5,
                 Drawingname="drawing",
                 Drawingdescripte="",
-                Drawingfile=r"D:\drawings\part.json",
+                Drawingfile=PART_DRAWING_FILE,
                 Creator_ID=1,
                 NewVersion_ID=1,
                 del_flag=False,
@@ -89,7 +95,7 @@ class CoordinationPayloadTest(unittest.TestCase):
                     Drawing_ID=5,
                     Drawingname="drawing",
                     Drawingdescripte="",
-                    Drawingfile=r"D:\university\competition\ROS_MES_System\2.0\ROS_MES\Drawing\零件.json",
+                    Drawingfile=DRAWING_FILE,
                     Creator_ID=1,
                     NewVersion_ID=1,
                     del_flag=False,
@@ -132,7 +138,7 @@ class CoordinationPayloadTest(unittest.TestCase):
                     Drawing_ID=5,
                     Drawingname="drawing",
                     Drawingdescripte="",
-                    Drawingfile=r"D:\drawings\part.json",
+                    Drawingfile=PART_DRAWING_FILE,
                     Creator_ID=1,
                     NewVersion_ID=1,
                     del_flag=False,

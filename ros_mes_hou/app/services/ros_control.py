@@ -27,6 +27,17 @@ PYTHON_CMD = "python"
 
 # WebSocket 地址（web_data_node 的 rosbridge 桥接端口）
 WEBSOCKET_URI = "ws://localhost:8760"
+
+# rosbridge 默认地址；实际地址由环境变量 ROSBRIDGE_URL 覆盖
+# 部署模板见 deploy/config/backend.env，联调时改成 ROS 所在机器地址，如 ws://192.168.12.129:9010
+DEFAULT_ROSBRIDGE_URL = "ws://localhost:9010"
+
+
+def get_rosbridge_url() -> str:
+    """在调用时读取 ROSBRIDGE_URL，避免模块导入时就把地址定死。"""
+    return os.getenv("ROSBRIDGE_URL", DEFAULT_ROSBRIDGE_URL)
+
+
 # V2：全局急停为系统级指令，module_id=0 / device_id=0（不使用静态模块编号），
 # softstop_node 收到后转发 position=[0x01] 全局急停
 SYSTEM_MODULE_ID = 0
@@ -83,7 +94,7 @@ async def trigger_emergency_stop() -> bool:
         print("[紧急故障] websockets 库未安装，无法发送急停指令")
         return False
 
-    ROSBRIDGE_URL = "ws://localhost:9010"
+    rosbridge_url = get_rosbridge_url()
     emergency_msg = json.dumps({
         "op": "publish",
         "topic": "/control/softstop",
@@ -96,9 +107,9 @@ async def trigger_emergency_stop() -> bool:
     }, ensure_ascii=False)
 
     try:
-        async with websockets.connect(ROSBRIDGE_URL, close_timeout=1) as ws:
+        async with websockets.connect(rosbridge_url, open_timeout=3, close_timeout=1) as ws:
             await asyncio.wait_for(ws.send(emergency_msg), timeout=2.0)
-        print("[急停] 指令已发送: /control/softstop")
+        print(f"[急停] 指令已发送: /control/softstop -> {rosbridge_url}")
         return True
     except asyncio.TimeoutError:
         print("[紧急故障] 急停 WebSocket 发送超时")
