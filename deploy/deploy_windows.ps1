@@ -77,7 +77,7 @@ Write-Host ""
 # ---- 3. 初始化数据库 ----
 Write-Host "[3/6] 初始化数据库..." -ForegroundColor Green
 
-$dbScript = Join-Path $PROJECT_ROOT "ROS_MES\mes_web\ros_mes_hou\sqlite_create.py"
+$dbScript = Join-Path $PROJECT_ROOT "ROS_MES\sqlite_create.py"
 $dbFile = Join-Path $PROJECT_ROOT "ROS_MES\ros_database.db"
 
 if (Test-Path $dbScript) {
