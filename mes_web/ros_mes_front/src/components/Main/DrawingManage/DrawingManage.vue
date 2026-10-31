@@ -31,7 +31,7 @@
     </div>
 
     <div class="table-wrapper">
-      <el-table :data="drawingList" border stripe v-loading="loading" empty-text="暂无图纸数据" class="drawing-table">
+      <el-table :data="pageDrawingList" border stripe v-loading="loading" empty-text="暂无图纸数据" class="drawing-table">
         <el-table-column prop="drawingId" label="ID" width="70" align="center" />
         <el-table-column prop="drawingName" label="图纸名称" min-width="140" show-overflow-tooltip />
         <el-table-column prop="drawingDescription" label="图纸描述" min-width="160" show-overflow-tooltip />
@@ -78,6 +78,13 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination
+  v-model:current-page="currentPage"
+  v-model:page-size="pageSize"
+  :page-sizes="[10, 20, 50]"
+  :total="total"
+  layout="total, sizes, prev, pager, next, jumper"
+/>
     </div>
 
     <el-dialog v-model="importVisible" title="导入 JSON 图纸数据" width="720px" destroy-on-close class="styled-dialog">
@@ -220,7 +227,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted,computed } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { UploadFile, UploadInstance } from 'element-plus';
 import {
@@ -234,7 +241,14 @@ import type { DrawingItem } from '@/api/types';
 
 const loading = ref(false);
 const drawingList = ref<DrawingItem[]>([]);
-
+const currentPage = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const pageDrawingList = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return drawingList.value.slice(start, end)
+})
 const searchForm = reactive({
   keyword: '',
 });
@@ -391,6 +405,7 @@ async function fetchDrawingList(keyword?: string) {
     const res = await getDrawingListApi(params);
     if (res.code === 200) {
       drawingList.value = res.data || [];
+      total.value = drawingList.value.length
     }
   } catch (err: any) {
     const msg = err?.response?.data?.detail || err?.message || '获取图纸列表失败';
