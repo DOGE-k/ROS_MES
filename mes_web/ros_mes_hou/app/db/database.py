@@ -6,7 +6,10 @@ from app.core.config import settings
 # 创建数据库引擎
 # connect_args={"check_same_thread": False} 是 SQLite 特有的配置，允许多线程访问
 engine = create_engine(
-    settings.DATABASE_URL, connect_args={"check_same_thread": False}
+    settings.DATABASE_URL,
+    # timeout：多个 ROS 节点与本服务共用同一个 SQLite 文件（WAL 模式），
+    # 写锁竞争时最多等待 30s 再报 "database is locked"
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 
 # 创建会话工厂，用于后续在接口中获取数据库连接

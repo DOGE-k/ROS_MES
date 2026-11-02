@@ -6,6 +6,7 @@ import json
 import struct
 import threading
 import sqlite3
+import time
 from collections import deque
 from datetime import datetime
 
@@ -124,6 +125,13 @@ class CANBusBridge:
         self.node_lost = set()
         # arm(1~5) -> {gyro, accel, ts}
         self.imu_cache = {}
+        # 轴号 -> (最近归档的角度, 归档时刻)：位置反馈按 1Hz 且变化才落库，
+        # 否则下位机周期帧（约 1kHz）会把 sensor_log 写爆并长期占用 SQLite 写锁
+        self.fb_archive_cache = {}
+        # 轴号 -> (最近发布的角度, 发布时刻)：位置反馈发布节流。
+        # 下位机位置反馈实测可达 ~5.5kHz，逐帧 publish 会占满 ROS 侧带宽并
+        # 拖慢接收线程，导致 CmdAck 被淹没；这里限制到每轴 50Hz。
+        self.fb_pub_cache = {}
 
         # ---------- 话题（发布；只读 rob_arm.env，无硬编码默认值）----------
         self.pub_rot_raw = rospy.Publisher(
@@ -252,6 +260,24 @@ class CANBusBridge:
             channel=self.channel, interface="socketcan", bitrate=self.bitrate,
             can_filters=self._make_filters())
 
+    def _bus_alive(self):
+        """CAN 句柄是否仍对应在场的设备（socketcan 无 is_alive 方法时视为存活）"""
+        bus = self.bus
+        if bus is None:
+            return False
+        checker = getattr(bus, 'is_alive', None)
+        return bool(checker()) if checker else True
+
+    def _drop_bus(self):
+        """关闭并丢弃当前 CAN 句柄，由读线程负责重建（USB 重新枚举后必须重新打开）"""
+        with self.bus_lock:
+            bus, self.bus = self.bus, None
+        if bus is not None:
+            try:
+                bus.shutdown()
+            except Exception:
+                pass
+
     def _read_can_loop(self):
         while self.running and not rospy.is_shutdown():
             if self.bus is None:
@@ -263,32 +289,40 @@ class CANBusBridge:
                     rospy.logerr_throttle(5.0, "❌ CAN 连接失败（5s 后重试）：%s", e)
                     rospy.sleep(1.0)
                     continue
+            # 断线检测：USB 掉线/重新枚举后旧句柄不会抛异常，recv() 只会一直返回 None
+            if not self._bus_alive():
+                rospy.logwarn("⚠️ CAN 设备已掉线（USB 句柄失效），关闭句柄等待重新枚举")
+                self._drop_bus()
+                rospy.sleep(1.0)
+                continue
             try:
                 msg = self.bus.recv(timeout=0.5)
                 if msg is not None and msg.is_extended_id:
                     self._parse_can_frame(msg)
             except Exception as e:
                 rospy.logerr_throttle(2.0, "❌ CAN 接收异常，准备重连：%s", e)
-                with self.bus_lock:
-                    try: self.bus.shutdown()
-                    except Exception: pass
-                    self.bus = None
+                self._drop_bus()
                 rospy.sleep(0.5)
 
     # ======================================================================
     # 发送
     # ======================================================================
     def _send_can_frame(self, can_id, data):
-        if self.bus is None:
+        bus = self.bus
+        if bus is None:
             rospy.logwarn("⚠️ CAN 未连接，丢弃帧 0x%08X", can_id)
             return False
         frame = can.Message(arbitration_id=can_id, data=data, is_extended_id=True)
         try:
             with self.bus_lock:
-                self.bus.send(frame, timeout=0.2)
+                bus.send(frame, timeout=0.2)
             return True
         except Exception as e:
             rospy.logerr("❌ CAN 发送失败 0x%08X: %s", can_id, e)
+            # 发送失败且设备已不在位（USB 掉线/重新枚举）→ 丢弃句柄交给读线程重连
+            if not self._bus_alive():
+                rospy.logwarn("⚠️ CAN 发送失败且设备已掉线，关闭句柄等待重连")
+                self._drop_bus()
             return False
 
     def on_cmd_received(self, msg):
@@ -647,7 +681,7 @@ class CANBusBridge:
             if mnum == 0:                                        # 单轴角度 int32 (0.01°)
                 angle = struct.unpack_from('>i', data, 0)[0]
                 self._dispatch_axis_feedback(module_id, device_id, axis, angle)
-                self._archive_sensor(module_id, device_id, angle, "轴角度反馈(0.01°)")
+                self._archive_axis_angle_throttled(module_id, device_id, angle)
             elif mnum == 3:                                      # 轴状态字 DLC=4
                 status_bits = struct.unpack_from('>H', data, 0)[0] if len(data) >= 2 else 0
                 axis_state = data[2] if len(data) >= 3 else 0
@@ -781,6 +815,12 @@ class CANBusBridge:
             was_waiting = self.tx_waiting.pop(axis, None) is not None
         if was_waiting:
             self._try_send_next(axis)
+        # 发布节流：同角度且距上次发布 <20ms 时跳过（下位机原始上报可达 ~5.5kHz）
+        now = rospy.Time.now().to_sec()
+        prev = self.fb_pub_cache.get(device_id)
+        if prev is not None and prev[0] == angle and (now - prev[1]) < 0.02:
+            return
+        self.fb_pub_cache[device_id] = (angle, now)
         fb = Feedback(header=self._header(), module_id=module_id,
                       device_id=device_id, position=[float(angle)])
         joint_idx = (axis - 1) % 3
@@ -893,6 +933,20 @@ class CANBusBridge:
                 }, note)
             except Exception as e:
                 rospy.logerr_throttle(10.0, "sensor_log 归档失败: %s", e)
+
+    def _archive_axis_angle_throttled(self, module_id, device_id, angle):
+        """轴角度归档节流：角度变化或距上次归档 ≥1s 才写库
+
+        下位机按 DIR_PERIODIC 高频（实测 ~1kHz）上报位置，逐帧落库会让
+        sensor_log 每分钟增加数万行并长期持有 SQLite 写锁，导致后端与各
+        轴节点写库超时（database is locked）。
+        """
+        prev = self.fb_archive_cache.get(device_id)
+        now = time.time()
+        if prev is not None and prev[0] == angle and (now - prev[1]) < 1.0:
+            return
+        self.fb_archive_cache[device_id] = (angle, now)
+        self._archive_sensor(module_id, device_id, angle, "轴角度反馈(0.01°)")
 
     def _archive_gyro(self, module_id, device_id, m):
         """归档 IMU（加速度+角速度，已换算物理单位）上行数据到 sensor_log"""

@@ -29,6 +29,13 @@
     # 单轴停止（安全，不锁系统）
     python3 zlg_real_test.py stop 2
 
+    # 超位故障复位（Result=4 时用；省略轴号则复位本臂三轴）
+    python3 zlg_real_test.py reset 2
+    python3 zlg_real_test.py reset
+
+    # 模块级急停（只停本组三电机，可用 0x00000004 解除）
+    python3 zlg_real_test.py modstop
+
     # 确认后依次探测本地 1~3 轴
     python3 zlg_real_test.py probe --axes 3 --delta 100
 
@@ -55,9 +62,14 @@ DEV_TYPE = 4  # USBCAN-II
 DEV_IND, CAN_IND = 0, 0
 
 # ==================== 急停相关固定帧 ====================
-EMERGENCY_STOP_ID = 0x00000000       # ⚠️ 广播急停：锁死系统，需重新上电
-EMERGENCY_RELEASE_ID = 0x00000004    # 急停解除
+EMERGENCY_STOP_ID = 0x00000000       # ⚠️ 广播急停：锁死全系统，需重新上电
+EMERGENCY_RELEASE_ID = 0x00000004    # 急停解除（清全局 + 各轴急停锁存，不清超位故障）
 EMERGENCY_RELEASE_DATA = bytes([0x01])
+MODULE_STOP_BASE = 0x00000008        # 模块级急停：ID = 0x00000008 + (SEG<<18)，只停本组三电机
+
+# ==================== 超位故障复位 ====================
+FAULT_RESET_BASE = 0x04402114        # ID = 0x04402114 + (SEG<<18) + ((AXIS-1)<<8)，DLC=1 DATA=01
+FAULT_RESET_ACK_PREFIX = 0x04802154  # 复位应答 = 0x04802154 + (SEG<<18) + ((AXIS-1)<<8)，DATA=05 00 00
 
 # ==================== 模块确认（领号段）协议 ====================
 UID_FRAME_BASE = 0x15BC0000          # 领号段基址（掩码匹配 0x15BC00xx）
@@ -81,12 +93,15 @@ MSG_MOTION, MSG_STOP, MSG_HOME = 1, 3, 4
 
 RESULT_TEXT = {
     0: "OK 接受",
-    1: "忙（上一条未到位）",
-    2: "基准无效（需先回零）",
-    3: "越界",
-    4: "故障",
-    5: "急停锁存",
+    1: "轴忙（等当前电机停止）",
+    2: "组号/臂位未绑定（需重新绑定）",
+    3: "参数越界（检查目标值）",
+    4: "轴超位故障锁存（需 0x0440xx14 复位）",
+    5: "急停锁存（先发 0x00000004 解除）",
 }
+
+STOP_REASON_TEXT = {1: "正常到位", 2: "急停", 4: "限位/超位"}
+LIMIT_TEXT = {1: "上限位", 2: "下限位"}
 
 
 def build_id(pri, grp, seg=0, node=1, axis=0, direction=0, msg=0):
@@ -212,6 +227,9 @@ class ZLG:
 
 
 # ==================== 帧解析与打印 ====================
+_LAST_ANGLE = {}
+
+
 def print_frame(can_id, data):
     info = parse_id(can_id)
     grp, msg, axis, direction = info["grp"], info["msg"], info["axis"], info["dir"]
@@ -231,15 +249,26 @@ def print_frame(can_id, data):
             print(f"{tail}   [臂位确认] UID56=0x{int.from_bytes(data[0:7], 'big'):014X} "
                   f"ARM={data[7] >> 4} AxisBase={data[7] & 0xF}")
             return
-    # 运动反馈：CmdAck
+    # 系统帧（GRP=0）：急停/解除/模块急停
+    if grp == 0 and len(data) >= 1:
+        label = {0: "全局急停", 1: "急停解除", 2: "模块急停", 3: "单轴停止"}.get(msg, "系统帧")
+        print(f"{tail}   [{label}] SEG={info['seg']} DATA={data.hex(' ')}")
+        return
+    # 运动反馈：CmdAck（data[0]=5 为超位故障复位应答）
     if grp == GRP_MOTION_FB and msg == 5 and len(data) >= 3:
+        if data[0] == 5:
+            print(f"{tail}   [故障复位应答] axis={axis} Result={data[1]} Detail={data[2]}")
+            return
         result = data[1]
         print(f"{tail}   [CmdAck] axis={axis} result={result} "
               f"({RESULT_TEXT.get(result, '未知')}) detail={data[2]}")
         return
-    # 运动反馈：周期角度
+    # 运动反馈：周期角度（只在数值变化时打印，避免刷屏）
     if grp == GRP_MOTION_FB and msg == 0 and direction == DIR_PERIODIC and len(data) >= 4:
         angle = struct.unpack_from(">i", data, 0)[0] / 100.0
+        if _LAST_ANGLE.get(axis) == angle:
+            return
+        _LAST_ANGLE[axis] = angle
         unit = "mm" if local_axis_is_telescopic(axis) else "°"
         print(f"{tail}   [角度] axis={axis} {angle:.2f}{unit}")
         return
@@ -248,6 +277,16 @@ def print_frame(can_id, data):
         angle, pos_err = struct.unpack_from(">ih", data, 0)
         print(f"{tail}   [到位] axis={axis} angle={angle / 100.0:.2f} "
               f"pos_err={pos_err} status={data[6]} flags={data[7]}")
+        return
+    # 事件：停止通知 DLC=2（0x08C0xx84）
+    if grp == GRP_EVENT and msg == 1 and len(data) >= 2:
+        reason = data[0]
+        print(f"{tail}   [停止] axis={axis} StopReason={reason}"
+              f"({STOP_REASON_TEXT.get(reason, '未知')}) 档位={data[1]}")
+        return
+    # 事件：限位事件 DLC=2（0x08C0xx90）
+    if grp == GRP_EVENT and msg == 4 and len(data) >= 2:
+        print(f"{tail}   [限位] axis={axis} {LIMIT_TEXT.get(data[0], f'0x{data[0]:02X}')}")
         return
     print(f"{tail}   [其他] pri={info['pri']} grp={grp} seg={info['seg']} "
           f"node={info['node']} axis={axis} dir={direction} msg={msg}")
@@ -491,6 +530,34 @@ def do_move(bus, axis, delta, speed, node, seg, wait=3.0):
     return bus.collect(wait)
 
 
+def do_fault_reset(bus, axis, seg, wait=2.0):
+    """超位故障复位：ID=0x04402114+(SEG<<18)+((AXIS-1)<<8)，DLC=1 DATA=01"""
+    cid = FAULT_RESET_BASE | ((seg & 0xF) << 18) | (((int(axis) - 1) & 0x1F) << 8)
+    print(f"\n[超位故障复位] axis={axis}  ID=0x{cid:08X}  DLC=1  DATA=01")
+    bus.send(cid, bytes([0x01]))
+    return bus.collect(wait)
+
+
+def do_module_stop(bus, seg, wait=1.5):
+    """模块级急停：ID=0x00000008+(SEG<<18)，只停本组三电机（比全局急停安全）"""
+    cid = MODULE_STOP_BASE | ((seg & 0xF) << 18)
+    print(f"\n[模块级急停] SEG={seg}  ID=0x{cid:08X}  DLC=1  DATA=01")
+    print("   （只停本组三电机，可再用 0x00000004 解除）")
+    bus.send(cid, bytes([0x01]))
+    return bus.collect(wait)
+
+
+def maybe_auto_reset(bus, frames, axes, seg):
+    """运动被 Result=4 拒绝时自动复位对应轴超位故障"""
+    acks, _ = summarize(frames)
+    faulted = [ax for ax in axes if acks.get(ax) and acks[ax][-1] == 4]
+    if not faulted:
+        return
+    for ax in faulted:
+        print(f"  ⚠️ axis={ax} 处于超位故障锁存（Result=4），自动复位...")
+        do_fault_reset(bus, ax, seg, wait=1.0)
+
+
 def local_axis_is_telescopic(axis):
     """按 3 轴机械臂约定：组内第 3 轴为伸缩轴（只有它按 mm 显示）"""
     return (int(axis) - 1) % 3 == 2
@@ -526,6 +593,17 @@ def cmd_probe(bus, args, seg, axis_base):
 
 def cmd_confirm(bus, args):
     """只做模块确认，验证真机是否成功锁定 ID"""
+    if args.skip_confirm:
+        print(f"\n[跳过绑定] 按命令行假定已绑定：SEG={args.seg} ARM={args.arm}")
+        r = verify_status(bus, args.seg, args.arm)
+        print("\n" + "=" * 58)
+        if r["ok"]:
+            print(f"✅ 模块已绑定且状态正常：SEG={args.seg} ARM={args.arm}")
+        else:
+            print(f"❌ 状态复核失败：{r['reason']}")
+        print("=" * 58)
+        return
+
     r = do_confirm(bus, args.seg, args.arm,
                    announce_wait=args.announce_wait, ack_timeout=args.ack_timeout,
                    retries=args.retries, verify=args.verify, want_uid=args.uid)
@@ -579,6 +657,8 @@ def add_common_args(parser, suppress=False):
                         help="确认后追加状态复核（0x00000020）")
     parser.add_argument("--uid", type=lambda s: int(s, 0), default=d(None),
                         help="指定目标模块 UID56（十进制或 0x 前缀），多臂时用")
+    parser.add_argument("--auto-reset", action="store_true", default=d(False),
+                        help="运动返回 Result=4（超位锁存）时自动发 0x0440xx14 复位")
     parser.add_argument("--no-release", action="store_true", default=d(False),
                         help="跳过自动急停解除")
 
@@ -624,7 +704,15 @@ def main():
     sp.add_argument("--delta", type=int, default=100, help="每轴增量，默认 100 (1.00)")
     add_common_args(sp, suppress=True)
 
-    sp = sub.add_parser("estop", help="⚠️ 广播急停（会锁死系统）")
+    sp = sub.add_parser("reset", help="超位故障复位（0x0440xx14）")
+    sp.add_argument("axis", type=int, nargs="?", default=0,
+                    help="本地轴号 1~3；省略则复位本臂全部 3 轴")
+    add_common_args(sp, suppress=True)
+
+    sp = sub.add_parser("modstop", help="模块级急停（只停本组三电机，可解除）")
+    add_common_args(sp, suppress=True)
+
+    sp = sub.add_parser("estop", help="⚠️ 广播急停（锁死全系统）")
     sp.add_argument("--i-know-risk", action="store_true")
     add_common_args(sp, suppress=True)
 
@@ -641,11 +729,16 @@ def main():
             release_estop(bus)
             bus.collect(0.5)
 
-        # 只监听类命令：不做模块确认
-        if args.cmd in ("release", "status", "listen"):
-            secs = {"release": args.listen, "status": args.listen,
-                    "listen": args.seconds}[args.cmd]
-            bus.collect(secs)
+        # 只监听/查询类命令：不做模块确认
+        if args.cmd == "release":
+            bus.collect(args.listen)
+            return
+        if args.cmd == "status":
+            verify_status(bus, args.seg, args.arm)
+            bus.collect(args.listen)
+            return
+        if args.cmd == "listen":
+            bus.collect(getattr(args, "seconds", 5.0))
             return
         if args.cmd == "estop":
             cmd_estop(bus, args)
@@ -675,13 +768,23 @@ def main():
             axis = to_global_axis(args.axis, arm)
             frames = do_move(bus, axis, args.delta, args.speed,
                              args.node, seg, args.wait)
+        elif args.cmd == "reset":
+            axes = ([to_global_axis(args.axis, arm)] if args.axis
+                    else [axis_base + i for i in range(3)])
+            for ax in axes:
+                frames += do_fault_reset(bus, ax, seg, args.wait)
+        elif args.cmd == "modstop":
+            frames = do_module_stop(bus, seg, args.wait)
         elif args.cmd == "probe":
             cmd_probe(bus, args, seg, axis_base)
             return
 
         if frames:
+            if args.auto_reset and args.cmd in ("move", "home"):
+                maybe_auto_reset(bus, frames, [to_global_axis(args.axis, arm)], seg)
+                frames += bus.collect(1.0)
             acks, angles = summarize(frames)
-            target_axis = to_global_axis(args.axis, arm) if hasattr(args, "axis") else None
+            target_axis = to_global_axis(args.axis, arm) if args.cmd in ("move", "home", "stop") else None
             print_verdict(acks, angles, target_axis)
     finally:
         bus.close()
