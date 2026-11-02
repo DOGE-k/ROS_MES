@@ -78,9 +78,11 @@ copy deploy\config\frontend.env ROS_MES\mes_web\ros_mes_front\.env.development
 #### 2. 初始化数据库
 
 ```powershell
-cd ROS_MES\mes_web\ros_mes_hou
+cd ROS_MES
 python sqlite_create.py
 ```
+
+> 脚本固定在仓库根，数据库始终生成到 `ROS_MES\ros_database.db`，与后端 `DATABASE_URL` 默认值一致。
 
 #### 3. 后端安装
 

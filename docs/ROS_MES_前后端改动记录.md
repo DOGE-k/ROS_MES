@@ -11,6 +11,17 @@
 
 ---
 
+## 2026-10-30（建库脚本 sqlite_create.py 移回仓库根）
+
+- `mes_web/ros_mes_hou/sqlite_create.py` → 仓库根 `sqlite_create.py`（已完成，`git mv` 重命名追踪，脚本内容未改）
+  - 理由：该脚本建的是仓库根的 `ros_database.db`（后端 `DATABASE_URL` 默认 `sqlite:///../../ros_database.db` 指向它），属于整个项目的库初始化，不是后端应用代码；`e1bfe9e` 目录重构前它本来就在仓库根，重构时被一并扫进了 `mes_web/ros_mes_hou/`
+  - 脚本内 `_find_project_root()` 未改：从新位置向上第一层即命中 `.git`，`DB_PATH` 仍解析为仓库根，与后端 `app/core/config.py` 的 `PROJECT_ROOT` 判定一致；脚本仍独立可运行，只依赖后端 venv 里的 `passlib`，所以运行时继续用后端 venv 的 Python
+  - 同步更新引用：`README.md`（目录表新增脚本一行、第 2 步命令改为 `.\mes_web\ros_mes_hou\venv\Scripts\python.exe .\sqlite_create.py`）、`deploy/deploy_windows.ps1:80`（`$dbScript` 改为 `ROS_MES\sqlite_create.py`）、`deploy/README_DEPLOY.md`（§2 改为在 `ROS_MES` 根执行）、《接口字段文档》§10 注明脚本在仓库根
+- `???` 作废提示：2026-10-29 条目里"脚本方式可直接在 `mes_web/ros_mes_hou` 下执行 `python sqlite_create.py`"已不适用，改为在仓库根执行 `python sqlite_create.py`
+- 验证：`py_compile sqlite_create.py` 通过；用后端 venv 导入脚本打印 `DB_PATH = D:\...\ROS_MES\ros_database.db`（存在，110,592 B，未被写入）；`git grep sqlite_create` 确认后端 `app/`、`tests/` 无引用，用例不受影响；`git diff --check` 通过（本地 venv 未装 pytest，未跑测试套件）
+
+---
+
 ## 2026-10-29（部署文档数据库路径修正 + 工作区残留清理）
 
 - 修正 `deploy/README_DEPLOY.md` §6 配置表中 `DATABASE_URL` 默认值：`sqlite:///../ros_database.db` → `sqlite:///../../ros_database.db`，与 `deploy/config/backend.env` 对齐；并在说明列注明该相对路径按**后端启动时的工作目录**解析，必须在 `mes_web/ros_mes_hou` 下启动 uvicorn（已完成）

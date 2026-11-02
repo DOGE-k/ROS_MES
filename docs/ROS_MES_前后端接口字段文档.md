@@ -709,7 +709,7 @@ const xyToModuleId = (x: number, y: number): number => x * 16 + y;
 
 ## 10. 数据库表字段（基准补充）
 
-SQLite（`ros_database.db`，项目根），17 张表，模型在 `app/db/models.py`，建库种子脚本 `sqlite_create.py`。时间字段 `DateTime(timezone=True)` 默认 `now()`；普遍带软删除 `del_flag` 与 `Notes`。
+SQLite（`ros_database.db`，项目根），17 张表，模型在 `app/db/models.py`，建库种子脚本为仓库根的 `sqlite_create.py`。时间字段 `DateTime(timezone=True)` 默认 `now()`；普遍带软删除 `del_flag` 与 `Notes`。
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|

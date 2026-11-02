@@ -19,6 +19,7 @@
 | `mes_web/ros_mes_hou/` | 业务后端 | FastAPI · SQLAlchemy · SQLite · rosbridge-websocket |
 | `robot_control_backend/` | ROS 机器人控制节点 | ROS · Python |
 | `deploy/` | 部署配置与说明（见 `deploy/README_DEPLOY.md`） | — |
+| `sqlite_create.py` | 数据库初始化脚本（建表 + 种子数据，生成仓库根 `ros_database.db`） | Python · SQLite |
 
 > 后端内置 ROS1/ROS2 适配层：`backend.env` 中 `ROS_VERSION=1`（默认）或 `2` 切换，协议差异集中在 `mes_web/ros_mes_hou/app/ros/profile.py`。
 
@@ -39,10 +40,10 @@ cd ..\..
 **2. 首次初始化数据库**（项目根目录执行，含种子数据；已有数据库时无需重复执行）
 
 ```powershell
-.\mes_web\ros_mes_hou\venv\Scripts\python.exe .\mes_web\ros_mes_hou\sqlite_create.py
+.\mes_web\ros_mes_hou\venv\Scripts\python.exe .\sqlite_create.py
 ```
 
-后端启动时会创建缺失的表，初始数据由 `sqlite_create.py` 插入。
+后端启动时会创建缺失的表，初始数据由仓库根的 `sqlite_create.py` 插入（数据库固定生成在仓库根，与后端 `DATABASE_URL` 默认值一致）。
 
 **3. 日常启动后端**（终端一，端口 8000）
 
