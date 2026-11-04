@@ -31,7 +31,7 @@
     </div>
 
     <div class="table-wrapper">
-      <el-table :data="drawingList" border stripe v-loading="loading" empty-text="暂无图纸数据" class="drawing-table">
+      <el-table :data="pageDrawingList" border stripe v-loading="loading" empty-text="暂无图纸数据" class="drawing-table">
         <el-table-column prop="drawingId" label="ID" width="70" align="center" />
         <el-table-column prop="drawingName" label="图纸名称" min-width="140" show-overflow-tooltip />
         <el-table-column prop="drawingDescription" label="图纸描述" min-width="160" show-overflow-tooltip />
@@ -78,6 +78,14 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50]"
+        :total="total"
+        layout="total, sizes, prev, pager, next, jumper"
+        class="drawing-pagination"
+      />
     </div>
 
     <el-dialog v-model="importVisible" title="导入 JSON 图纸数据" width="720px" destroy-on-close class="styled-dialog">
@@ -220,7 +228,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, computed, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { UploadFile, UploadInstance } from 'element-plus';
 import {
@@ -234,6 +242,19 @@ import type { DrawingItem } from '@/api/types';
 
 const loading = ref(false);
 const drawingList = ref<DrawingItem[]>([]);
+const currentPage = ref(1);
+const pageSize = ref(10);
+const total = computed(() => drawingList.value.length);
+const pageDrawingList = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  return drawingList.value.slice(start, start + pageSize.value);
+});
+
+// 删除末页最后一项、刷新列表或调整每页条数后，页码仍需落在有效范围内。
+watch([total, pageSize], ([count, size]) => {
+  const lastPage = Math.max(1, Math.ceil(count / size));
+  currentPage.value = Math.min(currentPage.value, lastPage);
+}, { flush: 'sync' });
 
 const searchForm = reactive({
   keyword: '',
@@ -381,7 +402,7 @@ async function handleImport() {
   }
 }
 
-async function fetchDrawingList(keyword?: string) {
+async function fetchDrawingList(keyword: string = searchForm.keyword) {
   loading.value = true;
   try {
     const params: any = {};
@@ -401,11 +422,13 @@ async function fetchDrawingList(keyword?: string) {
 }
 
 function handleSearch() {
+  currentPage.value = 1;
   fetchDrawingList(searchForm.keyword);
 }
 
 function handleReset() {
   searchForm.keyword = '';
+  currentPage.value = 1;
   fetchDrawingList();
 }
 
@@ -527,6 +550,11 @@ onMounted(() => {
 
 .drawing-table {
   border-radius: 8px;
+}
+
+.drawing-pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
 }
 
 .drawing-table :deep(.el-table__header th) {
