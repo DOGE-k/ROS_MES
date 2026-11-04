@@ -5,7 +5,7 @@
         <h2 class="mes-page-title">图纸管理</h2>
         <p class="mes-page-sub">JSON 图纸数据的导入、预览与版本维护</p>
       </div>
-      <el-button type="primary" @click="openImportDialog">导入 JSON 图纸数据</el-button>
+      <el-button type="primary" :disabled="importing" @click="openImportDialog">导入 JSON 图纸数据</el-button>
     </div>
 
     <div class="search-bar">
@@ -56,7 +56,7 @@
                 </svg>
                 编辑
               </el-button>
-              <el-button link type="warning" size="small" @click="openReimportDialog(row)">
+              <el-button link type="warning" size="small" :disabled="importing" @click="openReimportDialog(row)">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:3px">
                   <polyline points="23 4 23 10 17 10" />
                   <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
@@ -259,12 +259,16 @@ watch([total, pageSize], ([count, size]) => {
 const searchForm = reactive({
   keyword: '',
 });
+// 输入框允许继续编辑；刷新列表时沿用最后一次提交的筛选条件。
+const appliedKeyword = ref('');
+let listRequestId = 0;
 
 const uploadRef = ref<UploadInstance>();
 
 const importVisible = ref(false);
 const importing = ref(false);
 const importForm = reactive({
+  drawingId: null as number | null,
   drawingName: '',
   drawingDescription: '',
 });
@@ -340,6 +344,7 @@ function handleFileRemove() {
 }
 
 function resetImportForm() {
+  importForm.drawingId = null;
   importForm.drawingName = '';
   importForm.drawingDescription = '';
   currentFile.value = null;
@@ -350,19 +355,22 @@ function resetImportForm() {
 }
 
 function openImportDialog() {
+  if (importing.value) return;
   resetImportForm();
   importVisible.value = true;
 }
 
 function openReimportDialog(row: DrawingItem) {
+  if (importing.value) return;
   resetImportForm();
   importForm.drawingName = row.drawingName;
   importForm.drawingDescription = row.drawingDescription || '';
-  (importForm as any).drawingId = row.drawingId;
+  importForm.drawingId = row.drawingId;
   importVisible.value = true;
 }
 
 async function handleImport() {
+  if (importing.value) return;
   if (!importForm.drawingName.trim()) {
     ElMessage.warning('请输入图纸名称');
     return;
@@ -377,7 +385,7 @@ async function handleImport() {
     const formData = new FormData();
     formData.append('drawing_name', importForm.drawingName.trim());
     formData.append('drawing_description', importForm.drawingDescription.trim());
-    const drawingId = (importForm as any).drawingId;
+    const drawingId = importForm.drawingId;
     if (drawingId) {
       formData.append('drawing_id', String(drawingId));
     }
@@ -389,8 +397,9 @@ async function handleImport() {
     if (res.code === 200) {
       ElMessage.success(res.message || '导入成功');
       importVisible.value = false;
-      delete (importForm as any).drawingId;
-      fetchDrawingList();
+      importForm.drawingId = null;
+      if (drawingId === null) currentPage.value = 1;
+      await fetchDrawingList();
     } else {
       ElMessage.error(res.message || '导入失败');
     }
@@ -402,32 +411,39 @@ async function handleImport() {
   }
 }
 
-async function fetchDrawingList(keyword: string = searchForm.keyword) {
+async function fetchDrawingList() {
+  const requestId = ++listRequestId;
   loading.value = true;
   try {
-    const params: any = {};
-    if (keyword && keyword.trim()) {
-      params.keyword = keyword.trim();
+    const params: { keyword?: string } = {};
+    if (appliedKeyword.value) {
+      params.keyword = appliedKeyword.value;
     }
     const res = await getDrawingListApi(params);
+    if (requestId !== listRequestId) return;
     if (res.code === 200) {
       drawingList.value = res.data || [];
+    } else {
+      ElMessage.error(res.message || '获取图纸列表失败');
     }
   } catch (err: any) {
+    if (requestId !== listRequestId) return;
     const msg = err?.response?.data?.detail || err?.message || '获取图纸列表失败';
     ElMessage.error(msg);
   } finally {
-    loading.value = false;
+    if (requestId === listRequestId) loading.value = false;
   }
 }
 
 function handleSearch() {
+  appliedKeyword.value = searchForm.keyword.trim();
   currentPage.value = 1;
-  fetchDrawingList(searchForm.keyword);
+  fetchDrawingList();
 }
 
 function handleReset() {
   searchForm.keyword = '';
+  appliedKeyword.value = '';
   currentPage.value = 1;
   fetchDrawingList();
 }
