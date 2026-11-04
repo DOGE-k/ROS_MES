@@ -462,6 +462,18 @@ export function getDeviceTreeApi() {
 	});
 }
 
+export interface DeviceConfig {
+	arms: { label: string; value: number }[];
+	sensor_types: { label: string; Unit_address: number; sensor_ids: Record<string, number> }[];
+}
+
+export function getDeviceConfigApi() {
+	return request<any, ApiResponse<DeviceConfig>>({
+		url: '/device/config',
+		method: 'get'
+	});
+}
+
 // ==================== 型号 CRUD ====================
 export function getModelListApi() {
 	return request<any, ApiResponse<any[]>>({
@@ -613,7 +625,7 @@ export function getSensorApi(id: number) {
 	});
 }
 
-export function createSensorApi(data: { sensor_ID: number; Module_ID?: number; Device_ID?: number; Unit_ID: number; unit_row_id?: number; sensordescript?: string; Unit_address: number; IsRead?: number; Notes?: string }) {
+export function createSensorApi(data: { sensor_ID?: number; Module_ID?: number; Device_ID?: number; Unit_ID: number; unit_row_id?: number; sensordescript?: string; Unit_address?: number; IsRead?: number; Notes?: string }) {
 	return request<any, ApiResponse<any>>({
 		url: '/sensors/',
 		method: 'post',

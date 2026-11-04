@@ -22,8 +22,8 @@ const AXIS_OFFSETS: Record<AxisParameterName, number> = {
 
 /**
  * 由数据库 Unit_ID 推算臂号（1~5）。
- * 种子数据：一号臂=32、二号臂=64、三号臂=96（每臂 +32）；无法识别时按一号臂兜底。
- * ??? 待决：种子数据仅 3 臂，臂 4/5 无法识别——需补种子或改映射（见三轴版接口清单 7.3）。
+ * 种子定义：五臂 Unit_ID 分别为 32/64/96/128/160（每臂 +32）；实际登记数量以数据库为准。
+ * 兼容直接传入臂号 1~5；无法识别时按一号臂兜底。
  */
 export function armIndexFromUnitId(unitId: number): number {
   const id = Number(unitId || 0);
@@ -36,7 +36,7 @@ export function armIndexFromUnitId(unitId: number): number {
   return 1;
 }
 
-/** 某臂某轴的 device_id，如 armIndex=3、rotation → 9 */
+/** 某臂某轴的 ROS device_id，如 armIndex=3、rotation → 7 */
 export function axisDeviceId(armIndex: number, parameter: AxisParameterName): number {
   return (armIndex - 1) * AXES_PER_ARM + AXIS_OFFSETS[parameter];
 }

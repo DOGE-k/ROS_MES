@@ -30,7 +30,10 @@ def get_unit(unit_id: int, db: Session = Depends(get_db)):
 
 @router.post("/")
 def create_unit(data: schemas.UnitCreate, db: Session = Depends(get_db)):
-    db_item = crud.create_unit(db, data)
+    try:
+        db_item = crud.create_unit(db, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if db_item is None:
         raise HTTPException(status_code=409, detail="该机械臂ID已被占用")
     return {"code": 200, "message": "新增机械臂成功", "data": db_item}

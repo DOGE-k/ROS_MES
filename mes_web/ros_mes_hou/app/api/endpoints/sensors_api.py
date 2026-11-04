@@ -30,7 +30,10 @@ def get_sensor(sensor_id: int, db: Session = Depends(get_db)):
 
 @router.post("/")
 def create_sensor(data: schemas.SensorCreate, db: Session = Depends(get_db)):
-    db_item = crud.create_sensor(db, data)
+    try:
+        db_item = crud.create_sensor(db, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if db_item is None:
         raise HTTPException(status_code=409, detail=f"该机械臂下已存在名称为「{data.sensordescript}」的传感器")
     return {"code": 200, "message": "新增传感器成功", "data": db_item}
@@ -38,8 +41,13 @@ def create_sensor(data: schemas.SensorCreate, db: Session = Depends(get_db)):
 
 @router.put("/{sensor_id}")
 def update_sensor(sensor_id: int, data: schemas.SensorUpdate, db: Session = Depends(get_db)):
-    db_item = crud.update_sensor(db, sensor_id, data)
-    if not db_item:
+    try:
+        db_item = crud.update_sensor(db, sensor_id, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if db_item is False:
+        raise HTTPException(status_code=409, detail="目标机械臂下已存在该类型的传感器")
+    if db_item is None:
         raise HTTPException(status_code=404, detail="传感器不存在")
     return {"code": 200, "message": "更新传感器成功", "data": db_item}
 

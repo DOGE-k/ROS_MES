@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.crud import device as crud
+from app.core.device_catalog import get_device_config
 from app.db.database import get_db
 from app.schemas import device as schemas
 
@@ -39,6 +40,11 @@ def list_devices(db: Session = Depends(get_db)):
 def list_devices_by_model(model_id: int, db: Session = Depends(get_db)):
     items = crud.get_devices_by_model(db, model_id)
     return {"code": 200, "message": "获取模块列表成功", "data": [serialize_device(item) for item in items]}
+
+
+@router.get("/config")
+def device_config():
+    return {"code": 200, "message": "获取设备配置成功", "data": get_device_config()}
 
 
 @router.get("/{device_id}")

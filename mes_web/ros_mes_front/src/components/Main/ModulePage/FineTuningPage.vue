@@ -292,7 +292,7 @@ const activeProfile = computed(() =>
 );
 const armList = reactive({
   id: 0,
-  // deviceId 由 applyAxisEncoding 按 V2 轴号编码动态填充（1~20 轴级 / 21~25 臂级），禁止硬编码
+  // deviceId 由 applyAxisEncoding 按 V2.1 三轴编码动态填充（1~15 轴级 / 21~25 臂级），禁止硬编码
   device: [
     { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "底座旋转调整值" },
     { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "摆动调整值" },

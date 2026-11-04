@@ -31,10 +31,26 @@ def get_unit_by_module_and_arm_id(db: Session, module_id: int, arm_id: int):
 
 
 def create_unit(db: Session, data: schemas.UnitCreate):
-    existing = get_unit_by_module_and_arm_id(db, data.Module_ID, data.Unit_ID)
-    if existing:
+    module = db.query(models.Module).filter(
+        models.Module.Module_ID == data.Module_ID,
+        models.Module.del_flag == False,
+    ).first()
+    if module is None:
+        raise ValueError("所属模块不存在")
+    existing = db.query(models.Unit).filter(
+        models.Unit.Module_ID == data.Module_ID,
+        models.Unit.Unit_ID == data.Unit_ID,
+    ).first()
+    if existing and not existing.del_flag:
         return None
-    db_item = models.Unit(**data.model_dump(exclude={"Device_ID"}))
+    create_data = data.model_dump(exclude={"Device_ID"})
+    if existing:
+        db_item = existing
+        for field, value in create_data.items():
+            setattr(db_item, field, value)
+        db_item.del_flag = False
+    else:
+        db_item = models.Unit(**create_data)
     db.add(db_item)
     db.commit()
     db.refresh(db_item)

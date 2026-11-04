@@ -23,6 +23,9 @@ class SensorBase(BaseModel):
 
 
 class SensorCreate(SensorBase):
+    # 由后端按机械臂及传感器类型生成；兼容旧客户端显式传值并进行一致性校验。
+    sensor_ID: Optional[int] = None
+    Unit_address: Optional[int] = None
     creater_id: int = 1
 
 

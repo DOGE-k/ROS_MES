@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
+
+from app.core.device_catalog import validate_unit_id
 
 
 class UnitBase(BaseModel):
@@ -22,6 +24,11 @@ class UnitBase(BaseModel):
 class UnitCreate(UnitBase):
     Unit_ID: int
     creater_id: int = 1
+
+    @field_validator("Unit_ID")
+    @classmethod
+    def validate_business_id(cls, value: int):
+        return validate_unit_id(value)
 
 
 class UnitUpdate(BaseModel):

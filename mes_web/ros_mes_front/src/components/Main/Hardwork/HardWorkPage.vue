@@ -6,6 +6,12 @@
         <p class="mes-page-sub">型号 → 模块 → 机械臂 → 传感器 四层设备树维护</p>
       </div>
     </div>
+    <el-alert v-if="configError" type="error" :closable="false" show-icon>
+      <template #title>
+        设备配置加载失败，暂时无法新增机械臂、传感器或编辑传感器。
+        <el-button link type="primary" :loading="configLoading" @click="loadDeviceConfig">重试</el-button>
+      </template>
+    </el-alert>
     <div class="page-body">
       <div class="tree-panel">
         <div class="tree-header">
@@ -289,7 +295,7 @@
       </el-form>
       <template #footer>
         <el-button @click="addDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitAdd" :disabled="addCoordDuplicate">确认</el-button>
+        <el-button type="primary" @click="submitAdd" :disabled="addCoordDuplicate || (addTargetType === 'unit' && !addForm.Unit_ID) || (addTargetType === 'sensor' && !addForm.sensordescript)">确认</el-button>
       </template>
     </el-dialog>
   </div>
@@ -300,6 +306,7 @@ import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getDeviceTreeApi,
+  getDeviceConfigApi,
   getModelApi,
   getDeviceApi,
   getUnitApi,
@@ -322,6 +329,7 @@ import {
   getUnitListApi,
   getSensorsByUnitApi,
   type TreeNode,
+  type DeviceConfig,
 } from '@/api/rosApi'
 
 const treeRef = ref()
@@ -373,47 +381,53 @@ function getSensorUnitRowId(sensor: any) {
   return matched ? Number(matched.id) : 0
 }
 
-const ARM_OPTIONS = [
-  { label: '一号机械臂', value: 32 },
-  { label: '二号机械臂', value: 64 },
-  { label: '三号机械臂', value: 96 },
-]
+const deviceConfig = ref<DeviceConfig | null>(null)
+const configLoading = ref(false)
+const configError = ref(false)
+const armOptions = computed(() => deviceConfig.value?.arms ?? [])
+const sensorOptions = computed(() => deviceConfig.value?.sensor_types ?? [])
 
-const SENSOR_OPTIONS = [
-  { label: '旋转电机', offset: 1, Unit_address: 1 },
-  { label: '摆动电机', offset: 2, Unit_address: 2 },
-  { label: '伸缩电机', offset: 3, Unit_address: 3 },
-  { label: '旋转编码器', offset: 9, Unit_address: 1 },
-  { label: '偏转编码器', offset: 10, Unit_address: 2 },
-  { label: '伸缩编码器', offset: 11, Unit_address: 3 },
-  { label: '压力传感器', offset: 17, Unit_address: 0 },
-  { label: '陀螺仪传感器', offset: 18, Unit_address: 4 },
-]
+async function loadDeviceConfig() {
+  configLoading.value = true
+  try {
+    const res = await getDeviceConfigApi()
+    if (!res.data?.arms?.length || !res.data?.sensor_types?.length) throw new Error('设备配置为空')
+    deviceConfig.value = res.data
+    configError.value = false
+    return true
+  } catch {
+    deviceConfig.value = null
+    configError.value = true
+    return false
+  } finally {
+    configLoading.value = false
+  }
+}
 
 const availableArmOptions = computed(() => {
   const parentDeviceId = selectedNode.value?.raw_id
-  if (!parentDeviceId) return ARM_OPTIONS
-  return ARM_OPTIONS.filter(opt => !allUnits.value.some(
+  if (!parentDeviceId) return armOptions.value
+  return armOptions.value.filter(opt => !allUnits.value.some(
     u => Number(u.Unit_ID) === Number(opt.value) && Number(getUnitModuleId(u)) === Number(parentDeviceId)
   ))
 })
 
 const availableSensorOptions = computed(() => {
   const unitRowId = selectedNode.value?.raw_id
-  if (!unitRowId) return SENSOR_OPTIONS
-  return SENSOR_OPTIONS.filter(opt => !existingSensorsInUnit.value.some(
+  if (!unitRowId) return sensorOptions.value
+  return sensorOptions.value.filter(opt => !existingSensorsInUnit.value.some(
     s => s.sensordescript === opt.label
   ))
 })
 
 const editAvailableSensorOptions = computed(() => {
-  if (selectedNode.value?.type !== 'sensor') return SENSOR_OPTIONS
-  const currentSensorId = selectedNode.value?.sensor_type
-  return SENSOR_OPTIONS.filter(opt => {
+  if (selectedNode.value?.type !== 'sensor') return sensorOptions.value
+  const currentRowId = selectedNode.value.raw_id
+  return sensorOptions.value.filter(opt => {
     const existing = existingSensorsInUnit.value.find(
       s => s.sensordescript === opt.label
     )
-    if (existing && existing.sensor_ID === currentSensorId) return true
+    if (existing && existing.id === currentRowId) return true
     return !existing
   })
 })
@@ -445,11 +459,6 @@ const addCoordDuplicate = computed(() => {
   const addr = (x << 4) | y
   return existingDevices.value.some(d => d.DeviceAddress === addr)
 })
-
-function getSensorId(unitId: number, sensorLabel: string) {
-  const opt = SENSOR_OPTIONS.find(o => o.label === sensorLabel)
-  return opt ? unitId + opt.offset : unitId
-}
 
 function findNodePath(nodes: TreeNode[], targetId: string, path: string[] = []): string[] | null {
   for (const node of nodes) {
@@ -556,7 +565,8 @@ async function handleNodeClick(node: TreeNode) {
   }
 }
 
-function startEdit() {
+async function startEdit() {
+  if (selectedNode.value?.type === 'sensor' && !deviceConfig.value && !await loadDeviceConfig()) return
   formSnapshot.value = JSON.parse(JSON.stringify(formData.value))
   isEditing.value = true
 }
@@ -593,13 +603,10 @@ async function saveEdit() {
       })
     } else if (node.type === 'sensor') {
       const selectedUnit = unitOptions.value.find(u => u.id === formData.value.unit_row_id)
-      const sensorId = getSensorId(selectedUnit?.Unit_ID || formData.value.Unit_ID || 0, formData.value.sensordescript)
       await updateSensorApi(node.raw_id, {
-        sensor_ID: sensorId,
         Module_ID: getUnitModuleId(selectedUnit) || formData.value.Module_ID || formData.value.Device_ID || node.device_id || 0,
-        Unit_ID: selectedUnit?.Unit_ID || 0,
+        Unit_ID: selectedUnit?.Unit_ID ?? formData.value.Unit_ID,
         sensordescript: formData.value.sensordescript,
-        Unit_address: formData.value.Unit_address,
         IsRead: formData.value.IsRead,
         Notes: formData.value.Notes,
       })
@@ -663,7 +670,8 @@ function handleAddModel() {
   }).catch(() => {})
 }
 
-function showAddDialog(type: 'device' | 'unit' | 'sensor') {
+async function showAddDialog(type: 'device' | 'unit' | 'sensor') {
+  if (type !== 'device' && !deviceConfig.value && !await loadDeviceConfig()) return
   addTargetType.value = type
   const titles: Record<string, string> = { device: '新增模块', unit: '新增机械臂', sensor: '新增传感器' }
   addDialogTitle.value = titles[type]
@@ -682,20 +690,24 @@ function showAddDialog(type: 'device' | 'unit' | 'sensor') {
       existingDevices.value = []
     }
   } else if (type === 'unit') {
-    addForm.value.Unit_ID = availableArmOptions.value.length > 0 ? availableArmOptions.value[0].value : null
-    getUnitListApi().then(res => {
+    try {
+      const res = await getUnitListApi()
       allUnits.value = res.data || []
-    }).catch(() => {
-      allUnits.value = []
-    })
+    } catch {
+      ElMessage.error('加载已登记机械臂失败，请重试')
+      return
+    }
+    addForm.value.Unit_ID = availableArmOptions.value[0]?.value ?? null
     addForm.value.UnitDescript = ''
   } else if (type === 'sensor') {
     const unitRowId = selectedNode.value?.raw_id ?? 0
-    getSensorsByUnitApi(unitRowId).then(res => {
+    try {
+      const res = await getSensorsByUnitApi(unitRowId)
       existingSensorsInUnit.value = res.data || []
-    }).catch(() => {
-      existingSensorsInUnit.value = []
-    })
+    } catch {
+      ElMessage.error('加载已登记传感器失败，请重试')
+      return
+    }
     addForm.value.sensordescript = ''
     addForm.value.Unit_address = 0
     addForm.value.IsRead = 1
@@ -708,18 +720,32 @@ function showAddDialog(type: 'device' | 'unit' | 'sensor') {
 }
 
 function onSensorNameChange(label: string) {
-  const opt = SENSOR_OPTIONS.find(o => o.label === label)
+  const opt = sensorOptions.value.find(o => o.label === label)
   if (opt) {
     addForm.value.Unit_address = opt.Unit_address
   }
 }
 
 function onEditSensorNameChange(label: string) {
-  const opt = SENSOR_OPTIONS.find(o => o.label === label)
+  const opt = sensorOptions.value.find(o => o.label === label)
   if (opt) {
     formData.value.Unit_address = opt.Unit_address
+    const unit = unitOptions.value.find(u => u.id === formData.value.unit_row_id)
+    formData.value.sensor_ID = opt.sensor_ids[String(unit?.Unit_ID ?? formData.value.Unit_ID)]
   }
 }
+
+watch(() => formData.value.unit_row_id, async (unitRowId) => {
+  if (!isEditing.value || selectedNode.value?.type !== 'sensor' || !unitRowId) return
+  onEditSensorNameChange(formData.value.sensordescript)
+  try {
+    const res = await getSensorsByUnitApi(Number(unitRowId))
+    if (formData.value.unit_row_id === unitRowId) existingSensorsInUnit.value = res.data || []
+  } catch {
+    if (formData.value.unit_row_id === unitRowId) existingSensorsInUnit.value = []
+    ElMessage.error('加载目标机械臂传感器失败，请重试')
+  }
+})
 
 async function submitAdd() {
   if (!selectedNode.value) return
@@ -736,7 +762,7 @@ async function submitAdd() {
       })
       focusId = `device-${res.data.Device_ID}`
     } else if (addTargetType.value === 'unit') {
-      const armName = ARM_OPTIONS.find(o => o.value === addForm.value.Unit_ID)?.label || ''
+      const armName = armOptions.value.find(o => o.value === addForm.value.Unit_ID)?.label || ''
       const res = await createUnitApi({
         Unit_ID: addForm.value.Unit_ID,
         Module_ID: parent.raw_id,
@@ -744,13 +770,10 @@ async function submitAdd() {
       })
       focusId = `unit-${res.data.id}`
     } else if (addTargetType.value === 'sensor') {
-      const sensorId = getSensorId(addForm.value.Unit_ID, addForm.value.sensordescript)
       const res = await createSensorApi({
-        sensor_ID: sensorId,
         Module_ID: addForm.value.Module_ID ?? addForm.value.Device_ID,
         Unit_ID: addForm.value.Unit_ID,
         sensordescript: addForm.value.sensordescript || '',
-        Unit_address: addForm.value.Unit_address ?? 0,
         IsRead: addForm.value.IsRead ?? 1,
       })
       focusId = `sensor-${res.data.id}`
@@ -764,6 +787,7 @@ async function submitAdd() {
 }
 
 onMounted(async () => {
+  void loadDeviceConfig()
   await loadTree()
   loadModelOptions()
   loadDeviceOptions()

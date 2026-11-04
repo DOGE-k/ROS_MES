@@ -701,9 +701,26 @@ const xyToModuleId = (x: number, y: number): number => x * 16 + y;
 
 - **型号**：`Model_ID, Modelname, Modeldescripte, creater_id, Createtime, del_flag, Notes, Type_ID, Typename, Typedescripte`；GET `/`、GET `/tree`（四级树 `model→device→unit→sensor`）、GET/PUT/DELETE `/{id}`、POST `/`（`Modelname`✔）
 - **模块**（Module 表别名）：`Device_ID, Model_ID, DeviceAddress(int), Devicedescript, ...`；GET `/`、GET `/by_model/{id}`、GET/PUT/DELETE `/{id}`、POST `/`（`Model_ID`✔, `DeviceAddress`✔=(x<<4)\|y；坐标冲突 409）
-- **机械臂**：`id, Unit_ID, UnitDescript, Module_ID, ...`；GET `/`、GET `/by_device/{id}`、GET/PUT/DELETE `/{id}`、POST `/`（`Unit_ID`✔, `Module_ID`/`Device_ID` 二选一；同模块重复 409）
-- **传感器**：`id, sensor_ID, sensordescript, IsRead, Module_ID, Unit_ID, Unit_address, ...`；GET `/`、GET `/by_unit/{id}`、GET/PUT/DELETE `/{id}`、POST `/`（`sensor_ID`✔, `Unit_ID`✔, `Unit_address`✔；同模块重复 409）
+- **机械臂**：`id, Unit_ID, UnitDescript, Module_ID, ...`；GET `/`、GET `/by_device/{id}`、GET/PUT/DELETE `/{id}`、POST `/`（`Unit_ID`✔，须在设备配置内；`Module_ID`/`Device_ID` 二选一且须为已登记模块；同模块重复 409）
+- **传感器**：`id, sensor_ID, sensordescript, IsRead, Module_ID, Unit_ID, Unit_address, ...`；GET `/`、GET `/by_unit/{id}`、GET/PUT/DELETE `/{id}`、POST `/`（`Unit_ID`✔、配置内 `sensordescript`✔，归属通过 `Module_ID`/`Device_ID` 或 `unit_row_id` 指定；`sensor_ID`、`Unit_address` 可省略，由后端生成；显式传值须与配置一致；同模块业务号重复 409）
 - `/model/tree` 节点结构（`TreeNode`）：`{id:"model-<Type_ID>"|"device-<Module_ID>"|"unit-<id>"|"sensor-<id>", label, type, raw_id, arm_type?, sensor_type?, module_id?, device_id?, children?}`
+
+**设备配置接口（2026-11-04）**：`GET /api/device/config`，免认证，无需 ROS 或数据库读写，返回 `{code, message, data}`。`data` 结构：
+
+```json
+{
+  "arms": [{"label": "四号机械臂", "value": 128}],
+  "sensor_types": [{
+    "label": "压力传感器",
+    "Unit_address": 0,
+    "sensor_ids": {"32": 49, "64": 81, "96": 113, "128": 145, "160": 177}
+  }]
+}
+```
+
+以上仅展示一个机械臂选项和一种传感器；完整响应包含五臂、八类传感器。配置集中在 `app/core/device_catalog.py`，前端只读取选项和编号映射，不再保存偏移或计算 `sensor_ID`。支持范围与数据库实际已登记记录分开，已登记列表继续使用原 CRUD 接口。数据库初始化脚本仍可独立运行，后端测试对照其五臂、40 条传感器种子，防止配置与种子规则漂移。
+
+写接口规则：未知机械臂/传感器类型、编号或地址不匹配、机械臂归属不匹配返回 422；重复新增或编辑到被占用的业务号返回 409（包括编辑到软删除行的保留业务号）；记录不存在返回 404。传感器编辑未传编号/地址时，按目标机械臂及传感器类型重新生成；仅更新备注或启用状态时保留历史编号。删除后重新新增复用原记录，避免软删除行的唯一约束冲突。配置接口不迁移、不补写数据；前后端需配套更新，配置加载失败时页面提示重试。
 
 ---
 
