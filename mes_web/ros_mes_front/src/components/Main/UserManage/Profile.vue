@@ -3,7 +3,7 @@
     <div class="mes-page-header">
       <div>
         <h2 class="mes-page-title">个人中心</h2>
-        <p class="mes-page-sub">个人资料、头像与账号安全设置</p>
+        <p class="mes-page-sub">个人资料、账号安全与调试设置</p>
       </div>
     </div>
     <el-row :gutter="20">
@@ -95,7 +95,22 @@
                 </el-form-item>
               </el-form>
             </el-tab-pane>
-            
+
+            <el-tab-pane label="调试设置" name="debug">
+              <el-form label-position="top" style="margin-top: 20px;">
+                <el-form-item label="跳过图纸绑定">
+                  <el-switch v-model="debugSettings.skipDrawingBinding" active-text="开启" inactive-text="关闭" />
+                </el-form-item>
+              </el-form>
+              <el-alert
+                title="开启后，选择模块和机械臂并完成确认即可微调，无需绑定图纸，仍可保存配置。"
+                type="warning"
+                :closable="false"
+                show-icon
+                description="控制指令仍通过当前 ROS 通信链路发送至真实设备。本开关只影响下一次进入微调，跨页面有效；刷新、登录或退出登录后自动关闭。"
+              />
+            </el-tab-pane>
+
           </el-tabs>
         </el-card>
       </el-col>
@@ -110,8 +125,10 @@ import { ElMessage } from 'element-plus'
 import type { UploadProps } from 'element-plus'
 import request from '@/utils/request'
 import { useUserStore } from '@/stores/user'
+import { useDebugSettingsStore } from '@/stores/debugSettings'
 
 const userStore = useUserStore()
+const debugSettings = useDebugSettingsStore()
 const activeTab = ref('info')
 const loading = ref(true)
 const saving = ref(false)

@@ -1,8 +1,10 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import type { LoginResponse } from "@/api/types";
+import { useDebugSettingsStore } from './debugSettings';
 
 export const useUserStore = defineStore("user", () => {
+  const debugSettings = useDebugSettingsStore();
   const account = ref(localStorage.getItem("account") || "");
   const nickname = ref(localStorage.getItem("nickname") || "");
   const role = ref(localStorage.getItem("role") || "");
@@ -12,6 +14,7 @@ export const useUserStore = defineStore("user", () => {
 
   // 入参为登录接口返回的 data，字段见《ROS_MES_前后端接口字段文档》5.1
   const setUserInfo = (data: LoginResponse) => {
+    debugSettings.reset();
     account.value = data.account;
     nickname.value = data.name || data.account;
     role.value = data.typeId === 1 ? "admin" : "";
@@ -28,6 +31,7 @@ export const useUserStore = defineStore("user", () => {
   };
 
   const clearUser = () => {
+    debugSettings.reset();
     account.value = "";
     nickname.value = "";
     role.value = "";

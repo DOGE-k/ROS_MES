@@ -15,9 +15,11 @@
 | 目录 | 说明 | 技术栈 |
 |---|---|---|
 | `mes_web/` | 前后端总目录 | — |
+| `mes_web/docs/` | 前后端专属接口、更新记录与接入状态；入口见 `mes_web/AGENTS.md` | — |
 | `mes_web/ros_mes_front/` | Web 前端 | Vue 3 · TypeScript · Vite · Element Plus · Pinia |
 | `mes_web/ros_mes_hou/` | 业务后端 | FastAPI · SQLAlchemy · SQLite · rosbridge-websocket |
 | `robot_control_backend/` | ROS 机器人控制节点 | ROS · Python |
+| `docs/` | 双方共享的接口契约、ROS/CAN 资料、跨系统报告及整仓历史归档 | — |
 | `deploy/` | 部署配置与说明（见 `deploy/README_DEPLOY.md`） | — |
 | `sqlite_create.py` | 数据库初始化脚本（建表 + 种子数据，生成仓库根 `ros_database.db`） | Python · SQLite |
 
@@ -69,12 +71,16 @@ npm run dev
 
 | 文档 | 说明 |
 |---|---|
-| [docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md](docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md) | **ROS 对接必读**：三轴版话题/消息/device_id 契约（2026-10-24，取代旧文档 ROS 部分） |
-| [docs/ROS_MES_前后端接口字段文档.md](docs/ROS_MES_前后端接口字段文档.md) | REST 业务接口、WebSocket、数据库表字段（ROS 部分已被三轴版取代） |
-| [docs/ROS_MES_前后端命名规范.md](docs/ROS_MES_前后端命名规范.md) | 前后端命名规范与速查卡（**新代码必读**） |
-| [docs/ROS_MES_前后端改动记录.md](docs/ROS_MES_前后端改动记录.md) | 交接日志：边改边记录，含遗留问题与版本待办 |
-| [docs/ROS_MES_前端V1.0到V1.1修改清单.md](docs/ROS_MES_前端V1.0到V1.1修改清单.md) | 前端 V1.1 适配执行记录（26 项核对结论） |
-| `docs/archive/` | 已归档：优化建议报告、UI 改版原型、V1.0 版本代码备份 |
+| [mes_web/AGENTS.md](mes_web/AGENTS.md) | **前后端开发入口**：任务定位、维护范围、按需阅读与验证；规则只适用于前后端任务 |
+| [前后端接口字段文档](mes_web/docs/ROS_MES_前后端接口字段文档.md) | REST、前后端 WebSocket、数据库、鉴权与页面流程 |
+| [前后端改动记录](mes_web/docs/ROS_MES_前后端改动记录.md) | 前后端更新和验证结果的唯一日志 |
+| [后端与 ROS 接口对接状态清单](mes_web/docs/后端与ROS接口对接状态清单.md) | 本侧接入/使用状态、证据、缺口；不替代共享协议 |
+| [前后端命名规范](mes_web/docs/ROS_MES_前后端命名规范.md) | 前后端新代码的兼容及命名约定 |
+| [三轴版 V2.1 共享契约](docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md) | 双方对接的话题、消息、编号和握手约定 |
+| [模块确认命令](docs/机械臂模块确认命令.md)、[保护事件说明](docs/模块确认与保护事件技术说明.md) | ROS/固件及 CAN 协议资料 |
+| [全流程测试报告](docs/ROS_MES_全流程测试报告.md)、[真机 CAN 联调记录](docs/can_real_device_debug_report.md) | 跨系统历史证据，保留各自测试日期与环境 |
+| `mes_web/docs/archive/` | 前后端历史适配、审查和 UI 原型 |
+| `docs/archive/` | 整仓 V1.0 代码快照（包含 ROS 与部署内容），继续保留共享归档 |
 
 ## 团队分工
 
@@ -82,4 +88,4 @@ npm run dev
 
 - **前后端开发**：负责 `mes_web/ros_mes_front/` 与 `mes_web/ros_mes_hou/` 的页面交互、业务接口、数据库及与 ROS 的通信对接。
 - **机器人控制开发**：负责 `robot_control_backend/` 的 ROS 节点、机械臂控制、CAN 通信与消息定义。
-- **联调与接口约定**：前后端与 ROS 端通过 `docs/ROS_MES_前后端接口字段文档.md` 中记录的话题与消息进行对接；涉及话题、消息字段或交互流程的变更，由相关模块负责人协同确认并同步更新文档。
+- **联调与接口约定**：双方共用根 `docs/` 的三轴版契约及 ROS/CAN 资料；前后端业务接口和本侧接入状态维护在 `mes_web/docs/`。涉及共享话题、消息字段或协议的变更，由相关模块负责人协同确认。各模块入口说明其任务范围，不替代其他团队的开发规则。

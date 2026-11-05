@@ -88,7 +88,12 @@ export function saveFineTuningConfigApi(data: {
 	device_id?: number;
 	unit_id?: number;
 	sensor_id?: number;
-	drawing_id?: number;
+	drawing_id?: number | null;
+	is_debug?: boolean;
+	x?: number | null;
+	y?: number | null;
+	z?: number | null;
+	feedback_state?: Record<string, { status: string; age_ms: number | null }>;
 	moduleId?: number;
 	deviceId?: number;
 	configJson?: string;

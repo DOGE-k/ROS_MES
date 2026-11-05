@@ -86,15 +86,16 @@ class RosbridgeGatewayTest(unittest.TestCase):
         self.assertEqual(feedback["y"], 3.4)
         self.assertEqual(feedback["z"], 5.6)
 
-    def test_normalize_imu_topic_with_axis_device_id_falls_back_to_labels(self):
-        # 臂级 21~25 之外的 device_id 走 FEEDBACK_LABELS，不按 IMU 处理
-        # （V2.1 三轴布局下 9 = 臂3关节3伸缩）
+    def test_normalize_imu_topic_with_axis_device_id_is_not_a_measurement(self):
+        # IMU 话题上的轴号不能被误当伸缩轴实测值。
         feedback = normalize_feedback_message(
             "/hardware/imu_angles",
             {"module_id": 17, "device_id": 9},
         )
 
-        self.assertEqual(feedback["data_type"], "telescope_axis_encoder")
+        self.assertEqual(feedback["data_type"], "unknown")
+        self.assertFalse(feedback["position_valid"])
+        self.assertIsNone(feedback["position"])
 
     def test_normalize_pressure_average_topic_branches_before_label_table(self):
         # V2 新增：/hardware/pressure_avg 独立平均值话题（不再与瞬时值混流）

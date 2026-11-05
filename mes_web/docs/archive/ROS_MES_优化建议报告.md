@@ -1,5 +1,7 @@
 # ROS_MES 系统代码审查与优化建议报告
 
+> 历史资料：此文件保留当时的核查结论，不是当前版本待办或验收依据。现行说明请从[前后端入口](../../AGENTS.md)按需阅读。
+
 > 审查范围：`2.0/ROS_MES/ros_mes_front`（Vue 3 + Vite + Element Plus）与 `2.0/ROS_MES/ros_mes_hou`（FastAPI + SQLite + rosbridge）
 > 说明：标记 ✅ 的条目本次已直接修复；标记 📌 的条目建议你后续自行处理（涉及业务行为变化或工作量较大，不适合替你擅自决定）。
 

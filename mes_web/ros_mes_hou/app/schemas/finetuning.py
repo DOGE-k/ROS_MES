@@ -68,9 +68,9 @@ class FineTuningConfigDevice(BaseModel):
     unit_id: Optional[int] = None
     parameter_name: Optional[str] = None
     label: Optional[str] = None
-    initial: float = 0
+    initial: Optional[float] = 0
     adjust: Optional[float] = 0
-    current: float = 0
+    current: Optional[float] = 0
 
 
 class FineTuningConfigCreate(BaseModel):
@@ -78,13 +78,18 @@ class FineTuningConfigCreate(BaseModel):
     unit_id: int
     sensor_id: Optional[int] = None
     device_id: Optional[int] = None
-    x: float = 0
-    y: float = 0
-    z: float = 0
+    is_debug: bool = False
+    drawing_id: Optional[int] = Field(default=None, gt=0)
+    x: Optional[float] = 0
+    y: Optional[float] = 0
+    z: Optional[float] = 0
+    feedback_state: Dict[str, Any] = Field(default_factory=dict)
     devices: List[FineTuningConfigDevice] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def normalize_sensor_id(self):
+        if self.is_debug and self.drawing_id is not None:
+            raise ValueError("debug fine-tuning config must not bind a drawing")
         if self.sensor_id is None and self.device_id is not None:
             self.sensor_id = self.device_id
         if self.sensor_id is None and self.devices:

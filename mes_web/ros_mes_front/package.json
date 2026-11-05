@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test:drawing": "node --test tests/drawing-manage.test.mjs",
+    "test:finetuning": "node --test tests/finetuning-debug.test.mjs",
     "build": "vue-tsc --noEmit -p tsconfig.app.json && vue-tsc --noEmit -p tsconfig.node.json && vite build --configLoader runner",
     "preview": "vite preview"
   },

@@ -12,6 +12,7 @@
             <span class="header-title">{{ pageTitle }}</span>
           </div>
           <div class="header-right">
+            <el-tag v-if="debugSettings.skipDrawingBinding" type="warning">微调调试已开启</el-tag>
             <el-button
               type="success"
               size="small"
@@ -65,6 +66,7 @@ import { Fold, Expand, User, Link, ArrowDown, Setting, SwitchButton } from '@ele
 import Aside from '../Main/AsidePage.vue';
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
 import { useUserStore } from '@/stores/user';
+import { useDebugSettingsStore } from '@/stores/debugSettings';
 import { ElMessageBox, ElMessage } from 'element-plus';
 import { testSerialConnection } from '@/api/rosApi';
 
@@ -72,6 +74,7 @@ const router = useRouter()
 const route = useRoute()
 const layoutStore = useLayoutSettingStore();
 const userStore = useUserStore();
+const debugSettings = useDebugSettingsStore();
 
 const routeTitles: Record<string, string> = {
   '/Dashboard': '首页仪表盘',

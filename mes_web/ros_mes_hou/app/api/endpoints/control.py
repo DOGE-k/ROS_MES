@@ -49,7 +49,7 @@ def send_fine_tuning(
 
     return {
         "code": 200,
-        "message": "微调下发成功",
+        "message": "微调指令已写入 rosbridge 连接，尚无设备确认",
         "data": [
             {
                 "device_id": business_device_id,

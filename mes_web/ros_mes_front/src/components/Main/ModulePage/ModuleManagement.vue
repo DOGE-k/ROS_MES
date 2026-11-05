@@ -3,7 +3,7 @@
     <div class="mes-page-header">
       <div>
         <h2 class="mes-page-title">模块管理与姿态调度</h2>
-        <p class="mes-page-sub">先锁定模块坐标，下一步一次完成机械臂确认与图纸下发</p>
+        <p class="mes-page-sub">{{ debugSettings.skipDrawingBinding ? '调试模式：选择模块后确认机械臂，跳过图纸绑定' : '先锁定模块坐标，下一步一次完成机械臂确认与图纸下发' }}</p>
       </div>
     </div>
     <div class="outer-table">
@@ -15,7 +15,7 @@
           </span>
         </div>
         <div class="command-card-title">选择目标模块</div>
-        <div class="command-card-subtitle">选择坐标后，进入下一步配置本次要操作的机械臂与目标图纸。</div>
+        <div class="command-card-subtitle">{{ debugSettings.skipDrawingBinding ? '选择坐标后，进入下一步确认本次要操作的机械臂。调试模式下仍可保存配置。' : '选择坐标后，进入下一步配置本次要操作的机械臂与目标图纸。' }}</div>
         <div class="input-row">
           <div class="input-group">
             <span class="prefix">X 坐标</span>
@@ -83,9 +83,11 @@ import { ref, computed, watch, onMounted } from "vue";
 import { ElMessage } from "element-plus";
 import { useRouter } from "vue-router";
 import { getDeviceListApi } from "@/api/rosApi";
+import { useDebugSettingsStore } from '@/stores/debugSettings';
 
 
 const router = useRouter();
+const debugSettings = useDebugSettingsStore();
 
 // 矩阵数据 (8x8)
 const matrixSize = 8;

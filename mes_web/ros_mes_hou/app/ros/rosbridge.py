@@ -275,7 +275,9 @@ class RosbridgeClient:
             "url": self.url,
             "action": action,
             "payload": payload,
-            "confirmed": action != "module_confirm" or confirm_msg is not None,
+            # 普通发布只证明向连接写出了消息，没有等待设备接受或到位。
+            "confirmed": confirm_msg is not None if action == "module_confirm" else None,
+            "confirmation_status": "confirmed" if action == "module_confirm" else "not_requested",
             "confirm_topic": success_topic if action == "module_confirm" else None,
             "confirm_message": confirm_msg,
         }
@@ -454,14 +456,19 @@ class RosbridgeClient:
                 async for raw in ws:
                     try:
                         event = json.loads(raw)
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
                         continue
-                    if event.get("op") != "publish":
+                    if not isinstance(event, dict) or event.get("op") != "publish":
                         continue
                     topic = event.get("topic", "")
                     if topic not in feedback_topics:
                         continue
-                    yield normalize_feedback_message(topic, event.get("msg") or {}, self.profile.topics)
+                    try:
+                        feedback = normalize_feedback_message(topic, event.get("msg"), self.profile.topics)
+                    except (TypeError, ValueError, OverflowError):
+                        # 单条格式损坏的消息不能终止整条反馈连接。
+                        continue
+                    yield feedback
         except Exception as exc:
             yield {"data_type": "error", "message": f"rosbridge feedback failed: {exc}"}
 

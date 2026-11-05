@@ -6,9 +6,12 @@ header 序列化，反馈方向的原始消息原样透传在 `raw` 字段里）
 """
 from __future__ import annotations
 
+import json
+import math
 import time
 from typing import Any, Dict, Optional
 
+from app.core.config import settings
 from app.ros.profile import TOPIC_DEFAULTS
 
 # V2.1 三轴 device_id → 反馈标签
@@ -35,17 +38,76 @@ FEEDBACK_LABELS = _build_feedback_labels()
 IMU_FEEDBACK_LABEL = ("imu_pose", "陀螺仪姿态")
 
 
-def _position_value(value: Any) -> float:
+def _position_value(value: Any) -> Optional[float]:
     if isinstance(value, list):
-        return float(value[0]) if value else 0.0
-    return float(value)
+        return _float_value(value[0]) if value else None
+    return _float_value(value)
 
 
-def _float_value(value: Any) -> float:
+def _float_value(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool):
+        return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _int_value(value: Any) -> Optional[int]:
+    number = _float_value(value)
+    return int(number) if number is not None and number.is_integer() else None
+
+
+def _raw_json_value(value: Any) -> Any:
+    """保留诊断信息；JSON 不支持的 NaN/Infinity 以文本保留，不再冒充数值。"""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _raw_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_raw_json_value(item) for item in value]
+    return value
+
+
+def resolve_ack_module(module_id: Any, module_seg_map: Optional[str] = None) -> Dict[str, Any]:
+    """列出 ACK 模块号的可能业务归属，不猜发布者或关联某次请求。
+
+    ROS 软件拒绝使用业务号，CAN ACK 使用 SEG；二者消息结构相同。
+    正业务号始终是候选，SEG 无映射时不能排除未知来源。
+    """
+    raw_module = _int_value(module_id)
+    candidates = {raw_module} if raw_module is not None and raw_module > 0 else set()
+    unresolved = raw_module is None or raw_module < 0
+    mapping_valid = True
+    mapping = {}
+    try:
+        parsed = json.loads(settings.ROS_MODULE_SEG_MAP if module_seg_map is None else module_seg_map)
+        if not isinstance(parsed, dict):
+            raise ValueError("mapping must be an object")
+        for business, seg in parsed.items():
+            business_id, seg_id = _int_value(business), _int_value(seg)
+            if business_id is None or business_id <= 0 or seg_id is None or not 0 <= seg_id <= 14:
+                raise ValueError("invalid module/SEG entry")
+            mapping[business_id] = seg_id
+    except (TypeError, ValueError, OverflowError):
+        mapping_valid = False
+        unresolved = True
+
+    if mapping_valid and raw_module is not None and 0 <= raw_module <= 14:
+        matches = {business for business, seg in mapping.items() if seg == raw_module}
+        candidates.update(matches)
+        unresolved = not matches
+
+    if not mapping_valid or unresolved or not candidates:
+        resolution = "unknown"
+    else:
+        resolution = "resolved" if len(candidates) == 1 else "ambiguous"
+    return {
+        "module_candidates": sorted(candidates),
+        "module_resolution": resolution,
+        "business_module_id": next(iter(candidates)) if resolution == "resolved" else None,
+    }
 
 
 def normalize_feedback_message(
@@ -55,57 +117,73 @@ def normalize_feedback_message(
 ) -> Dict[str, Any]:
     """归一化一条反馈消息；topics 缺省用默认话题表（与 profile.topics 同构）。"""
     topics = topics or TOPIC_DEFAULTS
-    device_id = int(msg.get("device_id", 0))
+    raw = msg
+    msg = msg if isinstance(msg, dict) else {}
+    device_id = _int_value(msg.get("device_id"))
+    module_id = _int_value(msg.get("module_id"))
+    data_type, feedback_type = "unknown", "unknown feedback"
+    module_id_space = "unknown"
+    arm = device_id - 20 if device_id is not None and 21 <= device_id <= 25 else None
     # 指令回执（CmdAck：超位拒绝等）先于默认表查找，避免轴号被套上编码器标签
     if topic == topics["feedback_cmd_ack"]:
         data_type, feedback_type = "cmd_ack", "指令回执"
+        module_id_space = "mixed"
     # 新话题分支先于默认表查找，保证标签稳定（即使 FEEDBACK_LABELS 未覆盖）
-    elif topic == topics["feedback_pressure_avg"] and 21 <= device_id <= 25:
+    elif topic == topics["feedback_pressure_avg"] and arm is not None:
         data_type = "pressure_average"
-        feedback_type = f"臂{device_id - 20}压力平均值(5s窗口)"
-    elif topic == topics["feedback_vacuum_loss"] and 21 <= device_id <= 25:
+        feedback_type = f"臂{arm}压力平均值(5s窗口)"
+        module_id_space = "business"
+    elif topic == topics["feedback_vacuum_loss"] and arm is not None:
         data_type = "vacuum_loss_event"
-        feedback_type = f"臂{device_id - 20}吸盘失压告警"
+        feedback_type = f"臂{arm}吸盘失压告警"
     # 臂级 21~25：IMU 话题识别为陀螺仪，其余按压力传感器
-    elif topic == topics["feedback_imu"] and 21 <= device_id <= 25:
-        data_type, feedback_type = IMU_FEEDBACK_LABEL[0], f"臂{device_id - 20}陀螺仪姿态"
-    else:
-        data_type, feedback_type = FEEDBACK_LABELS.get(device_id, ("unknown", "unknown feedback"))
+    elif topic == topics["feedback_imu"] and arm is not None:
+        data_type, feedback_type = IMU_FEEDBACK_LABEL[0], f"臂{arm}陀螺仪姿态"
+        module_id_space = "seg"
+    elif topic == topics["feedback_sensor"] and arm is not None:
+        data_type, feedback_type = FEEDBACK_LABELS[device_id]
+        module_id_space = "seg"
+    elif device_id is not None and 1 <= device_id <= 15:
+        expected_topics = (topics["feedback_rotation"], topics["feedback_swing"], topics["feedback_telescope"])
+        if topic == expected_topics[(device_id - 1) % 3]:
+            data_type, feedback_type = FEEDBACK_LABELS[device_id]
+            module_id_space = "seg"
     header = msg.get("header") or {}
     stamp = header.get("stamp") if isinstance(header, dict) else None
 
+    position = _position_value(msg.get("position"))
+    position_valid = position is not None and data_type not in ("unknown", "cmd_ack", "imu_pose")
     normalized = {
         "time_id": time.time(),
         "topic": topic,
-        "header": stamp or header,
-        "module_id": int(msg.get("module_id", 0)),
+        "header": _raw_json_value(stamp or header),
+        "module_id": module_id,
+        "module_id_space": module_id_space,
         "device_id": device_id,
-        "position": _position_value(msg.get("position", 0)),
+        "position": position if position_valid else None,
+        "position_valid": position_valid,
+        "valid_fields": ["position"] if position_valid else [],
         "data_type": data_type,
         "feedback_type": feedback_type,
-        "raw": msg,
+        "raw": _raw_json_value(raw),
     }
     if "id" in msg:
-        normalized["id"] = msg["id"]
+        normalized["id"] = _raw_json_value(msg["id"])
 
     if data_type == "imu_pose":
-        normalized.update(
-            {
-                "swing_angle": _float_value(msg.get("swing_angle")),
-                "rotation_angle": _float_value(msg.get("rotation_angle")),
-                "x": _float_value(msg.get("x")),
-                "y": _float_value(msg.get("y")),
-                "z": _float_value(msg.get("z")),
-            }
-        )
+        for field in ("swing_angle", "rotation_angle", "x", "y", "z"):
+            normalized[field] = _float_value(msg.get(field))
+            if normalized[field] is not None:
+                normalized["valid_fields"].append(field)
 
     if data_type == "cmd_ack":
         # CmdAck 专有字段：ack_msg=回执类型 / result=结果码（3=超位拒绝）/ detail=明细（1上限 2下限）
         normalized.update(
             {
-                "ack_msg": msg.get("ack_msg"),
-                "result": msg.get("result"),
-                "detail": msg.get("detail"),
+                "ack_msg": _int_value(msg.get("ack_msg")),
+                "result": _int_value(msg.get("result")),
+                "detail": _int_value(msg.get("detail")),
+                **resolve_ack_module(msg.get("module_id")),
             }
         )
 
