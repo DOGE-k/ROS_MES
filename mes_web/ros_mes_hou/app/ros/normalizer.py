@@ -125,7 +125,18 @@ def normalize_feedback_message(
     module_id_space = "unknown"
     arm = device_id - 20 if device_id is not None and 21 <= device_id <= 25 else None
     # 指令回执（CmdAck：超位拒绝等）先于默认表查找，避免轴号被套上编码器标签
-    if topic == topics["feedback_cmd_ack"]:
+    event_fields = {
+        "feedback_axis_status": ("axis_status", ("status_bits", "axis_state", "base_valid")),
+        "feedback_arrive": ("arrive_notification", ("angle", "pos_error", "status_bits", "flags")),
+        "feedback_stop": ("stop_notification", ("stop_reason", "output_level")),
+        "feedback_fault": ("axis_fault", ("fault_bits", "local_action", "detail", "duration_ms")),
+        "feedback_limit": ("limit_event", ("limit_type", "output_level")),
+    }
+    event = next((value for key, value in event_fields.items() if topic == topics.get(key)), None)
+    if event is not None and device_id is not None and 1 <= device_id <= 15:
+        data_type, feedback_type = event[0], event[0]
+        module_id_space = "seg"
+    elif topic == topics["feedback_cmd_ack"]:
         data_type, feedback_type = "cmd_ack", "指令回执"
         module_id_space = "mixed"
     # 新话题分支先于默认表查找，保证标签稳定（即使 FEEDBACK_LABELS 未覆盖）
@@ -169,6 +180,18 @@ def normalize_feedback_message(
     }
     if "id" in msg:
         normalized["id"] = _raw_json_value(msg["id"])
+
+    if event is not None and data_type == event[0]:
+        normalized["position"] = None
+        normalized["position_valid"] = False
+        normalized["valid_fields"] = []
+        for field in event[1]:
+            normalized[field] = _int_value(msg.get(field))
+            if normalized[field] is not None:
+                normalized["valid_fields"].append(field)
+    if data_type == "vacuum_loss_event":
+        normalized["module_id_space"] = "seg"
+        normalized.update({field: _int_value(msg.get(field)) for field in ("pressure_raw", "loss_threshold")})
 
     if data_type == "imu_pose":
         for field in ("swing_angle", "rotation_angle", "x", "y", "z"):

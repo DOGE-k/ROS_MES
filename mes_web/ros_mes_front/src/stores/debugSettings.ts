@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
-// 仅本次打开应用有效；刷新后重新创建状态，不改变无 ROS 模拟开关。
+// 跳过图纸只在本次打开应用有效；真实/模拟连接由后端页面配置独立管理。
 export const useDebugSettingsStore = defineStore('debugSettings', () => {
   const skipDrawingBinding = ref(false);
 

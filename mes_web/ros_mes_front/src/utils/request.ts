@@ -35,7 +35,9 @@ service.interceptors.request.use(
       config.headers["Content-Type"] = "application/json;charset=utf-8";
     }
 
-    const isWhiteApi = whiteList.some((item) => url.includes(item));
+    // 批次接口要求登录，不能继承历史 /finetuning 子串白名单。
+    const isBatchApi = /^\/control\/finetuning\/batches(?:\/|\?|$)/.test(url);
+    const isWhiteApi = !isBatchApi && whiteList.some((item) => url.includes(item));
 
     if (!isWhiteApi) {
       const token = localStorage.getItem("token");

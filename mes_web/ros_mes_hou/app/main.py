@@ -16,6 +16,8 @@ from app.core.config import settings
 from app.db import models
 from app.db.database import engine
 from app.ros import get_ros_dispatcher
+from app.ros.finetuning_batch import batch_manager
+from app.ros.runtime_settings import runtime_settings
 
 app = FastAPI(title=settings.PROJECT_NAME, openapi_url=f"{settings.API_STR}/openapi.json")
 
@@ -42,6 +44,8 @@ app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
+    runtime_settings.load()
+    batch_manager.recover()
     # ROS1 适配器启动 rospy 原生节点线程；ROS2 适配器启动 /robot_status 后台订阅
     get_ros_dispatcher().start_native_node()
 

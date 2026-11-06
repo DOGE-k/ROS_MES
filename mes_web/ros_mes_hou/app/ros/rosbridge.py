@@ -243,7 +243,7 @@ class RosbridgeClient:
         failed_topic = self.profile.topics["module_confirm_failed"]
 
         try:
-            async with websockets.connect(self.url, close_timeout=1) as ws:
+            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
                 if action == "module_confirm":
                     for confirm_topic in (success_topic, failed_topic):
                         subscribe_json = json.dumps(
@@ -346,7 +346,7 @@ class RosbridgeClient:
         )
 
         try:
-            async with websockets.connect(self.url, close_timeout=1) as ws:
+            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
                 await asyncio.wait_for(ws.send(emergency_msg), timeout=2.0)
             print(f"[急停] 指令已发送: {softstop_topic}")
             return True
@@ -379,7 +379,7 @@ class RosbridgeClient:
         )
 
         try:
-            async with websockets.connect(self.url, close_timeout=1) as ws:
+            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
                 await asyncio.wait_for(ws.send(release_msg), timeout=2.0)
             print(f"[急停解除] 指令已发送: {release_topic}")
             return True
@@ -435,7 +435,7 @@ class RosbridgeClient:
 
         return {"topic": topic, "command": command, "payload": payload, "mode": "rosbridge"}
 
-    async def stream_feedback(self) -> AsyncIterator[Dict[str, Any]]:
+    async def stream_feedback(self, *, ready: asyncio.Event | None = None) -> AsyncIterator[Dict[str, Any]]:
         if websockets is None:
             yield {"data_type": "error", "message": "missing websockets dependency"}
             return
@@ -445,13 +445,16 @@ class RosbridgeClient:
             for key in ("feedback_rotation", "feedback_swing", "feedback_telescope",
                         "feedback_sensor", "feedback_imu",
                         "feedback_pressure_avg", "feedback_vacuum_loss",
-                        "feedback_cmd_ack")
+                        "feedback_cmd_ack", "feedback_axis_status", "feedback_arrive",
+                        "feedback_stop", "feedback_fault", "feedback_limit")
         ]
 
         try:
-            async with websockets.connect(self.url, close_timeout=1) as ws:
+            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
                 for topic in feedback_topics:
                     await ws.send(json.dumps({"op": "subscribe", "topic": topic}, ensure_ascii=False))
+                if ready is not None:
+                    ready.set()
 
                 async for raw in ws:
                     try:
@@ -582,36 +585,95 @@ class RosbridgeTransport(RosDispatcher):
     """
 
     def __init__(self):
-        self.client = RosbridgeClient(self.profile)
+        from app.ros.runtime_settings import runtime_settings
+        from app.ros.mock_client import MockRosClient
+        self.connection_settings = runtime_settings.snapshot()
+        config = self.connection_settings
+        self.revision = config["revision"]
+        self.emergency_mode = config["emergency_mode"]
+
+        def client(mode, url):
+            value = MockRosClient(self.profile) if mode == "mock" else RosbridgeClient(self.profile, url=url)
+            value.execution_mode = mode
+            value.safety_mode = self.emergency_mode
+            value.connection_revision = self.revision
+            return value
+
+        self.client = client(config["ros_mode"], config["ros_url"])
+        self.drawing_client = client("real" if config["drawing_mode"] == "real" else "mock", config["drawing_ros_url"] or config["ros_url"])
+        self.emergency_client = client(self.emergency_mode, config["emergency_ros_url"] or config["ros_url"])
         self._watcher = _RosbridgeStatusWatcher(self.profile, self.client.url)
 
     def dispatch(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self.client.dispatch(action, payload)
+        from app.ros.runtime_settings import runtime_settings
+        with runtime_settings.operation(self.revision):
+            if action == "drawing_path" and self.connection_settings["drawing_mode"] == "skip":
+                raise RosbridgeError("当前选择不使用图纸，不允许下发图纸")
+            from app.db import models
+            with runtime_settings.sessions() as db:
+                safety = db.get(models.ControlSafety, 2 if self.emergency_mode == "mock" else 1)
+                if safety and safety.state.startswith("stop"):
+                    raise RosbridgeError("当前急停联锁尚未解除，禁止模块确认或任务下发")
+            if action == "module_confirm":
+                clients = {item.url: item for item in (self.client, self.drawing_client) if item.execution_mode == "real"}
+                results = [item.dispatch(action, payload) for item in (list(clients.values()) or [self.client])]
+                return {**results[0], "confirmed": all(item.get("confirmed") is True for item in results), "destinations": results}
+            return (self.drawing_client if action == "drawing_path" else self.client).dispatch(action, payload)
+
+    def operation(self):
+        from app.ros.runtime_settings import runtime_settings
+        return runtime_settings.operation(self.revision)
+
+    async def test_serial_connection(self) -> dict:
+        if self.client.execution_mode == "mock":
+            return {"success": True, "connected": True, "simulated": True,
+                    "message": "模拟串口检查成功，未访问真实串口", "bytes_received": 0}
+        return await super().test_serial_connection()
+
+    async def get_hardware_status(self) -> dict:
+        if self.client.execution_mode == "mock":
+            return {"joints": [0.0] * 15, "status": "simulated", "timestamp": time.time(), "simulated": True}
+        return await super().get_hardware_status()
+
+    async def stream_robot_data(self):
+        if self.client.execution_mode == "mock":
+            while True:
+                yield json.dumps({"simulated": True, "status": "simulated", "message": "后端模拟，未连接设备"}, ensure_ascii=False)
+                await asyncio.sleep(1)
+        else:
+            async for item in super().stream_robot_data():
+                yield item
 
     async def stream_feedback(self) -> AsyncIterator[Dict[str, Any]]:
+        from app.ros.runtime_settings import runtime_settings
         async for feedback in self.client.stream_feedback():
-            yield feedback
+            if runtime_settings.snapshot()["revision"] != self.revision:
+                yield {"data_type": "config_changed", "message": "连接配置已变更，请重新确认机械臂"}
+                return
+            yield {**feedback, "simulated": self.client.execution_mode == "mock", "connection_revision": self.revision}
 
     async def trigger_emergency_stop(self) -> bool:
-        return await self.client.publish_softstop()
+        return await self.emergency_client.publish_softstop()
 
     async def release_emergency_stop(self) -> bool:
-        return await self.client.publish_stop_release()
+        return await self.emergency_client.publish_stop_release()
 
     def start_native_node(self) -> None:
         """启动 /robot_status 后台订阅（测试页状态来源；子类可叠加各自的后台通道）。"""
-        self._watcher.start()
+        if self.client.execution_mode == "real":
+            self._watcher.start()
 
     def stop(self) -> None:
         self._watcher.stop()
 
     def publish_web_cmd(self, command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         # 测试页通道统一走 rosbridge（干净 venv 无 rospy 也能用，ROS1/ROS2 行为一致）
+        if self.client.execution_mode == "mock":
+            return {"mode": "mock", "simulated": True, "command": command, "payload": payload}
         return asyncio.run(self.client.publish_web_cmd(command, payload))
 
     @property
     def native_status(self) -> Dict[str, Any]:
+        if self.client.execution_mode == "mock":
+            return {"robot_status": "simulated", "ros_ready": False, "simulated": True, "message": "后端模拟，未连接设备"}
         return self._watcher.snapshot()
-
-    async def release_emergency_stop(self) -> bool:
-        return await self.client.publish_stop_release()

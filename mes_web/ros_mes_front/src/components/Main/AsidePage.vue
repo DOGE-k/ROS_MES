@@ -80,14 +80,25 @@
 
   </div>
 
-  <!-- 急停遮罩层：长按急停触发后全局提示（解除按钮仅调试用，生产环境需加权限控制） -->
+  <!-- 急停/解除提示：发送状态与设备实测分开，禁止定时自动恢复。 -->
   <div v-if="isEmergencyActive" class="emergency-overlay">
     <div class="emergency-content">
       <h1 style="color: white;">SYSTEM EMERGENCY STOP</h1>
-      <h1 style="color: white;">系统已触发急停</h1>
-      <el-button type="danger" @click="resetEmergency" class="reset-button">解除急停 (仅调试)</el-button>
+      <h1 style="color: white;">{{ emergencyTitle }}</h1>
+      <div class="emergency-actions">
+        <el-button type="danger" :loading="releasing" :disabled="sendingStop || releasing" @click="resetEmergency">发送解除急停指令</el-button>
+        <el-button @click="isEmergencyActive = false">返回页面（保留急停状态）</el-button>
+      </div>
+      <p><el-link type="info" @click="connectionDialogVisible = true">打开调试设置</el-link></p>
     </div>
   </div>
+  <el-alert v-if="safetyState !== 'clear' && !isEmergencyActive" class="release-pending-notice" :type="simulatedEmergency ? 'warning' : 'error'" :closable="false" :title="safetyNotice">
+    <el-button size="small" @click="showEmergencyDetails">查看急停状态</el-button>
+    <el-button size="small" @click="connectionDialogVisible = true">调试设置</el-button>
+  </el-alert>
+  <el-dialog v-model="connectionDialogVisible" title="调试设置" width="min(640px, 94vw)" append-to-body :z-index="100001" destroy-on-close>
+    <RosConnectionSettings />
+  </el-dialog>
 
 </template>
 
@@ -103,11 +114,12 @@ import {
   Odometer,
 } from '@element-plus/icons-vue';
 import { useRouter, useRoute } from 'vue-router';
-import { computed, ref } from 'vue';
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import { ElMessage } from 'element-plus';
-import request from '@/utils/request';
+import { sendEmergencyStop, releaseEmergencyStop, getEmergencyStopState } from '@/api/rosApi';
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
 import { useUserStore } from '@/stores/user';
+import RosConnectionSettings from './UserManage/RosConnectionSettings.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -126,6 +138,23 @@ const handleMenuSelect = (index) => {
 // ========== 急停长按逻辑（完全保持不变） ==========
 const isPressing = ref(false);
 const isEmergencyActive = ref(false);
+const safetyState = ref('clear');
+const simulatedEmergency = ref(false);
+const localEmergencyRequested = ref(false);
+const emergencyTitle = computed(() => simulatedEmergency.value
+  ? '模拟急停状态（未连接真实设备）'
+  : safetyState.value === 'release_sent' ? '解除指令已发送，设备状态待确认'
+  : localEmergencyRequested.value ? '已请求急停，设备停止状态待确认' : '检测到未确认的急停记录，请核实设备状态');
+const safetyNotice = computed(() => simulatedEmergency.value ? '模拟急停状态尚未解除，模拟任务保持暂停。'
+  : safetyState.value === 'release_sent' ? '解除指令已发送，设备解除状态尚未确认；新运动需通过实时状态检查。'
+  : '检测到未确认的真实急停记录，运动下发保持锁定；当前没有自动发送新的急停。');
+const showEmergencyDetails = () => { localEmergencyRequested.value = false; isEmergencyActive.value = true; };
+const connectionDialogVisible = ref(false);
+const releasing = ref(false);
+const sendingStop = ref(false);
+let safetyRevision = 0;
+let safetyPolling = false;
+let safetyPollTimer;
 let pressTimer = null;
 const LONG_PRESS_DURATION = 2000;
 
@@ -152,37 +181,89 @@ const cancelLongPress = () => {
 };
 
 const triggerEmergency = async () => {
+  if (sendingStop.value) return;
+  sendingStop.value = true;
+  safetyRevision++;
+  localEmergencyRequested.value = true;
+  isEmergencyActive.value = true;
+  safetyState.value = 'stop_requested';
   try {
-    await request.post("/control/emergency_stop");
-
-    ElMessage.warning("急停指令已下发，所有机械臂停止运动");
-    isEmergencyActive.value = true;
-
-    setTimeout(() => {
-      if (isEmergencyActive.value) {
-        isEmergencyActive.value = false;
-        ElMessage.info("系统已恢复，请谨慎操作");
-      }
-    }, 5000);
+    const result = await sendEmergencyStop();
+    if (result.success !== true) throw new Error('急停发送结果未确认');
+    simulatedEmergency.value = result.simulated === true;
+    safetyState.value = 'stop_sent';
+    ElMessage.warning(result.simulated ? '模拟急停成功，未连接真实设备' : '急停指令已发送，设备是否停止仍需核实');
   } catch (error) {
     const errMsg =
       error.response?.data?.detail ||
       error.response?.data?.message ||
       "急停失败，请检查后端服务或 ROS 控制节点";
 
+    safetyState.value = 'stop_unknown';
     ElMessage.error(errMsg);
   } finally {
+    sendingStop.value = false;
     cancelLongPress();
   }
 };
 
-const resetEmergency = () => {
-  isEmergencyActive.value = false;
-  ElMessage.info('急停已解除');
+const resetEmergency = async () => {
+  if (releasing.value || sendingStop.value) return;
+  releasing.value = true;
+  safetyRevision++;
+  try {
+    const result = await releaseEmergencyStop();
+    if (result.success !== true) throw new Error('解除发送结果未确认');
+    simulatedEmergency.value = result.simulated === true;
+    safetyState.value = result.simulated ? 'clear' : 'release_sent';
+    if (result.simulated) isEmergencyActive.value = false;
+    ElMessage.info(result.simulated ? '模拟解除成功，未连接真实设备' : '解除指令已发送，设备解除状态待确认');
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || error.message || '解除失败，请核实设备状态');
+  } finally {
+    releasing.value = false;
+  }
 };
+
+const refreshSafetyState = async (initial = false) => {
+  if (safetyPolling || sendingStop.value || releasing.value) return;
+  safetyPolling = true;
+  const revision = safetyRevision;
+  try {
+    const result = await getEmergencyStopState();
+    // 状态加载期间若操作者已按急停，不得以旧快照覆盖。
+    if (revision === safetyRevision) {
+      simulatedEmergency.value = result.data.simulated === true;
+      safetyState.value = result.data.state;
+      // 查询和恢复历史状态只更新提示，不能当作操作者新触发急停。
+      if (result.data.state === 'clear') isEmergencyActive.value = false;
+    }
+  } catch {
+    if (initial) ElMessage.warning('无法获取控制联锁状态，请核实后端连接');
+  } finally {
+    safetyPolling = false;
+  }
+};
+const connectionChanged = () => {
+  safetyRevision++;
+  localEmergencyRequested.value = false;
+  isEmergencyActive.value = false;
+  void refreshSafetyState();
+};
+onMounted(async () => {
+  await refreshSafetyState(true);
+  safetyPollTimer = setInterval(() => { void refreshSafetyState(); }, 1000);
+  if (typeof window !== 'undefined') window.addEventListener?.('ros-connection-changed', connectionChanged);
+});
+onBeforeUnmount(() => {
+  cancelLongPress();
+  if (safetyPollTimer !== undefined) clearInterval(safetyPollTimer);
+  if (typeof window !== 'undefined') window.removeEventListener?.('ros-connection-changed', connectionChanged);
+});
 </script>
 
 <style scoped>
+.release-pending-notice { position: fixed; right: 20px; bottom: 20px; width: min(480px, 90vw); z-index: 2100; }
 /* 侧边栏容器：深海军蓝渐变 */
 .aside-container {
   height: 100%;
@@ -347,13 +428,16 @@ const resetEmergency = () => {
   transition: background-position 2s linear, transform 0.2s ease;
 }
 
-/* 急停遮罩层样式（原样保留） */
+/* 急停遮罩层样式 */
 .emergency-overlay {
   position: fixed;
   top: 0;
   left: 0;
   width: 100vw;
   height: 100vh;
+  box-sizing: border-box;
+  padding: 24px;
+  overflow-y: auto;
   background-color: #df3b3b;
   display: flex;
   align-items: center;
@@ -366,22 +450,53 @@ const resetEmergency = () => {
   text-align: center;
   color: white;
   padding: 40px;
+  box-sizing: border-box;
+  max-width: 100%;
   border-radius: 8px;
   background-color: rgba(255, 255, 255, 0.1);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .emergency-content h1 {
-  font-size: 36px;
+  font-size: clamp(22px, 3vw, 36px);
   margin-bottom: 20px;
   font-weight: bold;
   letter-spacing: 2px;
 }
 
-.reset-button {
+.emergency-actions {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+  max-width: 560px;
+  margin: 24px auto 0;
+}
+
+.emergency-actions .el-button {
+  flex: 1;
+  height: auto;
+  min-height: 44px;
+  margin: 0;
   font-size: 16px;
-  padding: 20px 36px;
-  margin-top: 20px;
+  line-height: 1.5;
+  white-space: normal;
+  padding: 10px 20px;
+}
+
+@media (max-width: 600px) {
+  .emergency-content {
+    padding: 24px;
+  }
+
+  .emergency-actions {
+    flex-direction: column;
+  }
+
+  .emergency-actions .el-button {
+    width: 100%;
+    flex: none;
+  }
 }
 
 @keyframes fadeIn {

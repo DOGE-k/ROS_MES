@@ -11,9 +11,11 @@ class HardwareFeedback(BaseModel):
     joints: List[float]
     status: str
     timestamp: float
+    simulated: bool = False
 
 
 class EmergencyStopResponse(BaseModel):
     success: bool
     message: str
     timestamp: datetime = datetime.now()
+    simulated: bool = False

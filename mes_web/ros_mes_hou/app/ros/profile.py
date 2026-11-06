@@ -36,6 +36,11 @@ TOPIC_DEFAULTS: Dict[str, str] = {
     "feedback_vacuum_loss": "/hardware/vacuum_loss",
     # V2.1：轴节点指令回执（超位拒绝等 CmdAck），转发前端 otherwise 静默丢失
     "feedback_cmd_ack": "/hardware/cmd_ack",
+    "feedback_axis_status": "/hardware/axis_status",
+    "feedback_arrive": "/hardware/arrive_notification",
+    "feedback_stop": "/hardware/stop_notification",
+    "feedback_fault": "/hardware/axis_fault",
+    "feedback_limit": "/hardware/limit_event",
     "drawing_path": "/frontend_pointcloud_topic",
     "module_cmd": "/control/module_cmd",
     "module_confirm_success": "/hardware/module_confirm_success",

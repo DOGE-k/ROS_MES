@@ -1,6 +1,6 @@
 # ROS_MES 前后端接口字段文档
 
-维护范围：Vue 前端和 FastAPI 业务后端。2026-11-05 整理；当前代码及双方已确认契约是核查依据，历史测试结果不能代替当前实现验证。前后端任务先读[开发入口](../AGENTS.md)，最近变更见[改动记录](ROS_MES_前后端改动记录.md)。
+维护范围：Vue 前端和 FastAPI 业务后端。2026-11-07 更新；当前代码及双方已确认契约是核查依据，历史测试结果不能代替当前实现验证。前后端任务先读[开发入口](../AGENTS.md)，最近变更见[改动记录](ROS_MES_前后端改动记录.md)。
 
 本文件由早期团队基准（2026-10-05、前后端 v1.1/`b03b57a`）演进而来。原四轴话题、消息格式和编码章节已失效，本次移除重复正文，统一引用根 `docs/` 的[三轴版 V2.1 共享契约](../../docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md)。ROS/CAN 资料和跨系统报告仍在原位置，本文件不另立 ROS 协议权威。
 
@@ -30,7 +30,7 @@
 | 点云视图服务 | `POINTCLOUD_VIEW_BASE_URL=http://localhost:5000` | 后端图片代理目标 |
 | 数据库 | `DATABASE_URL` | 默认项目根 `ros_database.db`，不要运行种子脚本覆盖现有数据 |
 | ROS 版本 | `ROS_VERSION=1` 或 `2` | 类型串和时间戳差异集中在 `app/ros/profile.py` |
-| 无 ROS 模拟 | `VITE_DEBUG_NO_ROS=true` | 前端开发模拟，与个人中心“跳过图纸绑定”开关独立 |
+| 真实/模拟连接 | 个人中心 → 调试设置 | 后端统一配置 ROS、图纸、急停模式和地址；历史 `VITE_DEBUG_NO_ROS` 不再绕过后端 |
 
 ## 2. REST API 接口（前端→后端→ROS）
 
@@ -76,6 +76,7 @@
 | `device_id` | int | 可选 | 设备 ID |
 | `unit_ids` | int[] | ✔ | 本次确认的机械臂 `Unit_ID` 列表；页面可传 1~5 台，后端按顺序逐个确认 |
 | `position` | int | 可选 | 位置（前端传 0）；也可传对象 `{x, y}` |
+| `connection_revision` | int | 可选 | 页面读取的连接配置版本；与后端当前版本不一致时返回 409，须重新读取并确认 |
 
 - 响应：
 
@@ -120,24 +121,28 @@
 | 5 | `/coordination/views/{view_name}` | GET | 否 | （点云视图服务代理） | 获取点云三视图 |
 
 **接口 4：目标图纸下发**
-- 请求体（全部必填，缺失/类型错 422）：
+- 请求体（业务目标字段必填，缺失/类型错 422）：
 
-| 字段 | 类型 |
-|---|---|
-| `device_id` | int |
-| `module_id` | int |
-| `unit_id` | int |
-| `unit_row_id` | int |
-| `drawing_id` | int |
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `device_id` | int | 模块设备业务编号，必填 |
+| `module_id` | int | 模块业务编号，必填 |
+| `unit_id` | int | 机械臂 `Unit_ID`，必填 |
+| `unit_row_id` | int | 机械臂数据库行编号，必填 |
+| `drawing_id` | int 或 null | `database` 来源必填实际图纸编号；内置模拟来源必须为 null |
+| `drawing_source` | str | `database`（默认）或 `builtin_mock`；其他值或非字符串返回 422 |
+| `connection_revision` | int | 可选；与当前服务版本不一致时返回 409 |
 
-- 响应：`{"code":200, "message":"target drawing path dispatched and pointcloud views are ready", "data":{五元组}, "dispatch":{...}, "views":{"front":"/api/coordination/views/front","side":"...","top":"..."}}`
-- 流程：校验参数 → 查库取图纸路径 → 转相对路径 → rosbridge 发布 → 等待点云三视图生成（最长 5 秒，超时 504）
+- 响应：`{"code":200,"message":"...","simulated":false或true,"data":{业务目标及drawing_id/drawing_source},"dispatch":{...},"views":{"front":"/api/coordination/views/front?connection_revision=版本","side":"...","top":"..."}}`。
+- 真实下发：校验参数及配置版本 → 查库取图纸路径 → 转相对路径 → rosbridge 发布 → 等待点云三视图生成（最长 5 秒，超时 504）。实际图纸不存在返回 404，路径为空返回 422。
+- 模拟下发：可选正式图纸或后端内置示例。内置示例仅允许当前 `drawing_mode=mock` 且 `drawing_source=builtin_mock/drawing_id=null`；不创建正式图纸记录、不构造真实 ROS 路径，返回明确的模拟预览。
+- `drawing_mode=skip` 时本接口及三视图接口返回 409。模拟示例不得在真实模式使用；真实空库仍要求先导入正式图纸。
 
 正常模式页面顺序为“选模块 → 多选 1~5 台机械臂和一张图纸 → 批量机械臂确认 → 按臂图纸下发 → 微调”。全部确认和图纸下发成功后进入微调页；主页面提供机械臂切换和重新下发图纸入口，已确认机械臂的图纸、三视图和微调状态按臂分别保留于本次页面会话中。切换机械臂不会再次弹出选择框；重新下发只作用于当前机械臂。请求进行中禁用目标切换，避免数据串臂。
 
 **接口 5：点云视图代理**
 - 路径参数：`view_name` ∈ {`top`, `front`, `side`}（其他值 404）
-- 响应：图片二进制（`image/png`）；点云服务不可达 502
+- 响应：真实模式代理点云图片，服务不可达 502；模拟模式返回标记 `SIMULATED` 的 SVG，不请求点云服务。可选查询参数 `connection_revision`，配置版本变化返回 409；不使用图纸模式返回 409。
 
 ---
 
@@ -183,10 +188,52 @@
 
 **接口 7/8 字段**：
 - POST `/finetuning/`：`module_id`(✔)、`unit_id`(✔)、`device_id/Device_ID`?、`position/new_value`(至少其一)、`parameter_name`?（缺省自动生成 `module_<m>_unit_<u>_position`）、`old_value`?（缺省取最近一次 new_value）→ 返回 `FineTuningResponse[]`（GET 列表：`id, module_id, unit_id, module_address?, module_descript?, parameter_name, old_value?, new_value, creater_id, create_time?, notes?, del_flag`）
-- POST `/finetuning/config`：`module_id`(✔)、`unit_id`(✔)、`sensor_id`(可由 `device_id`/`devices[0]` 兜底)、`device_id?`、`is_debug=false`、`drawing_id=null`（传值时须为正整数）、`x/y/z=0`（可传 null 表示尚无有效值）、`feedback_state={}`（逐字段状态及 `age_ms`）、`devices:[{device_id?, sensor_id?, unit_id?, parameter_name?, label?, initial=0或null, adjust=0, current=0或null}]` → 整份 JSON 存 `config_json`，随保存响应 `data.config` 返回。2026-11-05 起实际保存图纸编号与调试标记；`is_debug=true` 时 `drawing_id` 必须为空，否则返回 422。旧客户端不传这两个字段仍可保存；无需数据库迁移。
+- POST `/finetuning/config`：`module_id`(✔)、`unit_id`(✔)、`sensor_id`(可由 `device_id`/`devices[0]` 兜底)、`device_id?`、`is_debug=false`、`drawing_id=null`（传值时须为正整数）、`drawing_source="database"`、`connection_revision?`（非负版本号）、`x/y/z=0`（可传 null 表示尚无有效值）、`feedback_state={}`（逐字段状态及 `age_ms`）、`devices:[{device_id?, sensor_id?, unit_id?, parameter_name?, label?, initial=0或null, adjust=0, current=0或null}]` → 整份 JSON 存 `config_json`，随保存响应 `data.config` 返回。`is_debug=true` 时 `drawing_id` 必须为空；内置示例保存为 `is_debug=false/drawing_source="builtin_mock"/drawing_id=null`，且只允许当前图纸模式为 mock，不能与跳过图纸同时使用。版本不一致返回 409，来源或组合非法返回 422。旧客户端省略新字段仍兼容；新元数据不增加业务表列。
 - GET `/finetuning/`：query `skip=0, limit=100, module_id?, unit_id?`
 
 ---
+
+### 2.4.1 三轴统一确认与顺序执行（2026-11-06）
+
+三个输入框只保存待提交增量，当前机械臂共用一个“确认下发”按钮。确认时冻结模块、机械臂和三个轴的本次增量，只提交非零项；同一机械臂一次只允许一个执行批次。前端不得将三次 HTTP 成功当作三轴运动完成。
+
+- `POST /control/finetuning/batches`：携带客户端唯一 `request_id`、`module_id`、`unit_id` 和 `adjustments:[{parameter_name, position}]`。批次号只用于 MES 幂等和进度，不添加到 ROS 消息，不声称设备回显它。相同请求号不得重复执行；冲突请求返回 409。
+- `GET /control/finetuning/batches/{id}`：查询每轴及批次进度。刷新页面恢复查询，不自动再次提交。
+- 后端独立订阅反馈，先取得当前模块/机械臂三轴的新鲜位置及有效、空闲、无急停/故障的状态，才允许发送第一轴。等待同轴新运行状态、符合目标位置的到位事件和空闲状态后，才推进下一轴；接受 ACK 本身不推进队列。
+- 轴忙/拒绝、限位/故障、失压、断线、急停和超时停止后续下发；无法证明结果时标为 `uncertain` 并保留目标锁，禁止自动重发。状态及幂等记录保存于后端专用批次表，重启后未结束批次变为待核实，不恢复执行。
+- 待核实批次经操作者现场核对后，可调用独立确认接口释放 MES 控制锁；该操作不发送运动、不解除设备故障，后续新批次仍须通过实时空闲检查。历史已发送项目不得作为一整批自动重试。
+- MES 批次在单个后端工作进程中执行；同一设备需由本控制会话独占，不能与 ROS 内部自动流程或其他控制器同时运动。现有反馈无设备请求序号，迟到/混合来源存在协议边界；真机启用前需核实状态、到位事件、单位及独占操作条件。反馈不足时不得继续发送，不用固定延时或读数不变推断完成。
+- 默认仅以隔离数据库和模拟 ROS 消息验证，不修改 ROS/固件。伸缩单位按现有共享契约 mm/CAN 0.01mm；到位原始字段与现场固件一致性仍需 ROS 方确认。
+
+下列路径均带 `/api` 前缀、要求登录；查询与恢复操作不发送运动指令。
+
+| 方法与路径 | 请求/用途 | 响应与限制 |
+|---|---|---|
+| POST `/control/finetuning/batches` | `request_id`、`module_id`、`unit_id`、`adjustments` | HTTP 202，返回批次快照；只表示已登记。同一请求号与相同内容返回原批次；内容冲突或目标锁定为 409，参数/登记/映射错误为 422 |
+| GET `/control/finetuning/batches/active?module_id=17&unit_id=32` | 页面进入/重新配置前检查目标 | 返回锁定批次或 `data:null`，不自动确认模块或重发图纸 |
+| GET `/control/finetuning/batches/by-request/{request_id}` | 提交响应丢失后按原请求号查询 | 返回原批次或 `data:null`；暂未查到不代表可重发 |
+| GET `/control/finetuning/batches/{id}` | 查询逐轴进度 | 不存在为 404；前端保留未知状态，不自动提交新批次 |
+| POST `/control/finetuning/batches/{id}/interrupt` | 停止后续下发 | **不停止已经运动的轴**；立即停止应使用全局急停 |
+| POST `/control/finetuning/batches/{id}/acknowledge` | `{"operator_confirmed":true}`，现场核实后关闭待确认记录 | 仅 `uncertain` 且后台任务已结束时允许；否则 409。仅释放 MES 锁，不复位故障/解除急停/重发运动 |
+
+请求示例：`{"request_id":"batch_20261106_001","module_id":17,"unit_id":32,"adjustments":[{"parameter_name":"rotation","position":2},{"parameter_name":"telescopic","position":0.5}]}`。请求号为 8～80 位字母、数字、下划线或连字符；1～3 项，每轴至多一项且为非零有限数值。沿用页面单次输入范围 -360～360，**不是设备软/硬限位承诺**。后端由机械臂和参数类型计算轴号，不接受客户端覆盖；旧单轴接口也校验轴号、参数和机械臂一致，并检查批次锁。
+
+批次响应统一为 `{"code":202或200,"message":"...","data":{...}}`；快照字段如下：
+
+| 字段 | 语义 |
+|---|---|
+| `id/request_id` | 后端批次 UUID / 客户端幂等号，均不是固件请求序号 |
+| `module_id/unit_id/seg` | 冻结的业务模块、机械臂及本次物理 SEG |
+| `status/message` | `queued` 等待、`checking` 状态检查、`executing` 执行、`completed` 已观测完成、`blocked` 尚未发送即受阻、`uncertain` 结果待核实、`closed` 人工核实关闭 |
+| `target_locked` | 是否保留控制锁；按物理 SEG+arm 唯一占用，并核验业务目标，业务编号别名不能绕过锁 |
+| `steps[]` | `parameter_name/position/device_id/status`；开始执行后可含 `expected_position`，为基于实测基线计算的预期目标，不能当作实测位置 |
+| `steps[].status` | `pending` 未发送、`sent_unconfirmed` 发送阶段、`completed` 已观测完成、`uncertain` 已尝试发送但结果不明 |
+
+实现默认等待初始状态 10 秒、单轴完成 60 秒、状态与位置新鲜度 3 秒。每轴必须观测到发送后的运行状态、符合目标及误差条件的到位事件和运行后的空闲状态；默认比较容差为旋转/摆动 0.2°、伸缩 0.1mm，仅为 MES 软件判定阈值，需现场验证，不能代替设备精度验收。未观测到完整条件时不发下一轴，即使动作过短而漏掉 RUN 也按待核实处理。
+
+页面每秒查询批次进度。刷新后先恢复后端锁定批次；批次完成/人工关闭后可重新配置会话。提交不明时保留请求号只查询，已完成项清空草稿，人工核实关闭时也清空已尝试发送项；未发送项可供操作者重新审阅。批次详情和 ACK 提示按机械臂保存，切换后不沿用上一臂记录，切回可恢复本次会话内原臂记录；重新配置建立新会话时清除旧臂缓存。旧查询的迟到结果不得覆盖新批次或其他机械臂。后端模拟也保存批次并逐轴观测模拟 RUN/到位/空闲，明确标记模拟来源，不连接设备。
+
+批次响应新增 `simulated/execution_mode/safety_mode/connection`，连接快照含 `mode/safety_mode/url/revision`。内部复用现有 `request_json` 的 `_execution` 元数据保存，不增加批次表列。模拟目标锁使用 `mock:SEG:arm`，真实目标锁保留 `SEG:arm`，防止模拟解除影响真实记录。请求可带 `connection_revision`，与模块确认返回版本不一致时返回 409，要求重新确认目标。
 
 ### 2.5 硬件控制与状态接口
 
@@ -196,6 +243,7 @@
 | 11 | `/control/hardware/realtime` | GET | 是 | 子进程调用 `hardware_node.py` | 获取实时硬件状态 |
 | 12 | `/control/emergency_stop` | POST | 是 | 适配层急停发布 | 发送全局急停 |
 | 13 | `/control/emergency_stop/release` | POST | 是 | 适配层解除发布 | 发送急停解除 |
+| 13a | `/control/emergency_stop/status` | GET | 是 | MES 持久化联锁记录 | 刷新恢复操作提示，不代表设备实测 |
 
 **接口 10：串口连接测试**
 - 响应：`{"code":200, "message":"串口测试完成", "data":{"success":true, "connected":true, "message":"串口连接正常", "bytes_received":128}}`
@@ -213,15 +261,54 @@
 
 ---
 
-### 2.6 无图纸微调调试开关（2026-11-05）
+**前端急停/解除交互（2026-11-07）**：移除五秒自动恢复；急停期间中止批次后续下发，页面不把发送成功写成设备已停。全屏仅在操作者主动长按急停或点击“查看急停状态”时打开；历史记录、轮询、刷新或切换环境只更新持续提示，不自动打开全屏，也不自动发送急停或解除。全屏可随时“返回页面（保留急停状态）”，真实联锁继续保留，不因关闭遮罩而解除。
 
-入口为现有“个人中心 → 调试设置 → 跳过图纸绑定”，默认关闭。前端 Pinia 状态只在当前打开应用期间跨页共享；刷新、登录或退出登录后关闭。进入微调页时固定本次模式，设置影响下一次进入。
+解除按钮调用现有解除接口；失败保留待确认状态，已主动返回页面时不重新弹出全屏。真实发送成功显示“解除指令已发送，设备状态待确认”，不自动写成设备已解除；明确的模拟解除成功关闭遮罩并清除模拟联锁。新批次仍须通过后端实时空闲/无急停检查。急停与解除记录在后端控制联锁中，刷新页面不清空；解除急停不等于故障复位。
 
-开启后，模块选择及 `/module/` 机械臂确认保持不变；首次弹窗只选机械臂，不加载图纸列表，不调用 `/coordination/send` 或三视图接口，确认成功后允许三轴微调、反馈、多臂切换和配置保存。页面显示“调试模式 · 未绑定图纸”，本次会话禁用图纸及点云入口。关闭后正常流程继续要求图纸下发成功。
+状态查询返回 `data:{state,generation,simulated,connection_revision}`。`state` 为 `clear`（无联锁记录，或模拟解除成功）、`stop_requested`（请求急停）、`stop_sent`（急停已发送）、`stop_unknown`（发送结果不明）、`release_sent`（真实解除已发送，设备状态仍待确认）。`generation` 是 MES 联锁版本，变化会中止相应控制环境批次的后续下发；解除不会恢复旧批次。侧栏每秒查询；发送期间防重复点击，旧查询结果不得覆盖刚发起的操作。急停/解除响应也包含 `simulated`；只有明确的模拟解除成功才将遮罩直接关闭，真实模式仍保留待确认提示。
 
-调试配置通过现有 POST `/finetuning/config` 保存，`is_debug=true/drawing_id=null`；正常配置为 `is_debug=false/drawing_id=<实际图纸编号>`。当前前端使用所选臂真实登记的压力传感器业务号，恢复缓存时同步恢复该编号，真实通信模式下缺少压力传感器会提示补齐，不用模块设备号代替。保存、确认及微调请求期间禁止切换机械臂或重复操作。
+### 2.6 页面调试连接配置（2026-11-07）
 
-此功能不修改 `VITE_DEBUG_NO_ROS`。新开关仍走当前真实通信和保存 API；已有无 ROS 环境模拟功能独立保留，并提示模拟保存未写数据库。调试功能的变更及既有验证记录统一见[改动记录](ROS_MES_前后端改动记录.md)。
+图纸处理合并为 `drawing_mode=skip/mock/real` 三选，不再叠加独立跳过开关；mock 可使用后端内置示例，空正式图纸表也能测试。历史急停记录通过持续提示呈现，轮询/刷新/切换环境不主动打开全屏、不发送控制；真实联锁继续保留。完整自测结果见最新改动记录。
+
+在现有“个人中心 → 调试设置”中逐项手动选择：ROS 通信/微调为模拟或真实，图纸处理为不使用图纸、模拟下发或真实下发，急停及解除为模拟或真实。真实模式填写 ROS WebSocket 地址、图纸 ROS 地址、三视图 HTTP 地址及急停 ROS 地址，默认共用 ROS 地址，可分别配置。选择后自动应用，地址在回车或移出输入框后应用；不添加全部模拟/全部真实、测试连接、保存并应用按钮。
+
+模拟在后端适配层执行，前端继续使用真实业务 API、数据库、批次和反馈流，不再由 `VITE_DEBUG_NO_ROS` 截走业务请求。模拟急停/解除返回明确的模拟成功，解除后关闭遮罩；真实发送成功仍不是设备状态确认，不自动降级模拟。真实微调或图纸下发要求真实急停，急停与解除始终共用模式和目标。
+
+连接配置由后端统一维护，页面刷新后重新读取；编辑后自动保存。执行中或待核实批次存在时拒绝切换；一个动作/批次固定使用启动时的配置，不在执行中换地址。模拟批次/遥测带来源标记，模拟和真实的控制联锁、目标锁分开保存；模拟解除不能清除真实急停记录。急停遮罩提供进入同一调试配置面板的入口，以便在无 ROS 环境切到模拟，无需发送真实解除来打开设置。
+
+新增登录接口 GET/PATCH `/control/debug-settings`；PATCH 带配置版本防止覆盖其他窗口修改，成功返回当前完整配置与版本。ROS/固件消息保持原样；本侧只增加配置、路由和模拟实现。模拟数据不能作为真机验收证据。
+
+GET 返回 `{"code":200,"message":"...","data":{...}}`；PATCH 请求为 `{"expected_revision":0,"changes":{"ros_mode":"mock"}}`，仅发送本次改动，返回已接受的完整配置。版本冲突、进行中或待核实批次、正在处理的下发/急停操作返回 409；非法地址、未知配置字段或真实下发搭配模拟急停返回 422，失败后继续使用原配置。页面失败时重新读取当前服务配置，不自动重试覆盖。
+
+| 配置字段 | 含义及默认值 |
+|---|---|
+| `revision` | 后端配置版本，更新成功递增；前端用 `expected_revision` 防止覆盖其他窗口 |
+| `ros_mode` | `real/mock`，控制模块确认、微调及反馈来源；首次无保存配置时为 real |
+| `drawing_mode` | `skip` 不使用图纸、`mock` 模拟下发、`real` 真实下发；首次为 real |
+| `emergency_mode` | 急停与解除共同使用的 `real/mock`，首次为 real；任一真实运动/图纸下发要求此项 real |
+| `ros_url` | ROS WebSocket 地址，首次继承 `ROSBRIDGE_URL` |
+| `drawing_ros_url` | 图纸 ROS WebSocket 地址，留空继承 `ros_url` |
+| `emergency_ros_url` | 急停/解除 ROS WebSocket 地址，留空继承 `ros_url` |
+| `pointcloud_url` | 三视图 HTTP 服务地址，首次继承 `POINTCLOUD_VIEW_BASE_URL`，默认 `http://localhost:5000` |
+
+地址允许 ws/wss（ROS）或 http/https（三视图），拒绝嵌入账号密码、查询串、片段及非法端口。配置是当前后端服务共用的，不仅属于某个浏览器窗口；仍限定单 worker。模拟位置在进程内维护，重启不恢复旧模拟动作，持久化批次继续按待核实处理。
+
+模块确认按当前配置确认所有实际使用的真实入口；图纸和微调使用不同真实 ROS 地址时，两处都要确认成功。修改连接后，微调页旧确认和反馈缓存失效，需要重新确认机械臂。图纸请求也可带 `connection_revision`，返回的三视图 URL 带版本，配置变化后旧版本视图返回 409，防止读到其他环境的图片。图纸模拟返回明确的模拟预览 SVG，不请求真实点云服务。
+
+ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚本，返回带 `simulated` 的模拟结果；ROS 测试通道也不发布真实消息。模拟遥测和批次均带来源标记，当前模拟覆盖轴状态/位置、到位及压力，未生成的 IMU 分量仍显示等待，不冒充真实测量。
+
+### 2.7 不使用图纸与内置模拟图纸（2026-11-07）
+
+入口为现有“个人中心 → 调试设置 → 图纸处理方式”。原独立“跳过图纸绑定”开关已合并为“不使用图纸”（`drawing_mode=skip`），和模拟下发、真实下发互斥。设置存于后端，对当前服务共享，刷新后重新读取，不再由前端临时开关控制；连接更改后旧微调会话失效，须重新配置和确认机械臂。
+
+选择“不使用图纸”后，模块选择及 `/module/` 机械臂确认保持不变；首次弹窗只选机械臂，不加载图纸列表，不调用 `/coordination/send` 或三视图接口，确认成功后允许三轴微调、反馈、多臂切换和配置保存。页面显示“调试模式 · 未绑定图纸”，本次会话禁用图纸及点云入口。
+
+微调选择图纸时使用 GET `/drawing/?for_tuning=true`。正式图纸附加 `drawingSource="database"`；仅在 mock 模式，列表首项为 `drawingId=null/drawingSource="builtin_mock"/simulated=true` 的“内置模拟图纸（无需导入）”。此项是后端提供的选择描述，不写入正式图纸表；普通图纸管理 GET `/drawing/` 仍只列正式记录，空库仍显示零条。真实模式不提供内置示例，空库提示先导入图纸。
+
+三种配置通过现有 POST `/finetuning/config` 保存：不使用图纸为 `is_debug=true/drawing_source="database"/drawing_id=null`；内置模拟图纸为 `is_debug=false/drawing_source="builtin_mock"/drawing_id=null`；正式图纸为 `is_debug=false/drawing_source="database"/drawing_id=<实际图纸编号>`。页面带 `connection_revision` 核验会话版本。当前前端使用所选臂真实登记的压力传感器业务号，恢复缓存时同步恢复该编号；缺少登记的压力传感器会提示补齐，不用模块设备号代替。保存、确认及微调请求期间禁止切换机械臂或重复操作。
+
+不使用图纸不改变通信模式。通信来源由上方 ROS 连接配置决定，业务 API 和配置保存统一经过后端；历史 `VITE_DEBUG_NO_ROS` 编译开关不再截走请求。调试功能的变更及既有验证记录统一见[改动记录](ROS_MES_前后端改动记录.md)。
 
 保存配置的 `feedback_state` 记录每个实测字段的 `status` 和 `age_ms`。无有效样本的 `initial/current` 以及 IMU x/y/z 使用 null；历史或过期值可以保留，但必须连同其状态保存，不能当作刚收到的实测数据。新元数据进入已有 `config_json`，不改表结构；旧客户端省略字段仍兼容。
 
@@ -229,7 +316,7 @@
 
 ### 3.1 微调反馈 `/api/control/feedback/ws`
 
-免认证，服务器向前端单向推送 JSON。后端 `control.py` 调用 `app/ros/rosbridge.py`，订阅 `profile.py` 定义的 8 类对外反馈；具体 ROS 类型、编号和话题契约引用共享清单，逐项接入与验证状态见[对接状态清单](后端与ROS接口对接状态清单.md)。
+免认证，服务器向前端单向推送 JSON。后端 `control.py` 调用 `app/ros/rosbridge.py`，订阅 `profile.py` 定义的 13 类对外反馈；具体 ROS 类型、编号和话题契约引用共享清单，逐项接入与验证状态见[对接状态清单](后端与ROS接口对接状态清单.md)。批次管理器另开独立订阅连接，页面断开不触发重新下发。
 
 | 字段 | 类型/语义 |
 |---|---|
@@ -240,6 +327,7 @@
 | `position` | 有效有限数值，或 null；不把缺失、空数组、非法数据补成零 |
 | `position_valid`、`valid_fields` | 有效位置标志及有效字段名列表，IMU 分量独立校验 |
 | `data_type`、`feedback_type` | 本侧分类与中文标签 |
+| `simulated`、`connection_revision` | 反馈来源是否为后端模拟，以及产生该反馈的服务连接配置版本；模拟数据不作实测证明 |
 | `module_id_space` | 已知普通遥测为 `seg`，压力均值为 `business`，混合回执为 `mixed`，未知来源为 `unknown` |
 
 前端实际值只由归属明确且有效的样本更新；HTTP 请求回显及占位压力不能覆盖实测值。普通轴、瞬时压力和 IMU 按本次模块确认返回的 `seg`、当前机械臂轴号/臂级编号核验，不按轴号单独匹配，也不把所有话题一律当作 SEG。
@@ -250,7 +338,9 @@
 | `pressure_sensor` | 瞬时压力，独立于轴的接收状态 |
 | `imu_pose` | `swing_angle/rotation_angle/x/y/z`，每个分量独立更新 |
 | `cmd_ack` | 回执事件提示，见下文 |
-| `pressure_average`、`vacuum_loss_event` | 后端已转发；本次不顺便扩展前端业务，见状态清单 |
+| `axis_status`、`arrive_notification` | 后端批次消费者核验运行/目标到位/空闲；前端通过批次查询显示执行状态，不把事件字段当实测位置 |
+| `stop_notification`、`axis_fault`、`limit_event`、`vacuum_loss_event` | 后端批次消费者遇到所属臂异常时停止后续下发；前端通过批次结果显示，独立告警页未扩展 |
+| `pressure_average` | 已转发，前端未展示；ROS 均值采样归属仍待核实 |
 | `error` | 连接异常信息；不能继续将旧数值显示为实时 |
 
 **逐项状态**：每个轴、压力和每个 IMU 分量分别记录浏览器单调时钟 `performance.now()` 的有效样本接收时间。尚无样本显示等待；新有效样本显示实时；恢复缓存显示历史直到新样本；超时或连接断开显示过期。旧数值可以保留用于比较，但不能冒充实时，真正的零值仍是有效数值。
@@ -264,6 +354,8 @@
 收到接受回执也不表示运动完成。`ack_msg` 不同可能对应回零等其他命令，不能把任意 `result=3` 都称为“本次微调超限”。未收到回执不推断成功/失败，不无限等待或自动重发增量指令。
 
 回执事件列表最多保留 20 条，只在当前页面会话内存在，不是持久化日志或完整指令追踪。
+
+新增五类轴事件保留 `raw/header`，按 SEG 归属；整数事件字段缺失/非法时为 null，`position=null/position_valid=false`，不得伪造位置。字段分别为轴状态 `status_bits/axis_state/base_valid`、到位 `angle/pos_error/status_bits/flags`、停止 `stop_reason/output_level`、故障 `fault_bits/local_action/detail/duration_ms`、限位 `limit_type/output_level`；失压补充 `pressure_raw/loss_threshold`。批次消费者对可能属于当前臂的拒绝回执保守中止，但不以接受 ACK 推进，不能据此声称已建立设备逐请求追踪。
 
 ### 3.2 大屏 `/api/ws/ws/robot_status`
 
@@ -333,7 +425,7 @@
 
 - **GET `/api/dashboard/stats`**（免认证）→ 7 项 `{label, value, unit, trend}`：`deviceStatus, taskCount, faultCount, onlineUsers, responseTime, concurrency, deviceConnections`
 - **图纸 `/drawing`（登录）**：`drawing_to_dict` = `drawingId, drawingName, drawingDescription, drawingFile, creatorId, createTime, modifyTime, latestVersionId, delFlag, notes`
-  - GET `/`（query `keyword?`）、GET `/{id}`、GET `/{id}/versions`、GET `/{id}/file` → `{content(前10000字符), fullLength, truncated}`
+  - GET `/`（query `keyword?`, `for_tuning=false`；微调可传 true 获取带来源标记及 mock 内置示例的选择列表，详见 §2.7）、GET `/{id}`、GET `/{id}/versions`、GET `/{id}/file` → `{content(前10000字符), fullLength, truncated}`
   - POST `/import`（FormData：`drawing_name`✔, `drawing_description`, `drawing_id?`(有则追加新版本), `file`(.json)✔）
   - PUT `/{id}`（FormData：`drawing_name?`, `drawing_description?`, `notes?`）、DELETE `/{id}`（软删除）
 - **工作 `/work`（登录，⚠ 参数走 query string）**：`work_to_dict` = `Work_ID, Workname, WorkDescript, Drawing_ID, Module_ID, Device_id(=Module_ID), unit_id, sensor_id, data, creater_id, Createtime, Modifytime, del_flag, Notes`
@@ -378,12 +470,17 @@
 
 ## 10. 数据库表字段（基准补充）
 
-SQLite（`ros_database.db`，项目根），17 张表，模型在 `app/db/models.py`，建库种子脚本为仓库根的 `sqlite_create.py`。时间字段 `DateTime(timezone=True)` 默认 `now()`；普遍带软删除 `del_flag` 与 `Notes`。
+SQLite（`ros_database.db`，项目根），当前模型 20 张表，模型在 `app/db/models.py`，历史建库种子脚本为仓库根的 `sqlite_create.py`。时间字段 `DateTime(timezone=True)` 默认 `now()`；业务表普遍带软删除 `del_flag` 与 `Notes`。
+
+2026-11-06 新增 `fine_tuning_batches`、`control_safety` 及页面配置表 `ros_debug_settings`。后端启动时已有的 `create_all` 会仅创建缺失表，无需重建/清空现有库，**不要为本次升级运行根种子脚本**。批次执行及恢复按单后端工作进程设计，当前不支持多 worker/多实例同时控制；重启后未完成批次转待核实并保留锁，不恢复动作。连接快照复用 JSON，不对已有业务表追加列。
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
 | `Users` | User_ID(PK), Username, Password(bcrypt), Type_ID(1=管理员/2=操作员), Creator_ID(自引用FK), Createtime, Islock, Locktime, Name, Headimage, Birthday, Sex, Modifytime, del_flag, Notes | 用户 |
 | `fine_tuning` | id(PK), module_id+unit_id(联合FK→Unit), module_address?, module_descript?, parameter_name(rotation/swing/telescopic), old_value?, new_value, creater_id→Users, create_time, notes, del_flag | 微调记录 |
+| `fine_tuning_batches` | id(UUID PK), request_id(Unique), target_key(可空 Unique，真实 SEG:arm / 模拟 mock:SEG:arm), module_id, unit_id, seg, creator_id, request_json, progress_json, status, message, cancel_requested, created_at, updated_at | 幂等请求、逐轴进度与目标锁；完成/人工关闭后 target_key 置空 |
+| `control_safety` | id(PK，1=真实、2=模拟), state, generation | MES 急停/解除发送状态及联锁版本，不是设备状态表；两种环境互不清除 |
+| `ros_debug_settings` | id(PK，单例 1), revision, config_json | 当前服务连接模式和地址，逐项自动保存 |
 | `fine_tuning_config` | id(PK), module_id, unit_id, sensor_id(联合FK), config_json(整份JSON), creater_id, ... | 微调配置快照 |
 | `Drawings` | Drawing_ID(PK), Drawingname, Drawingdescripte, Drawingfile(路径), Creator_ID→Users, Createtime, Modifytime, NewVersion_ID→DrawingsVersion, del_flag | 图纸 |
 | `DrawingsVersion` | DrawingsVersion_ID(PK), Drawing_ID→Drawings, Drawingfile, Creator_ID, Modify_ID, ... | 图纸版本 |
@@ -409,7 +506,7 @@ SQLite（`ros_database.db`，项目根），17 张表，模型在 `app/db/models
 | 级别 | 接口 |
 |---|---|
 | 免认证 | `POST /login`、`POST /register`、`GET /dashboard/stats`、`/finetuning/**`、`POST /module/`、`POST /control/finetuning`、WS `/control/feedback/ws`、`/coordination/**`、`/ros/**`、`/model/**`、`/device/**`、`/unit/**`、`/sensors/**`、`GET /api/uploads/**` |
-| 登录即可 | `/user/me`、`GET /user/`、`POST /user/password`、`POST /user/avatar`、`PUT /user/profile/me`、`/drawing/**`、`/work/**`、`/workflow/**`、`/task/**`、`GET /control/serial_test`、`GET /control/hardware/realtime`、`POST /control/emergency_stop`、`POST /control/emergency_stop/release` |
+| 登录即可 | `/user/me`、`GET /user/`、`POST /user/password`、`POST /user/avatar`、`PUT /user/profile/me`、`/drawing/**`、`/work/**`、`/workflow/**`、`/task/**`、`/control/finetuning/batches/**`（含集合创建）、`GET/PATCH /control/debug-settings`、`GET /control/serial_test`、`GET /control/hardware/realtime`、`POST /control/emergency_stop`、`POST /control/emergency_stop/release`、`GET /control/emergency_stop/status` |
 | 管理员（`Type_ID==1`） | `POST /user/`、`PUT /user/{id}`、`DELETE /user/{id}`、`lock`、`unlock`、`role`、`POST /user/import`、`GET /user/export` |
 
 认证机制：OAuth2 Bearer Token（`tokenUrl=/api/login`）+ JWT（HS256，payload `{sub, exp}`），bcrypt 密码哈希；WS 用 query `token` 校验。

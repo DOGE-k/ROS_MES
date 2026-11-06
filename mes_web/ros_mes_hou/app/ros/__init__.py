@@ -17,6 +17,10 @@ _dispatcher = None
 def get_ros_dispatcher():
     """返回当前 ROS_VERSION 对应的调度器单例（懒加载，避免循环导入）。"""
     global _dispatcher
+    from app.ros.runtime_settings import runtime_settings
+    if _dispatcher is not None and _dispatcher.revision != runtime_settings.snapshot()["revision"]:
+        _dispatcher.stop()
+        _dispatcher = None
     if _dispatcher is None:
         name = get_active_profile().name
         if name == "ros1":
@@ -31,4 +35,6 @@ def get_ros_dispatcher():
 def reset_ros_dispatcher() -> None:
     """清空调度器缓存（测试切换 ROS_VERSION 后调用）。"""
     global _dispatcher
+    if _dispatcher is not None:
+        _dispatcher.stop()
     _dispatcher = None

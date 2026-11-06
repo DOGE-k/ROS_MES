@@ -49,6 +49,42 @@ class FineTuning(Base):
     )
 
 
+class FineTuningBatch(Base):
+    __tablename__ = "fine_tuning_batches"
+
+    id = Column(String(36), primary_key=True)
+    request_id = Column(String(80), nullable=False, unique=True)
+    # 未完成/待核实批次保留唯一目标锁；终结后置空，SQLite 允许多个 NULL。
+    target_key = Column(String(80), nullable=True, unique=True)
+    module_id = Column(Integer, nullable=False)
+    unit_id = Column(Integer, nullable=False)
+    seg = Column(Integer, nullable=False)
+    creator_id = Column(Integer, nullable=False)
+    request_json = Column(Text, nullable=False)
+    progress_json = Column(Text, nullable=False)
+    status = Column(String(30), nullable=False)
+    message = Column(Text, nullable=False)
+    cancel_requested = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ControlSafety(Base):
+    __tablename__ = "control_safety"
+
+    id = Column(Integer, primary_key=True)
+    state = Column(String(30), nullable=False, default="clear")
+    generation = Column(Integer, nullable=False, default=0)
+
+
+class RosDebugSettings(Base):
+    __tablename__ = "ros_debug_settings"
+
+    id = Column(Integer, primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
+    config_json = Column(Text, nullable=False)
+
+
 class FineTuningConfig(Base):
     __tablename__ = "fine_tuning_config"
 

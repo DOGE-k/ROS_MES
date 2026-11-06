@@ -98,19 +98,22 @@ const handleTestSerial = async () => {
   try {
     const res = await testSerialConnection()
     const data = res.data
-    if (data.success && data.data?.connected) {
+    const detail = data.data || data
+    if (data.simulated) {
+      ElMessage.info(data.message || '模拟串口检查成功，未访问真实串口')
+    } else if (data.success && detail.connected) {
       ElMessage.success({
-        message: data.data?.message || '串口连接测试成功',
+        message: detail.message || '串口连接测试成功',
         duration: 4000,
       })
     } else if (data.success) {
       ElMessage.warning({
-        message: data.data?.message || '串口物理连接正常，未收到下位机响应',
+        message: detail.message || '串口物理连接正常，未收到下位机响应',
         duration: 5000,
       })
     } else {
       ElMessage.error({
-        message: data.data?.message || '串口连接测试失败',
+        message: detail.message || '串口连接测试失败',
         duration: 5000,
       })
     }

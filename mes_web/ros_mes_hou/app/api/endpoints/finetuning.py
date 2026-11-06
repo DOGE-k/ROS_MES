@@ -2,7 +2,7 @@
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 
 from app.crud import finetuning as crud
@@ -72,6 +72,12 @@ def save_config(
     保存机械臂当前配置快照：
     存 SQLite
     """
+    from app.ros.runtime_settings import runtime_settings
+    connection = runtime_settings.snapshot()
+    if config.connection_revision is not None and config.connection_revision != connection["revision"]:
+        raise HTTPException(409, "连接设置已变更，请重新确认后保存")
+    if config.drawing_source == "builtin_mock" and connection["drawing_mode"] != "mock":
+        raise HTTPException(422, "内置模拟图纸不能作为真实图纸保存")
     db_config = crud.save_fine_tuning_config(
         db=db,
         config=config,

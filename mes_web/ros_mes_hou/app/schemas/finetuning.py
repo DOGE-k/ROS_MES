@@ -1,6 +1,6 @@
 # app/schemas/finetuning.py
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -55,6 +55,30 @@ class FineTuningPoint(BaseModel):
     parameter_name: Optional[str] = None
 
 
+class BatchAdjustment(BaseModel):
+    parameter_name: Literal["rotation", "swing", "telescopic"]
+    position: float = Field(ge=-360, le=360, allow_inf_nan=False)
+
+
+class FineTuningBatchCreate(BaseModel):
+    request_id: str = Field(min_length=8, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    module_id: int = Field(gt=0)
+    unit_id: int = Field(gt=0)
+    connection_revision: Optional[int] = Field(default=None, ge=0)
+    adjustments: List[BatchAdjustment] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_adjustments(self):
+        names = [item.parameter_name for item in self.adjustments]
+        if len(set(names)) != len(names) or any(item.position == 0 for item in self.adjustments):
+            raise ValueError("每轴仅允许一个非零增量")
+        return self
+
+
+class BatchAcknowledge(BaseModel):
+    operator_confirmed: Literal[True]
+
+
 class FineTuningApiResponse(BaseModel):
     code: int = 200
     message: str
@@ -80,6 +104,8 @@ class FineTuningConfigCreate(BaseModel):
     device_id: Optional[int] = None
     is_debug: bool = False
     drawing_id: Optional[int] = Field(default=None, gt=0)
+    drawing_source: Literal["database", "builtin_mock"] = "database"
+    connection_revision: Optional[int] = Field(default=None, ge=0)
     x: Optional[float] = 0
     y: Optional[float] = 0
     z: Optional[float] = 0
@@ -88,6 +114,8 @@ class FineTuningConfigCreate(BaseModel):
 
     @model_validator(mode="after")
     def normalize_sensor_id(self):
+        if self.drawing_source == "builtin_mock" and (self.is_debug or self.drawing_id is not None):
+            raise ValueError("builtin mock drawing must not bind a business drawing or skip drawing")
         if self.is_debug and self.drawing_id is not None:
             raise ValueError("debug fine-tuning config must not bind a drawing")
         if self.sensor_id is None and self.device_id is not None:

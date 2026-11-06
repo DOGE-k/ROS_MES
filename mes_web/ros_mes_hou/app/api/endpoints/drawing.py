@@ -69,6 +69,7 @@ def extract_json_summary(json_data: dict) -> str:
 @router.get("/")
 def list_drawings(
     keyword: str = None,
+    for_tuning: bool = False,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -81,10 +82,18 @@ def list_drawings(
             | models.Drawing.Notes.ilike(like_pattern)
         )
     drawings = query.order_by(models.Drawing.Drawing_ID.desc()).all()
+    data = [drawing_to_dict(d) for d in drawings]
+    if for_tuning:
+        from app.ros.runtime_settings import runtime_settings
+        data = [{**item, "drawingSource": "database"} for item in data]
+        if runtime_settings.snapshot()["drawing_mode"] == "mock":
+            data.insert(0, {"drawingId": None, "drawingName": "内置模拟图纸（无需导入）",
+                            "drawingDescription": "后端模拟示例，不是正式图纸记录", "drawingFile": "",
+                            "drawingSource": "builtin_mock", "simulated": True})
     return {
         "code": 200,
         "message": "获取图纸列表成功",
-        "data": [drawing_to_dict(d) for d in drawings],
+        "data": data,
     }
 
 

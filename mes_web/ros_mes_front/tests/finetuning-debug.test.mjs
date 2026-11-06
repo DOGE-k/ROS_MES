@@ -29,12 +29,14 @@ const encoding = evaluate(read('../src/api/deviceEncoding.ts'), {});
 const feedbackState = evaluate(read('../src/api/feedbackState.ts'), {});
 const { descriptor } = parse(read('../src/components/Main/ModulePage/FineTuningPage.vue'));
 const bindings = `Object.assign(module.exports, {
-  isDebugMode, isReady, busy, loading, initConfig, draftInitConfig, initDialogVisible,
+  isReady, busy, loading, initConfig, draftInitConfig, initDialogVisible,
   armList, armProfiles, armIdList, selectedArmRowId, imuFeedback, pointCloudViews,
-  confirmInitConfig, handleArmSwitch, handleSaveConfig, sendSingleAdjust,
+  confirmInitConfig, handleArmSwitch, handleSaveConfig, confirmAdjustments,
+  batchState, pollBatch, interruptBatch, acknowledgeBatch, openConfiguration, connectionChanged, resetControlState,
   applyFeedback, openDrawingDialog, togglePointCloudViews,
   confirmedSeg, feedbackMarks, feedbackClock, feedbackConnected, fieldStatus, displayFeedback, ackEvents,
-});`;
+});
+Object.defineProperty(module.exports, 'isDebugMode', { get: () => isDebugMode.value });`;
 
 function deferred() {
   let resolve, reject;
@@ -42,12 +44,21 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function batch(overrides = {}) {
+  return { id: 'batch-test', request_id: 'request-test', module_id: 17, unit_id: 32, seg: 0,
+    status: 'executing', target_locked: true, message: 'waiting', steps: [
+      { parameter_name: 'rotation', device_id: 1, position: 2, status: 'sent_unconfirmed' },
+      { parameter_name: 'swing', device_id: 2, position: 1, status: 'pending' },
+    ], ...overrides };
+}
+
 function setup(t, options = {}) {
   const container = options.container || pinia.createPinia();
   pinia.setActivePinia(container);
   const settings = debugModule.useDebugSettingsStore(container);
   if (options.debug !== undefined) settings.skipDrawingBinding = options.debug;
-  const calls = { drawings: 0, confirms: [], coordinates: [], saves: [], adjusts: [], events: [], sockets: [] };
+  const calls = { drawings: 0, confirms: [], coordinates: [], saves: [], adjusts: [], events: [], sockets: [], polls: 0, interrupts: 0, acknowledgements: 0 };
+  let latestBatch;
   const warnings = [], errors = [], navigations = [], mounted = [], unmounted = [];
   let now = 1000;
   const timers = new Map();
@@ -57,7 +68,7 @@ function setup(t, options = {}) {
     async getDrawingListApi() {
       calls.drawings++;
       if (options.failDrawings) throw new Error('drawing service unavailable');
-      return { data: options.noDrawings ? [] : [{ drawingId: 7, drawingName: 'drawing' }] };
+      return { data: options.noDrawings ? [] : options.drawings || [{ drawingId: 7, drawingName: 'drawing' }] };
     },
     async getSensorsByUnitApi(rowId) {
       return { data: options.noSensors ? [] : [{ id: 100 + rowId, sensor_ID: rowId * 32 + 17, Unit_address: 0 }] };
@@ -74,11 +85,18 @@ function setup(t, options = {}) {
       if (options.coordinate) return options.coordinate(payload);
       return { code: 200, views: { front: '/api/coordination/views/front' } };
     },
-    async sendFineTuning(payload) {
+    async submitFineTuningBatch(payload) {
       calls.adjusts.push(payload);
       if (options.adjust) return options.adjust(payload);
-      return { code: 200, data: [{ device_id: payload.device_id, parameter_name: payload.parameter_name, position: payload.position }, { type: 'pressure', position: 0 }] };
+      latestBatch = { ...payload, id: 'test-batch', seg: 0, status: 'completed', message: 'completed', target_locked: false,
+        simulated: Boolean(options.noRosDebug), steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed' })) };
+      return { code: 200, data: latestBatch };
     },
+    async getActiveFineTuningBatch(moduleId, unitId) { return { data: options.active ? options.active(moduleId, unitId) : null }; },
+    async getFineTuningBatch(id) { calls.polls++; return { data: options.poll ? await options.poll(id) : latestBatch }; },
+    async getFineTuningBatchByRequest(id) { calls.polls++; return { data: options.byRequest ? await options.byRequest(id) : latestBatch }; },
+    async interruptFineTuningBatch() { calls.interrupts++; return { data: { ...latestBatch, ...options.batch, status: 'uncertain', target_locked: true, message: 'stopped' } }; },
+    async acknowledgeFineTuningBatch() { calls.acknowledgements++; return { data: { ...latestBatch, ...options.batch, status: 'closed', target_locked: false, message: 'closed' } }; },
     async saveFineTuningConfig(payload) {
       calls.saves.push(payload);
       if (options.save) return options.save(payload);
@@ -95,9 +113,13 @@ function setup(t, options = {}) {
   const page = scope.run(() => evaluate(descriptor.scriptSetup.content, {
     vue: { ...vue, onMounted(callback) { mounted.push(callback); }, onBeforeUnmount(callback) { unmounted.push(callback); } },
     'vue-router': { useRoute: () => ({ query: { module_id: 17, device_id: 17, x: 1, y: 1 } }), useRouter: () => ({ push: target => navigations.push(target) }) },
-    'element-plus': { ElMessage: { success() {}, warning: text => warnings.push(text), error: text => errors.push(text) } },
+    'element-plus': { ElMessageBox: { confirm: async () => { if (options.cancelAcknowledge) throw new Error('cancel'); } }, ElMessage: { success() {}, warning: text => warnings.push(text), error: text => errors.push(text) } },
     '@element-plus/icons-vue': { ArrowLeft: {} },
-    '@/api/rosApi': api,
+    '@/api/rosApi': { ...api, async getFineTuningDrawingOptions() {
+      const result = await api.getDrawingListApi();
+      return { data: options.drawingMode === 'mock' ? [{ drawingId: null, drawingName: '内置模拟图纸', drawingSource: 'builtin_mock' }, ...result.data] : result.data };
+    } },
+    '@/api/connectionSettings': { async getConnectionSettings() { return { data: { revision: 0, drawing_mode: settings.skipDrawingBinding ? 'skip' : options.drawingMode || 'real' } }; } },
     '@/api/noRosDebug': { noRosDebug: Boolean(options.noRosDebug) },
     '@/api/deviceEncoding': encoding,
     '@/api/feedbackState': feedbackState,
@@ -120,6 +142,100 @@ async function enter(harness, arms = [1]) {
   harness.page.draftInitConfig.unitRowIds = arms;
   await harness.page.confirmInitConfig();
 }
+
+test('three inputs are drafts and one confirmation submits only changed axes in one batch', async t => {
+  assert.equal(/@change="sendSingleAdjust/.test(descriptor.template.content), false);
+  assert.match(descriptor.template.content, /@click="confirmAdjustments"/);
+  const h = setup(t, { debug: true });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  h.page.armList.device[2].adjust = 0.5;
+  assert.equal(h.calls.adjusts.length, 0);
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 1);
+  const request = h.calls.adjusts[0];
+  assert.equal(request.module_id, 17);
+  assert.equal(request.unit_id, 32);
+  assert.equal(request.adjustments.length, 2);
+  assert.equal(request.adjustments[0].parameter_name, 'rotation');
+  assert.equal(request.adjustments[1].parameter_name, 'telescopic');
+  assert.equal(h.page.armList.device[0].adjust, 0);
+});
+
+test('zero and nonfinite increments cannot create a batch', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  await h.page.confirmAdjustments();
+  h.page.armList.device[0].adjust = NaN;
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 0);
+});
+
+test('queued batch keeps target locked after HTTP success and polling does not resend', async t => {
+  const h = setup(t, { debug: true, adjust: async () => ({ data: batch() }), poll: async () => batch() });
+  await enter(h, [1, 2]);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.busy.value, true);
+  await h.page.confirmAdjustments();
+  await h.page.handleArmSwitch(2);
+  await h.page.pollBatch();
+  assert.equal(h.calls.adjusts.length, 1);
+  assert.equal(h.page.initConfig.unitId, 32);
+  assert.equal(h.page.armList.device[0].current, 0);
+});
+
+test('refresh restores an active batch without re-confirming hardware or dispatching drawings', async t => {
+  const h = setup(t, { debug: false, failDrawings: true, active: (_, unitId) => unitId === 32 ? batch() : null });
+  await h.mount();
+  assert.equal(h.page.batchState.value.id, 'batch-test');
+  assert.equal(h.page.busy.value, true);
+  assert.equal(h.calls.confirms.length, 0);
+  assert.equal(h.calls.coordinates.length, 0);
+  assert.equal(h.calls.drawings, 0);
+});
+
+test('lost submission response retains request identity and queries instead of retrying', async t => {
+  let submitted;
+  const h = setup(t, { debug: true, adjust: async payload => { submitted = payload; throw new Error('connection lost'); },
+    byRequest: id => batch({ request_id: id }) });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.busy.value, true);
+  await h.page.confirmAdjustments();
+  await h.page.pollBatch();
+  assert.equal(h.page.batchState.value.request_id, submitted.request_id);
+  assert.equal(h.calls.adjusts.length, 1);
+  assert.equal(h.calls.polls, 1);
+});
+
+test('a restored completed batch can load drawings and begin a new configuration session', async t => {
+  const h = setup(t, { debug: false, active: (_, unitId) => unitId === 32 ? batch() : null,
+    poll: async () => batch({ status: 'completed', target_locked: false }) });
+  await h.mount();
+  assert.equal(h.calls.drawings, 0);
+  await h.page.pollBatch();
+  await h.page.openConfiguration();
+  assert.equal(h.calls.drawings, 1);
+  assert.equal(h.page.initDialogVisible.value, true);
+  assert.equal(h.page.draftInitConfig.drawingId, 7);
+  assert.equal(h.calls.adjusts.length, 0);
+});
+
+test('manual resolution clears sent uncertain values but retains unsent draft increments', async t => {
+  const result = batch({ status: 'uncertain', steps: [
+    { parameter_name: 'rotation', device_id: 1, position: 2, status: 'uncertain' },
+    { parameter_name: 'swing', device_id: 2, position: 1, status: 'pending' },
+  ] });
+  const h = setup(t, { debug: true, active: (_, unitId) => unitId === 32 ? result : null, batch: result });
+  await h.mount();
+  await h.page.acknowledgeBatch();
+  assert.equal(h.page.busy.value, false);
+  assert.equal(h.page.armList.device[0].adjust, 0);
+  assert.equal(h.page.armList.device[1].adjust, 1);
+  assert.equal(h.calls.adjusts.length, 0);
+});
 
 test('settings are shared across pages, default off after reload, and reset on login/logout', () => {
   const container = pinia.createPinia();
@@ -174,7 +290,7 @@ test('confirmation failure leaves the dialog open and prevents movement and savi
   await enter(h);
   assert.equal(h.page.isReady.value, false);
   assert.equal(h.page.initDialogVisible.value, true);
-  await h.page.sendSingleAdjust(0);
+  await h.page.confirmAdjustments();
   await h.page.handleSaveConfig();
   assert.equal(h.calls.adjusts.length, 0);
   assert.equal(h.calls.saves.length, 0);
@@ -259,7 +375,7 @@ test('saving blocks duplicate submissions, axis requests and target switching un
   const first = h.page.handleSaveConfig();
   await h.page.handleSaveConfig();
   await h.page.handleArmSwitch(2);
-  await h.page.sendSingleAdjust(0);
+  await h.page.confirmAdjustments();
   assert.equal(h.calls.saves.length, 1);
   assert.equal(h.calls.adjusts.length, 0);
   assert.equal(h.page.initConfig.unitId, 32);
@@ -275,12 +391,13 @@ test('command echoes cannot overwrite actual feedback and motion requests preven
   await enter(h, [1, 2]);
   h.page.applyFeedback({ module_id: 0, data_type: 'rotation_axis_encoder', device_id: 1, position: 12 });
   h.page.armList.device[0].adjust = 2;
-  const first = h.page.sendSingleAdjust(0);
-  await h.page.sendSingleAdjust(0);
+  const first = h.page.confirmAdjustments();
+  await h.page.confirmAdjustments();
   await h.page.handleArmSwitch(2);
   assert.equal(h.calls.adjusts.length, 1);
   assert.equal(h.page.initConfig.unitId, 32);
-  pending.resolve({ code: 200, data: [{ device_id: 1, parameter_name: 'rotation', position: 2 }] });
+  pending.resolve({ code: 200, data: { id: 'test-batch', request_id: h.calls.adjusts[0].request_id, module_id: 17, unit_id: 32,
+    seg: 0, status: 'completed', target_locked: false, steps: [{ device_id: 1, parameter_name: 'rotation', position: 2, status: 'completed' }] } });
   await first;
   assert.equal(h.page.armList.device[0].current, 12);
   assert.equal(h.page.armList.device[0].initial, 12);
@@ -300,8 +417,8 @@ test('a missing registered pressure sensor prevents saving with a fabricated sen
 test('the current mode is fixed on entry and changed settings apply to the next entry', async t => {
   const container = pinia.createPinia();
   const h = setup(t, { container, debug: true });
-  h.settings.skipDrawingBinding = false;
   await enter(h);
+  h.settings.skipDrawingBinding = false;
   assert.equal(h.page.isDebugMode, true);
   assert.equal(h.calls.drawings, 0);
   const next = setup(t, { container });
@@ -447,6 +564,33 @@ test('ACK events show acceptance/rejection without changing measurements or retr
   assert.equal(h.page.isReady.value, true);
 });
 
+test('ACK history belongs to its arm and a new initial configuration clears all previous arm ACKs', async t => {
+  const h = setup(t, { debug: true }); await enter(h, [1, 2]);
+  const ack = { data_type: 'cmd_ack', module_id: 0, device_id: 1, ack_msg: 1, result: 0, detail: 0,
+    module_resolution: 'resolved', business_module_id: 17 };
+  h.page.applyFeedback(ack);
+  const firstArmText = h.page.ackEvents.value[0].text;
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.ackEvents.value.length, 0);
+  h.page.applyFeedback({ ...ack, device_id: 4, result: 1 });
+  const secondArmText = h.page.ackEvents.value[0].text;
+  assert.match(secondArmText, /轴 4.*轴忙/);
+  await h.page.handleArmSwitch(1);
+  assert.equal(h.page.ackEvents.value.length, 1);
+  assert.equal(h.page.ackEvents.value[0].text, firstArmText);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.ackEvents.value.length, 1);
+  assert.equal(h.page.ackEvents.value[0].text, secondArmText);
+  await h.page.openConfiguration();
+  h.page.draftInitConfig.unitRowIds = [1, 2];
+  await h.page.confirmInitConfig();
+  assert.equal(h.page.initConfig.unitId, 32);
+  assert.equal(h.page.ackEvents.value.length, 0);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.ackEvents.value.length, 0);
+  assert.equal(h.calls.adjusts.length, 0);
+});
+
 test('foreign ACKs are isolated while ambiguous or legacy ACKs stay explicitly unattributed', async t => {
   const h = setup(t, { debug: true });
   await enter(h);
@@ -470,4 +614,202 @@ test('freshness policy overrides are validated and simulation is always explicit
   h.advance(99999);
   assert.equal(h.page.fieldStatus('rotation'), 'simulated');
   assert.equal(h.page.fieldStatus('pressure'), 'simulated');
+});
+
+
+test('backend simulated batches keep polling rather than using frontend-only completion', async t => {
+  const h = setup(t, { debug: true, adjust: async () => ({ data: batch({ simulated: true }) }),
+    poll: async () => batch({ simulated: true, status: 'completed', target_locked: false }) });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  await h.page.pollBatch();
+  assert.equal(h.calls.polls, 1);
+  assert.equal(h.page.busy.value, false);
+});
+
+test('backend mock telemetry is displayed as simulated and cannot be confused with real feedback', async t => {
+  const h = setup(t, { debug: true }); await enter(h);
+  h.page.applyFeedback({ data_type: 'rotation_axis_encoder', module_id: 0, module_id_space: 'seg', device_id: 1,
+    position: 2, position_valid: true, simulated: true });
+  assert.equal(h.page.fieldStatus('rotation'), 'simulated');
+});
+
+test('changing connections invalidates the old arm session and sends no movement', async t => {
+  const h = setup(t, { debug: true }); await enter(h);
+  assert.equal(h.page.isReady.value, true);
+  h.page.connectionChanged();
+  assert.equal(h.page.isReady.value, false);
+  assert.equal(h.page.confirmedSeg.value, null);
+  assert.equal(h.calls.adjusts.length, 0);
+});
+
+
+test('empty business drawing library can use the backend builtin mock option and save without inventing a drawing ID', async t => {
+  const h = setup(t, { drawingMode: 'mock', noDrawings: true }); await enter(h);
+  assert.equal(h.page.isReady.value, true);
+  assert.equal(h.calls.coordinates[0].drawing_id, null);
+  assert.equal(h.calls.coordinates[0].drawing_source, 'builtin_mock');
+  assert.equal(h.navigations.length, 0);
+  await h.page.handleSaveConfig();
+  assert.equal(h.calls.saves[0].drawing_id, null);
+  assert.equal(h.calls.saves[0].drawing_source, 'builtin_mock');
+  assert.equal(h.calls.saves[0].is_debug, false);
+});
+
+test('redraw cancellation and arm switching preserve builtin drawing source', async t => {
+  const h = setup(t, { drawingMode: 'mock', noDrawings: true }); await enter(h, [1, 2]);
+  h.page.selectedArmRowId.value = 2; await h.page.handleArmSwitch(2);
+  assert.equal(h.page.initConfig.drawingSource, 'builtin_mock');
+  assert.equal(h.page.isReady.value, true);
+  h.page.openDrawingDialog();
+  assert.equal(h.page.initDialogVisible.value, true);
+});
+
+test('switching arms displays only that arm batch and restores each completed record on return', async t => {
+  const h = setup(t, { debug: true, adjust: async payload => ({ data: batch({
+    ...payload, id: `completed-${payload.unit_id}`, status: 'completed', target_locked: false,
+    message: `completed arm ${payload.unit_id}`,
+    steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed' })),
+  }) }) });
+  await enter(h, [1, 2]);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.batchState.value.unit_id, 32);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.batchState.value, null);
+  h.page.armList.device[1].adjust = 3;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.batchState.value.unit_id, 64);
+  await h.page.handleArmSwitch(1);
+  assert.equal(h.page.batchState.value.id, 'completed-32');
+  assert.equal(h.page.batchState.value.steps[0].parameter_name, 'rotation');
+  assert.equal(h.page.batchState.value.steps[0].position, 2);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.batchState.value.id, 'completed-64');
+  assert.equal(h.page.batchState.value.steps[0].parameter_name, 'swing');
+  assert.equal(h.page.batchState.value.steps[0].position, 3);
+  assert.equal(h.calls.adjusts.length, 2);
+});
+
+test('switching to an already configured arm with no batch clears the previous arm record', async t => {
+  const h = setup(t, { debug: true }); await enter(h, [1, 2]);
+  await h.page.handleArmSwitch(2);
+  await h.page.handleArmSwitch(1);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.batchState.value.unit_id, 32);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.batchState.value, null);
+  assert.equal(h.page.busy.value, false);
+  await h.page.handleArmSwitch(1);
+  assert.equal(h.page.batchState.value.unit_id, 32);
+  assert.equal(h.calls.adjusts.length, 1);
+});
+
+test('a new initial configuration clears prior arm profiles and shares its newly dispatched drawing', async t => {
+  let session = 1;
+  const h = setup(t, { drawings: [{ drawingId: 7, drawingName: 'first drawing' }, { drawingId: 9, drawingName: 'new drawing' }],
+    coordinate: async payload => ({ code: 200, views: {
+    front: `/session-${session}/drawing-${payload.drawing_id}/front`,
+  } }) });
+  await enter(h, [1, 2]);
+  await h.page.handleArmSwitch(2);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.batchState.value.unit_id, 64);
+  assert.equal(h.page.armProfiles['2'].drawingId, 7);
+  await h.page.handleArmSwitch(1);
+
+  session = 2;
+  await h.page.openConfiguration();
+  h.page.draftInitConfig.unitRowIds = [1, 2];
+  h.page.draftInitConfig.drawingId = 9;
+  await h.page.confirmInitConfig();
+  assert.equal(h.page.isReady.value, true);
+  assert.equal(h.page.initConfig.drawingId, 9);
+  assert.equal(h.page.batchState.value, null);
+  assert.equal(h.calls.coordinates.length, 4);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.initConfig.unitId, 64);
+  assert.equal(h.page.initConfig.drawingId, 9);
+  assert.equal(h.page.armProfiles['2'].drawingId, 9);
+  assert.equal(h.page.batchState.value, null);
+  assert.match(h.page.pointCloudViews.value[0].url, /session-2\/drawing-9\/front/);
+  assert.equal(h.page.armList.device[0].current, 0);
+  assert.equal(h.page.armList.device[0].adjust, 0);
+  assert.equal(h.calls.adjusts.length, 1);
+});
+
+for (const target of ['same arm', 'another arm']) {
+  for (const outcome of ['success', 'empty', 'error']) {
+    test(`a late ${outcome} query cannot overwrite a new batch on ${target}`, async t => {
+      const pending = deferred();
+      let submissions = 0;
+      const h = setup(t, { debug: true, poll: () => pending.promise, adjust: async payload => {
+        submissions++;
+        return { data: batch({
+          ...payload, id: `batch-${submissions}`, status: submissions === 1 ? 'completed' : 'executing',
+          target_locked: submissions !== 1, message: `batch ${submissions}`,
+          steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: submissions === 1 ? 'completed' : 'pending' })),
+        }) };
+      } });
+      await enter(h, [1, 2]);
+      h.page.armList.device[0].adjust = 2;
+      await h.page.confirmAdjustments();
+      const previous = h.page.batchState.value;
+      const polling = h.page.pollBatch();
+      if (target === 'another arm') await h.page.handleArmSwitch(2);
+      h.page.armList.device[0].adjust = 3;
+      await h.page.confirmAdjustments();
+      const current = h.page.batchState.value;
+      assert.equal(current.id, 'batch-2');
+      assert.equal(h.page.busy.value, true);
+      if (outcome === 'error') pending.reject(new Error('late old query failed'));
+      else pending.resolve(outcome === 'success' ? previous : null);
+      await polling;
+      assert.equal(h.page.batchState.value, current);
+      assert.equal(h.page.batchState.value.id, 'batch-2');
+      assert.equal(h.page.batchState.value.message, 'batch 2');
+      assert.equal(h.page.batchState.value.unit_id, target === 'same arm' ? 32 : 64);
+      assert.equal(h.page.busy.value, true);
+      assert.equal(h.page.armList.device[0].adjust, 3);
+      assert.equal(h.calls.adjusts.length, 2);
+      assert.equal(h.calls.polls, 1);
+    });
+  }
+}
+
+for (const outcome of ['empty', 'error']) {
+  test(`a late ${outcome} query after changing to an arm with no batch leaves its context empty`, async t => {
+    const pending = deferred();
+    const h = setup(t, { debug: true, poll: () => pending.promise });
+    await enter(h, [1, 2]);
+    h.page.armList.device[0].adjust = 2;
+    await h.page.confirmAdjustments();
+    const polling = h.page.pollBatch();
+    await h.page.handleArmSwitch(2);
+    assert.equal(h.page.batchState.value, null);
+    if (outcome === 'error') pending.reject(new Error('old arm query failed'));
+    else pending.resolve(null);
+    await polling;
+    assert.equal(h.page.batchState.value, null);
+    assert.equal(h.page.busy.value, false);
+    assert.equal(h.page.initConfig.unitId, 64);
+    assert.equal(h.calls.adjusts.length, 1);
+  });
+}
+
+test('resetting control context clears the old batch record and its polling timer', async t => {
+  const h = setup(t, { debug: true, adjust: async () => ({ data: batch() }) });
+  await enter(h);
+  const baseTimers = h.timers.size;
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.batchState.value.id, 'batch-test');
+  assert.equal(h.timers.size, baseTimers + 1);
+  h.page.resetControlState();
+  assert.equal(h.page.batchState.value, null);
+  assert.equal(h.timers.size, baseTimers);
+  assert.equal(h.calls.adjusts.length, 1);
 });

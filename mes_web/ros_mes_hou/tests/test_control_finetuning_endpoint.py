@@ -36,7 +36,7 @@ class ControlFineTuningEndpointTest(unittest.TestCase):
             response = control.send_fine_tuning(
                 record=FineTuningCreate(
                     module_id=17,
-                    device_id=2,
+                    device_id=1,
                     unit_id=32,
                     parameter_name="rotation",
                     position=8.5,
@@ -46,15 +46,15 @@ class ControlFineTuningEndpointTest(unittest.TestCase):
             )
 
             self.assertEqual(response["code"], 200)
-            self.assertEqual(response["data"][0]["device_id"], 2)
+            self.assertEqual(response["data"][0]["device_id"], 1)
             self.assertEqual(response["data"][0]["position"], 8.5)
             self.assertEqual(response["dispatch"]["action"], "fine_tuning")
             self.assertEqual(response["dispatch"]["payload"]["topic"], "/control/adjust_rotation_cmd")
             self.assertEqual(response["dispatch"]["payload"]["message"]["module_id"], 17)
-            # V2：device_id 即轴号（1~20），请求值直接透传进 ROS 消息
-            self.assertEqual(response["dispatch"]["payload"]["message"]["device_id"], 2)
+            # 三轴契约：一号臂旋转轴为 1，轴号须与机械臂及参数类型一致。
+            self.assertEqual(response["dispatch"]["payload"]["message"]["device_id"], 1)
             self.assertEqual(response["dispatch"]["payload"]["message"]["position"], [8.5])
-            self.assertEqual(response["dispatch"]["payload"]["business"]["device_id"], 2)
+            self.assertEqual(response["dispatch"]["payload"]["business"]["device_id"], 1)
             self.assertEqual(response["dispatch"]["payload"]["business"]["unit_id"], 32)
             self.assertEqual(response["dispatch"]["payload"]["parameter_name"], "rotation")
             saved = db.query(models.FineTuning).one()

@@ -16,7 +16,7 @@
           <span class="context-kicker">运行状态</span>
           <strong>模块 {{ moduleId }}</strong>
           <el-tag v-if="isDebugMode" type="warning">调试模式 · 未绑定图纸</el-tag>
-          <el-tag type="info">{{ noRosDebug ? '无 ROS 模拟' : feedbackConnected ? '反馈通道已连接' : '反馈通道未连接' }}</el-tag>
+          <el-tag :type="feedbackSimulated ? 'warning' : 'info'">{{ noRosDebug || feedbackSimulated ? '后端模拟 · 未连接真实设备' : feedbackConnected ? '反馈通道已连接' : '反馈通道未连接' }}</el-tag>
           <span class="context-divider"></span>
           <span>当前机械臂</span>
           <span class="active-arm-chip">机械臂 {{ armNumber(initConfig.unitId) }}</span>
@@ -26,7 +26,7 @@
             <el-option v-for="item in armIdList" :key="item.id" :label="`机械臂 ${armNumber(item.Unit_ID)}`" :value="item.id" />
           </el-select>
           <el-button type="primary" plain :disabled="busy || !isReady || isDebugMode" @click="openDrawingDialog">
-            {{ activeProfile?.drawingId ? "重新下发图纸" : "下发图纸" }}
+            {{ activeProfile?.drawingId || activeProfile?.drawingSource === 'builtin_mock' ? "重新下发图纸" : "下发图纸" }}
           </el-button>
           <el-button type="primary" plain :disabled="busy || isDebugMode || !pointCloudViews.length" @click="togglePointCloudViews">
             {{ showPointCloudViews ? "隐藏点云图" : "查看点云图" }}
@@ -53,7 +53,8 @@
           <div class="card-header">
             <div class="control-heading">
               <span class="header-text">姿态控制参数 · 机械臂 {{ armNumber(armList.id) }}</span>
-              <span class="control-caption">{{ isDebugMode ? '调试配置 · 未绑定图纸' : `图纸 ${activeProfile?.drawingId || '未下发'}` }}</span>
+              <span class="control-caption">{{ isDebugMode ? '不使用图纸' : activeProfile?.drawingSource === 'builtin_mock' ? '内置模拟图纸' : `图纸 ${activeProfile?.drawingId || '未下发'}` }}</span>
+              <el-tag v-if="!isDebugMode && drawingSimulated" type="warning">图纸/三视图模拟</el-tag>
             </div>
             <el-button type="success" :disabled="busy || !isReady" @click="handleSaveConfig"
               >保存当前配置</el-button
@@ -71,9 +72,8 @@
                   v-model="armList.device[0].adjust"
                   :min="-360"
                   :max="360"
-                  placeholder="顺时针为正"
+                  placeholder="本次旋转增量"
                   :disabled="busy || !isReady"
-                  @change="sendSingleAdjust(0)"
                 />
               </div>
 
@@ -97,9 +97,8 @@
                   v-model="armList.device[1].adjust"
                   :min="-360"
                   :max="360"
-                  placeholder="顺时针为正"
+                  placeholder="本次摆动增量"
                   :disabled="busy || !isReady"
-                  @change="sendSingleAdjust(1)"
                 />
               </div>
 
@@ -123,9 +122,8 @@
                   v-model="armList.device[2].adjust"
                   :min="-360"
                   :max="360"
-                  placeholder="顺时针为正"
+                  placeholder="本次伸缩增量"
                   :disabled="busy || !isReady"
-                  @change="sendSingleAdjust(2)"
                 />
               </div>
 
@@ -137,6 +135,22 @@
               >
             </div>
           </div>
+        </div>
+
+        <div class="batch-controls">
+          <el-button type="primary" :disabled="busy || !isReady || !hasPendingAdjustments" @click="confirmAdjustments">确认下发三轴调整</el-button>
+          <span>输入为本次待提交增量，点击确认后按旋转、摆动、伸缩顺序执行。</span>
+          <el-button v-if="!busy && !isReady" @click="openConfiguration">重新配置机械臂</el-button>
+        </div>
+        <div v-if="batchState" class="batch-progress">
+          <el-alert :title="batchState.message" :type="batchState.status === 'completed' ? 'success' : 'warning'" :closable="false" />
+          <p v-for="step in batchState.steps" :key="step.parameter_name">
+            {{ axisLabels[step.parameter_name] }}：{{ step.position }}{{ step.parameter_name === 'telescopic' ? 'mm' : '°' }} · {{ stepLabels[step.status] || step.status }}
+          </p>
+          <el-button @click="pollBatch">刷新执行状态</el-button>
+          <el-button v-if="batchState.id && ['queued', 'checking', 'executing'].includes(batchState.status)" type="warning" @click="interruptBatch">停止后续下发</el-button>
+          <el-button v-if="batchState.id && batchState.status === 'uncertain'" type="warning" @click="acknowledgeBatch">{{ batchState.simulated ? '已核实模拟记录，关闭批次' : '已现场核实，关闭待确认批次' }}</el-button>
+          <p>“停止后续下发”不停止正在运动的轴；需要立即停止时请使用全局急停。</p>
         </div>
 
         <div class="imu-panel">
@@ -205,7 +219,7 @@
         <div class="dialog-intro-icon">⌁</div>
         <div>
           <strong>{{ dialogMode === "initial" ? "建立本次微调会话" : "更新当前机械臂图纸" }}</strong>
-          <p>{{ isDebugMode ? '完成机械臂确认后直接进入微调。控制仍发送至真实设备，保存的配置标记为调试配置。' : dialogMode === "initial" ? "先确认需要参与本模块的机械臂，再统一下发目标图纸。" : "重新下发图纸只作用于当前机械臂。" }}</p>
+          <p>{{ isDebugMode ? '完成机械臂确认后直接进入微调。真实或模拟由连接设置决定，当前配置不绑定图纸。' : dialogMode === "initial" ? "先确认需要参与本模块的机械臂，再统一下发目标图纸。" : "重新下发图纸只作用于当前机械臂。" }}</p>
         </div>
       </div>
       <el-form label-position="top" class="config-form">
@@ -233,7 +247,7 @@
         </el-form-item>
         <el-form-item v-if="!isDebugMode" label="目标图纸" required>
           <el-select v-model="draftInitConfig.drawingId" :disabled="busy" placeholder="请选择目标图纸" style="width: 100%">
-            <el-option v-for="item in drawingList" :key="item.drawingId" :label="item.drawingName" :value="item.drawingId" />
+            <el-option v-for="item in drawingList" :key="`${item.drawingSource || 'database'}:${item.drawingId}`" :label="item.drawingName" :value="Number(item.drawingId || 0)" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -250,19 +264,21 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { ArrowLeft } from "@element-plus/icons-vue";
 import {
-  getDrawingListApi,
+  getFineTuningDrawingOptions,
   getUnitsByDeviceApi,
   getSensorsByUnitApi,
   createModule,
   sendCoordination,
-  sendFineTuning,
+  submitFineTuningBatch, getFineTuningBatch, getFineTuningBatchByRequest,
+  getActiveFineTuningBatch, interruptFineTuningBatch, acknowledgeFineTuningBatch,
+  type FineTuningBatch,
   saveFineTuningConfig,
 } from "@/api/rosApi";
 import { noRosDebug } from "@/api/noRosDebug";
-import { useDebugSettingsStore } from '@/stores/debugSettings';
+import { getConnectionSettings } from '@/api/connectionSettings';
 import { emptyFeedbackMarks, feedbackTimeouts, feedbackStatus, finiteFeedbackNumber, FEEDBACK_FIELDS, FEEDBACK_STATUS_LABELS, type FeedbackField } from '@/api/feedbackState';
 import {
   armIndexFromUnitId,
@@ -272,8 +288,9 @@ import {
 } from "@/api/deviceEncoding";
 
 const router = useRouter();
-// 进入时固定本次模式；设置页的开关只影响下一次进入。
-const isDebugMode = useDebugSettingsStore().skipDrawingBinding;
+// 每次建立会话前读取服务配置；模式变更后必须重新确认机械臂。
+const isDebugMode = ref(false);
+const drawingContextRevision = ref<number | null>(null);
 
 // 数据准备完成后再打开配置弹窗，避免接口加载期间短暂显示空表单。
 const initDialogVisible = ref(false);
@@ -283,6 +300,7 @@ const initConfig = reactive({
   unitRowId: 0,
   sensorId: 0,
   drawingId: 0,
+  drawingSource: 'database' as 'database' | 'builtin_mock',
 });
 const draftInitConfig = reactive({
   unitRowIds: [] as number[],
@@ -292,10 +310,20 @@ const draftInitConfig = reactive({
 });
 const dialogMode = ref<"initial" | "redraw">("initial");
 const sharedDrawingId = ref(0);
+const sharedDrawingSource = ref<'database' | 'builtin_mock'>('database');
 const sharedDrawingViews = ref<Array<{ name: string; label: string; url: string }>>([]);
 
 const loading = ref(false);
 const busy = ref(false);
+const batchState = ref<FineTuningBatch | null>(null);
+const feedbackSimulated = ref(false);
+const drawingSimulated = ref(false);
+const confirmedConnectionRevision = ref<number | null>(null);
+let batchTimer: ReturnType<typeof setInterval> | undefined;
+let batchPolling = false;
+let appliedSimulationId = '';
+const axisLabels: Record<string, string> = { rotation: '旋转', swing: '摆动', telescopic: '伸缩' };
+const stepLabels: Record<string, string> = { pending: '未下发', sent_unconfirmed: '已发送，等待运行和到位', completed: '已观测到完成', uncertain: '已发送，结果待核实' };
 let feedbackSocket: WebSocket | null = null;
 const armIdList = ref<any[]>([]);
 const drawingList = ref<any[]>([]);
@@ -317,7 +345,7 @@ let ackSequence = 0;
 const fieldStatus = (field: FeedbackField) => feedbackStatus(
   feedbackMarks[field], feedbackClock.value,
   field === 'pressure' ? timeouts.pressure : adjustmentKeys.includes(field as AxisParameterName) ? timeouts.axis : timeouts.imu,
-  feedbackConnected.value, noRosDebug,
+  feedbackConnected.value, noRosDebug || feedbackSimulated.value,
 );
 const fieldStatusLabel = (field: FeedbackField) => FEEDBACK_STATUS_LABELS[fieldStatus(field)];
 const markReceived = (field: FeedbackField) => {
@@ -333,7 +361,7 @@ const isReady = computed(() =>
   !initDialogVisible.value &&
   Boolean(activeProfile.value?.configured) &&
   confirmedUnitIds.value.includes(Number(initConfig.unitId)) &&
-  (isDebugMode || Number(activeProfile.value?.drawingId) > 0)
+  (isDebugMode.value || Number(activeProfile.value?.drawingId) > 0 || activeProfile.value?.drawingSource === 'builtin_mock')
 );
 const armList = reactive({
   id: 0,
@@ -366,6 +394,7 @@ const armNumber = (unitId: number) => {
 };
 
 const adjustmentKeys: AxisParameterName[] = ["rotation", "swing", "telescopic"];
+const hasPendingAdjustments = computed(() => armList.device.slice(0, 3).some(item => Number(item.adjust) !== 0));
 // 反馈 device_id → 轴下标映射：按选中机械臂的 V2 轴号动态构建，见 rebuildFeedbackIndex
 let feedbackDeviceIndex: Record<number, number> = {};
 // 当前选中机械臂的臂级传感器（压力/IMU 共用）device_id 与压力传感器 sensor_ID
@@ -377,13 +406,15 @@ const cloneDevices = () => armList.device.map((item: any) => ({ ...item }));
 
 const saveActiveProfile = (force = false) => {
   if (!initConfig.unitRowId || !confirmedUnitIds.value.includes(Number(initConfig.unitId))) return;
-  if (!isDebugMode && !initConfig.drawingId) return;
+  if (!isDebugMode.value && !initConfig.drawingId && initConfig.drawingSource !== 'builtin_mock') return;
   const existingProfile = armProfiles[String(initConfig.unitRowId)];
   if (!force && !existingProfile?.configured) return;
   armProfiles[String(initConfig.unitRowId)] = {
     unitRowId: Number(initConfig.unitRowId),
     unitId: Number(initConfig.unitId),
     drawingId: Number(initConfig.drawingId),
+    drawingSource: initConfig.drawingSource,
+    drawingSimulated: drawingSimulated.value,
     configured: true,
     device: cloneDevices(),
     imu: { ...imuFeedback },
@@ -391,10 +422,18 @@ const saveActiveProfile = (force = false) => {
     feedbackMarks: Object.fromEntries(FEEDBACK_FIELDS.map(field => [field, { ...feedbackMarks[field] }])),
     pointCloudViews: pointCloudViews.value.map((item) => ({ ...item })),
     showPointCloudViews: Boolean(showPointCloudViews.value),
+    batch: batchState.value ? { ...batchState.value, steps: batchState.value.steps.map(step => ({ ...step })) } : null,
+    ackEvents: ackEvents.value.map(event => ({ ...event })),
   };
 };
 
-const resetControlState = () => {
+const resetControlState = (preserveBatch = false) => {
+  ackEvents.value = [];
+  if (!preserveBatch) {
+    batchState.value = null;
+    if (batchTimer !== undefined) clearInterval(batchTimer);
+    batchTimer = undefined;
+  }
   armList.device.forEach((item: any, index: number) => {
     item.initial = 0;
     item.adjust = index < 3 ? 0 : undefined;
@@ -411,9 +450,15 @@ const resetControlState = () => {
 };
 
 const restoreArmProfile = (profile: any) => {
+  ackEvents.value = (profile.ackEvents || []).map((event: any) => ({ ...event }));
+  if (batchTimer !== undefined) clearInterval(batchTimer);
+  batchTimer = undefined;
+  batchState.value = profile.batch ? { ...profile.batch, steps: profile.batch.steps.map((step: any) => ({ ...step })) } : null;
   initConfig.unitRowId = Number(profile.unitRowId);
   initConfig.unitId = Number(profile.unitId);
   initConfig.drawingId = Number(profile.drawingId);
+  initConfig.drawingSource = profile.drawingSource || 'database';
+  drawingSimulated.value = Boolean(profile.drawingSimulated);
   armList.device.splice(0, armList.device.length, ...profile.device.map((item: any) => ({ ...item })));
   Object.assign(imuFeedback, profile.imu || {});
   pressureSensorId.value = Number(profile.pressureSensorId || 0);
@@ -477,7 +522,7 @@ const loadSensorsForUnit = async (unitRowId: number) => {
 };
 
 const togglePointCloudViews = () => {
-  if (isDebugMode || busy.value) return;
+  if (isDebugMode.value || busy.value) return;
   if (pointCloudViews.value.length === 0) {
     ElMessage.warning("暂无点云图，请确认点云服务已生成");
     return;
@@ -537,6 +582,7 @@ const applyAck = (feedback: any) => {
 };
 
 const applyFeedback = (feedback: any) => {
+  if (feedback?.data_type === 'config_changed') { connectionChanged(); return; }
   if (!feedback || feedback.data_type === "error") {
     feedbackConnected.value = false;
     if (feedback?.message) {
@@ -552,6 +598,7 @@ const applyFeedback = (feedback: any) => {
   if (confirmedSeg.value === null || !confirmedUnitIds.value.includes(Number(initConfig.unitId))) return;
   if (feedback.module_id_space && feedback.module_id_space !== 'seg') return;
   if (finiteFeedbackNumber(feedback.module_id) !== confirmedSeg.value) return;
+  feedbackSimulated.value = feedback.simulated === true;
   const position = finiteFeedbackNumber(feedback.position);
   if (
     feedback.data_type === "axis_encoder" ||
@@ -628,7 +675,7 @@ const connectFeedbackSocket = () => {
 };
 
 const openDrawingDialog = () => {
-  if (isDebugMode || busy.value || !isReady.value) return;
+  if (isDebugMode.value || busy.value || !isReady.value) return;
   dialogMode.value = "redraw";
   draftInitConfig.unitRowIds = [Number(initConfig.unitRowId)];
   draftInitConfig.unitRowId = Number(initConfig.unitRowId || selectedArmRowId.value || armIdList.value[0]?.id || 0);
@@ -639,7 +686,7 @@ const openDrawingDialog = () => {
 
 const handleDialogCancel = () => {
   if (busy.value) return;
-  if (dialogMode.value === "redraw" && initConfig.unitRowId && activeProfile.value?.drawingId) {
+  if (dialogMode.value === "redraw" && initConfig.unitRowId && activeProfile.value?.configured) {
     selectedArmRowId.value = Number(initConfig.unitRowId);
     initDialogVisible.value = false;
     return;
@@ -663,7 +710,8 @@ const handleArmSwitch = async (rowId: number) => {
   resetControlState();
   initConfig.unitRowId = Number(rowId);
   initConfig.unitId = Number(target.Unit_ID);
-  initConfig.drawingId = isDebugMode ? 0 : Number(sharedDrawingId.value);
+  initConfig.drawingId = isDebugMode.value ? 0 : Number(sharedDrawingId.value);
+  initConfig.drawingSource = isDebugMode.value ? 'database' : sharedDrawingSource.value;
   pointCloudViews.value = sharedDrawingViews.value.map((item) => ({ ...item }));
   applyAxisEncoding(initConfig.unitId);
   armList.id = initConfig.unitId;
@@ -686,7 +734,9 @@ const confirmInitConfig = async () => {
     ElMessage.warning("请选择 1-5 台机械臂");
     return;
   }
-  if (!isDebugMode && !draftInitConfig.drawingId) {
+  const drawingChoice = drawingList.value.find(item => Number(item.drawingId || 0) === Number(draftInitConfig.drawingId));
+  const builtinDrawing = drawingChoice?.drawingSource === 'builtin_mock';
+  if (!isDebugMode.value && !draftInitConfig.drawingId && !builtinDrawing) {
     ElMessage.warning("必须选择一张图纸才能继续");
     return;
   }
@@ -703,6 +753,10 @@ const confirmInitConfig = async () => {
   try {
     let confirmedUnits = selectedUnits;
     if (dialogMode.value === "initial") {
+      for (const unit of selectedUnits) {
+        const active = await getActiveFineTuningBatch(Number(moduleId.value), Number(unit.Unit_ID));
+        if (active.data) { await restoreBatch(unit, active.data); return; }
+      }
       const qX = Number(route.query.x || 0);
       const qY = Number(route.query.y || 0);
       const moduleRes: any = await createModule({
@@ -712,6 +766,7 @@ const confirmInitConfig = async () => {
         device_id: Number(initConfig.deviceId),
         unit_ids: selectedUnits.map((item: any) => Number(item.Unit_ID)),
         position: 0,
+        ...(drawingContextRevision.value !== null ? { connection_revision: drawingContextRevision.value } : {}),
       });
       if (!moduleRes || moduleRes.code !== 200 || moduleRes.dispatch?.confirmed === false) {
         throw new Error(moduleRes?.message || moduleRes?.msg || "机械臂模块确认失败");
@@ -728,20 +783,23 @@ const confirmInitConfig = async () => {
         throw new Error('模块确认响应缺少有效 SEG，无法核验反馈归属');
       }
       confirmedSeg.value = seg;
+      confirmedConnectionRevision.value = typeof moduleRes.data?.connection_revision === 'number' ? moduleRes.data.connection_revision : null;
       confirmedUnitIds.value = confirmedUnits.map((item: any) => Number(item.Unit_ID));
       armIdList.value = confirmedUnits;
     }
 
-    const drawingId = isDebugMode ? 0 : Number(draftInitConfig.drawingId);
+    const drawingId = isDebugMode.value ? 0 : Number(draftInitConfig.drawingId);
     let firstDrawingResponse: any = null;
-    if (!isDebugMode) {
+    if (!isDebugMode.value) {
       for (const unit of confirmedUnits) {
         const response: any = await sendCoordination({
           device_id: Number(initConfig.deviceId),
           module_id: Number(moduleId.value),
           unit_id: Number(unit.Unit_ID),
           unit_row_id: Number(unit.id),
-          drawing_id: drawingId,
+          drawing_id: builtinDrawing ? null : drawingId,
+          drawing_source: builtinDrawing ? 'builtin_mock' : 'database',
+          ...(confirmedConnectionRevision.value !== null ? { connection_revision: confirmedConnectionRevision.value } : {}),
         });
         if (!response || response.code !== 200) {
           throw new Error(response?.message || response?.msg || `机械臂 ${unit.Unit_ID} 图纸下发失败`);
@@ -752,6 +810,7 @@ const confirmInitConfig = async () => {
 
     const activeUnit = confirmedUnits[0];
     if (dialogMode.value === "initial") {
+      for (const key of Object.keys(armProfiles)) delete armProfiles[key];
       resetControlState();
       initConfig.unitRowId = Number(activeUnit.id);
       initConfig.unitId = Number(activeUnit.Unit_ID);
@@ -763,10 +822,13 @@ const confirmInitConfig = async () => {
       armList.id = initConfig.unitId;
     }
     initConfig.drawingId = drawingId;
+    initConfig.drawingSource = !isDebugMode.value && builtinDrawing ? 'builtin_mock' : 'database';
+    drawingSimulated.value = firstDrawingResponse?.simulated === true;
     // 初次建立会话时，图纸才是所有已确认机械臂的共享默认值。
     // 重新下发只更新当前机械臂，避免影响尚未切换到的机械臂。
     if (dialogMode.value === "initial") {
       sharedDrawingId.value = drawingId;
+      sharedDrawingSource.value = initConfig.drawingSource;
     }
 
     const viewLabels: Record<string, string> = { top: "俯视图", front: "正视图", side: "侧视图" };
@@ -783,7 +845,8 @@ const confirmInitConfig = async () => {
     showPointCloudViews.value = false;
     saveActiveProfile(true);
     initDialogVisible.value = false;
-    ElMessage.success(isDebugMode
+    if (!noRosDebug && !feedbackSocket) connectFeedbackSocket();
+    ElMessage.success(isDebugMode.value
       ? `已确认 ${confirmedUnits.length} 台机械臂，进入无图纸调试模式`
       : `已确认 ${confirmedUnits.length} 台机械臂并完成图纸下发`);
   } catch (err: any) {
@@ -791,64 +854,171 @@ const confirmInitConfig = async () => {
     const detail = err.response?.data?.detail;
     ElMessage.error(typeof detail === 'string' ? detail : detail?.reason || err.message || "机械臂确认或图纸下发失败");
   } finally {
-    busy.value = false;
+    busy.value = Boolean(batchState.value?.target_locked);
   }
 };
-// 单个机械臂微调：不改变 Unit_ID，只记录参数名和调整值
-const sendSingleAdjust = async (value: number) => {
-  if (busy.value || !isReady.value || !adjustmentKeys[value]) return;
-  const adjustValue = Number(armList.device[value].adjust);
-  if (!Number.isFinite(adjustValue)) {
-    ElMessage.warning("请输入有效的微调增量");
-    return;
+const applyBatch = (batch: FineTuningBatch) => {
+  if (batch.module_id !== Number(moduleId.value) || batch.unit_id !== Number(initConfig.unitId)) return;
+  batchState.value = batch;
+  busy.value = batch.target_locked;
+  for (const step of batch.steps) {
+    if (step.status !== 'completed') continue;
+    const index = adjustmentKeys.indexOf(step.parameter_name as AxisParameterName);
+    if (index < 0) continue;
+    armList.device[index].adjust = 0;
+    // 只有明确的无 ROS 模拟可本地更新模拟位置；真实实测仍只来自遥测。
+    if (noRosDebug && batch.simulated && appliedSimulationId !== batch.id) {
+      updateAxisCurrent(index, Number(armList.device[index].current) + step.position);
+    }
   }
-  const parameterName = adjustmentKeys[value];
+  if (batch.simulated) appliedSimulationId = batch.id;
+  if (!batch.target_locked && batchTimer !== undefined) {
+    clearInterval(batchTimer);
+    batchTimer = undefined;
+  }
+  saveActiveProfile();
+};
+
+const pollBatch = async () => {
+  if (batchPolling || !batchState.value || (noRosDebug && batchState.value.simulated)) return;
+  const requestedBatch = batchState.value;
+  const isCurrent = () => batchState.value === requestedBatch &&
+    requestedBatch.module_id === Number(moduleId.value) && requestedBatch.unit_id === Number(initConfig.unitId);
+  batchPolling = true;
+  try {
+    const result = requestedBatch.id
+      ? await getFineTuningBatch(requestedBatch.id)
+      : await getFineTuningBatchByRequest(requestedBatch.request_id);
+    if (!isCurrent()) return;
+    if (result.data) {
+      if (result.data.request_id !== requestedBatch.request_id || (requestedBatch.id && result.data.id !== requestedBatch.id)) return;
+      applyBatch(result.data);
+    }
+    else requestedBatch.message = '暂未找到提交记录，结果仍待核实；请勿重新提交增量';
+  } catch {
+    if (isCurrent()) requestedBatch.message = '执行状态查询失败；不会重发指令，请恢复连接后查询';
+  } finally {
+    batchPolling = false;
+  }
+};
+
+const startBatchPolling = () => {
+  if (batchTimer !== undefined) clearInterval(batchTimer);
+  if (batchState.value?.target_locked) batchTimer = setInterval(() => { void pollBatch(); }, 1000);
+};
+
+const restoreBatch = async (unit: any, batch: FineTuningBatch) => {
+  initConfig.unitRowId = Number(unit.id);
+  initConfig.unitId = Number(unit.Unit_ID);
+  selectedArmRowId.value = initConfig.unitRowId;
+  confirmedSeg.value = batch.seg;
+  confirmedUnitIds.value = [initConfig.unitId];
+  applyAxisEncoding(initConfig.unitId);
+  armList.id = initConfig.unitId;
+  for (const step of batch.steps) {
+    const index = adjustmentKeys.indexOf(step.parameter_name as AxisParameterName);
+    if (index >= 0) armList.device[index].adjust = step.position;
+  }
+  initDialogVisible.value = false;
+  applyBatch(batch);
+  startBatchPolling();
+  connectFeedbackSocket();
+};
+
+const readConnectionContext = async () => {
+  const value = (await getConnectionSettings()).data;
+  isDebugMode.value = value.drawing_mode === 'skip';
+  drawingContextRevision.value = value.revision;
+};
+
+const openConfiguration = async () => {
+  if (busy.value) return;
   busy.value = true;
   try {
-    const res: any = await sendFineTuning({
-      module_id: Number(moduleId.value),
-      device_id: Number(armList.device[value].deviceId),
-      unit_id: Number(initConfig.unitId),
-      parameter_name: parameterName,
-      position: adjustValue,
-    });
-
-    if (res && res.code === 200) {
-      ElMessage.success(noRosDebug ? '微调模拟完成' : '微调指令已发送，请以实时反馈为准');
-      // 真实接口的 data 是发送值及占位压力，不能覆盖设备实际反馈。
-      if (noRosDebug && Array.isArray(res.data)) {
-        for (const i of res.data) {
-          if (i.type === "imu_pose") {
-            applyImuFeedback(i);
-          } else if (i.parameter_name === parameterName || Number(i.device_id) === Number(armList.device[value].deviceId)) {
-            updateAxisCurrent(value, Number(i.position));
-          } else if (i.type === 'pressure') {
-            armList.device[3].current = Number(i.position);
-            markReceived('pressure');
-          }
-        }
-        loading.value = true;
-      }
-      saveActiveProfile();
-    } else {
-      ElMessage.error(res?.message || res?.msg || "微调失败");
+    await readConnectionContext();
+    const unitResult: any = await getUnitsByDeviceApi(Number(initConfig.deviceId));
+    armIdList.value = Array.isArray(unitResult) ? unitResult : Array.isArray(unitResult.data) ? unitResult.data : [];
+    const unit = armIdList.value.find(item => Number(item.id) === Number(initConfig.unitRowId)) || armIdList.value[0];
+    if (!unit) { ElMessage.warning('当前模块没有可用机械臂'); return; }
+    if (!isDebugMode.value) {
+      const result = await getFineTuningDrawingOptions();
+      drawingList.value = Array.isArray(result.data) ? result.data : [];
+      if (!drawingList.value.length) { ElMessage.warning('请先导入可用图纸'); return; }
     }
-  } catch (err: any) {
-    console.error("微调失败：", err.response?.data || err);
-    ElMessage.error(
-      err.response?.data?.detail ||
-        err.response?.data?.message ||
-        "请求失败，请检查后端服务"
-    );
+    dialogMode.value = 'initial';
+    draftInitConfig.unitRowIds = [Number(unit.id)];
+    draftInitConfig.unitRowId = Number(unit.id);
+    draftInitConfig.unitId = Number(unit.Unit_ID);
+    draftInitConfig.drawingId = isDebugMode.value ? 0 : Number(drawingList.value[0].drawingId);
+    initDialogVisible.value = true;
+  } catch {
+    ElMessage.error('加载新会话配置失败，请恢复连接后重试');
   } finally {
-    busy.value = false;
+    busy.value = Boolean(batchState.value?.target_locked);
   }
+};
+
+const confirmAdjustments = async () => {
+  if (busy.value || !isReady.value) return;
+  const adjustments = adjustmentKeys.map((parameter_name, index) => ({ parameter_name, position: Number(armList.device[index].adjust) }));
+  if (adjustments.some(item => !Number.isFinite(item.position))) {
+    ElMessage.warning('请输入有效的微调增量');
+    return;
+  }
+  const pending = adjustments.filter(item => item.position !== 0);
+  if (!pending.length) { ElMessage.warning('没有待下发的非零调整'); return; }
+  const requestId = globalThis.crypto?.randomUUID?.() || `batch_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  batchState.value = { id: '', request_id: requestId, module_id: Number(moduleId.value), unit_id: Number(initConfig.unitId), seg: Number(confirmedSeg.value),
+    status: 'submitting', message: '正在登记本次调整', target_locked: true, steps: pending.map(item => ({ ...item, device_id: 0, status: 'pending' })) };
+  busy.value = true;
+  try {
+    const result = await submitFineTuningBatch({ request_id: requestId, module_id: Number(moduleId.value), unit_id: Number(initConfig.unitId), adjustments: pending,
+      ...(confirmedConnectionRevision.value !== null ? { connection_revision: confirmedConnectionRevision.value } : {}) });
+    applyBatch(result.data);
+  } catch (error: any) {
+    // 网络失败可能发生在服务已登记之后，保留请求号，查询而不重发。
+    if (error.response?.status === 409) {
+      try {
+        const active = await getActiveFineTuningBatch(Number(moduleId.value), Number(initConfig.unitId));
+        if (active.data) { applyBatch(active.data); startBatchPolling(); return; }
+        batchState.value.target_locked = false;
+        batchState.value.status = 'blocked';
+        busy.value = false;
+      } catch { /* 归属不明时继续保持锁定并查询原请求。 */ }
+    }
+    if (error.response?.status === 422 || error.response?.status === 401) {
+      batchState.value.target_locked = false;
+      batchState.value.status = 'blocked';
+      busy.value = false;
+    }
+    batchState.value.message = error.response?.data?.detail || '提交结果待确认，请查询本次请求；不会自动重发';
+  }
+  startBatchPolling();
+};
+
+const interruptBatch = async () => {
+  if (batchState.value?.id) applyBatch((await interruptFineTuningBatch(batchState.value.id)).data);
+};
+
+const acknowledgeBatch = async () => {
+  if (!batchState.value?.id) return;
+  try {
+    await ElMessageBox.confirm(batchState.value.simulated
+      ? '请核对模拟批次的已执行项与未执行项。此操作只关闭模拟记录，不修改真实设备急停或故障状态，也不会重发指令。'
+      : '请先在现场确认该机械臂已停止，并核对已执行的增量。此操作只关闭 MES 待核实记录，不解除急停或轴故障，也不会重发指令。', batchState.value.simulated ? '模拟记录确认' : '现场核实确认', { type: 'warning' });
+    const result = await acknowledgeFineTuningBatch(batchState.value.id);
+    for (const step of result.data.steps) {
+      const index = adjustmentKeys.indexOf(step.parameter_name as AxisParameterName);
+      if (index >= 0 && step.status !== 'pending') armList.device[index].adjust = 0;
+    }
+    applyBatch(result.data);
+  } catch { /* 取消或 API 错误时保持原锁定状态。 */ }
 };
 
 const handleSaveConfig = async () => {
   if (busy.value) return;
   if (!isReady.value) {
-    ElMessage.warning(isDebugMode ? "请先完成机械臂确认" : "请先确认机械臂并完成图纸下发");
+    ElMessage.warning(isDebugMode.value ? "请先完成机械臂确认" : "请先确认机械臂并完成图纸下发");
     return;
   }
   if (!noRosDebug && !pressureSensorId.value) {
@@ -865,8 +1035,10 @@ const handleSaveConfig = async () => {
       device_id: Number(initConfig.deviceId),
       unit_id: Number(initConfig.unitId),
       sensor_id: Number(pressureSensorId.value),
-      is_debug: isDebugMode,
-      drawing_id: isDebugMode ? null : Number(initConfig.drawingId),
+      is_debug: isDebugMode.value,
+      drawing_id: isDebugMode.value || initConfig.drawingSource === 'builtin_mock' ? null : Number(initConfig.drawingId),
+      drawing_source: initConfig.drawingSource,
+      ...(confirmedConnectionRevision.value !== null ? { connection_revision: confirmedConnectionRevision.value } : {}),
       x: feedbackMarks.x.receivedAt === null ? null : imuFeedback.x,
       y: feedbackMarks.y.receivedAt === null ? null : imuFeedback.y,
       z: feedbackMarks.z.receivedAt === null ? null : imuFeedback.z,
@@ -894,7 +1066,7 @@ const handleSaveConfig = async () => {
     const res: any = await saveFineTuningConfig(payload);
     if (res && res.code === 200) {
       saveActiveProfile();
-      ElMessage.success(noRosDebug ? "配置模拟保存完成（未写入数据库）" : isDebugMode ? "调试配置保存成功（未绑定图纸）" : "配置保存成功");
+      ElMessage.success(noRosDebug ? "配置模拟保存完成（未写入数据库）" : isDebugMode.value ? "调试配置保存成功（未绑定图纸）" : "配置保存成功");
     } else {
       ElMessage.error(res?.message || res?.msg || "配置保存失败");
     }
@@ -917,7 +1089,24 @@ const goBack = () => {
 };
 
 // ========== 6. 页面初始化 ==========
+const connectionChanged = () => {
+  initDialogVisible.value = false;
+  confirmedSeg.value = null;
+  confirmedConnectionRevision.value = null;
+  confirmedUnitIds.value = [];
+  for (const key of Object.keys(armProfiles)) delete armProfiles[key];
+  Object.assign(feedbackMarks, emptyFeedbackMarks());
+  feedbackConnected.value = false;
+  feedbackSimulated.value = false;
+  drawingSimulated.value = false;
+  resetControlState(busy.value);
+  if (feedbackSocket) { feedbackSocket.close(); feedbackSocket = null; }
+  if (!busy.value) batchState.value = null;
+  ElMessage.warning('连接设置已变更，请重新配置并确认机械臂');
+};
+
 onMounted(async () => {
+  window.addEventListener?.('ros-connection-changed', connectionChanged);
   feedbackTimer = setInterval(() => { feedbackClock.value = performance.now(); }, 500);
   const qModuleId = route.query.module_id;
   const qDeviceId = route.query.device_id ?? route.query.Device_ID;
@@ -939,26 +1128,24 @@ onMounted(async () => {
     : `模块 ${moduleId.value}`;
 
   try {
-    const [unitRes, drawingRes]: any[] = await Promise.all([
-      getUnitsByDeviceApi(lockedDeviceId),
-      isDebugMode ? Promise.resolve({ data: [] }) : getDrawingListApi(),
-    ]);
+    await readConnectionContext();
+    const unitRes: any = await getUnitsByDeviceApi(lockedDeviceId);
 
     const units = Array.isArray(unitRes)
       ? unitRes
       : Array.isArray(unitRes.data)
         ? unitRes.data
         : [];
-    const drawings = Array.isArray(drawingRes)
-      ? drawingRes
-      : Array.isArray(drawingRes.data)
-        ? drawingRes.data
-        : [];
-
     // 机械臂由微调页首次配置弹窗统一选择。忽略旧版本链接携带的 unit_ids，
     // 避免历史路由参数把可选机械臂过滤为空。
     const availableUnits = units.filter((item: any) => Number.isFinite(Number(item.id)));
     armIdList.value = availableUnits;
+    for (const unit of availableUnits) {
+      const active = await getActiveFineTuningBatch(Number(moduleId.value), Number(unit.Unit_ID));
+      if (active.data) { await restoreBatch(unit, active.data); return; }
+    }
+    const drawingRes: any = isDebugMode.value ? { data: [] } : await getFineTuningDrawingOptions();
+    const drawings = Array.isArray(drawingRes) ? drawingRes : Array.isArray(drawingRes.data) ? drawingRes.data : [];
     drawingList.value = drawings.filter((item: any) => Number.isFinite(Number(item.drawingId)));
 
     if (armIdList.value.length === 0) {
@@ -967,7 +1154,7 @@ onMounted(async () => {
       return;
     }
 
-    if (!isDebugMode && drawingList.value.length === 0) {
+    if (!isDebugMode.value && drawingList.value.length === 0) {
       ElMessage.warning("暂无可用图纸，请先在图纸管理中导入图纸");
       router.push("/drawingManage");
       return;
@@ -985,7 +1172,7 @@ onMounted(async () => {
     draftInitConfig.unitRowIds = [];
     draftInitConfig.unitRowId = initConfig.unitRowId;
     draftInitConfig.unitId = initConfig.unitId;
-    draftInitConfig.drawingId = isDebugMode ? 0 : Number(drawingList.value[0].drawingId);
+    draftInitConfig.drawingId = isDebugMode.value ? 0 : Number(drawingList.value[0].drawingId);
     armList.id = initConfig.unitId;
     connectFeedbackSocket();
     initDialogVisible.value = true;
@@ -996,6 +1183,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener?.('ros-connection-changed', connectionChanged);
+  if (batchTimer !== undefined) clearInterval(batchTimer);
   if (feedbackTimer !== undefined) clearInterval(feedbackTimer);
   if (feedbackSocket) {
     feedbackSocket.close();
@@ -1006,6 +1195,9 @@ onBeforeUnmount(() => {
 
 
 <style scoped>
+.batch-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+.batch-controls span, .batch-progress p { color: #606266; font-size: 13px; }
+.batch-progress { padding: 16px; border: 1px solid #e4e7ed; border-radius: 8px; }
 .ack-card { width: min(100%, 980px); }
 .ack-raw { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ack-card :deep(.el-collapse-item__header) { height: auto; min-height: 48px; line-height: 1.6; padding: 8px 0; }

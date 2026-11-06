@@ -18,16 +18,7 @@ import type {
 	WorkflowItem,
 	WorkflowDetail
 } from './types';
-import {
-	createNoRosDebugModule,
-	getNoRosDebugDeviceList,
-	getNoRosDebugDrawingList,
-	getNoRosDebugUnitsByDevice,
-	noRosDebug,
-	saveNoRosDebugFineTuningConfig,
-	sendNoRosDebugCoordination,
-	sendNoRosDebugFineTuning,
-} from './noRosDebug';
+
 
 // ==================== 登录 ====================
 export function loginApi(data: LoginForm) {
@@ -89,6 +80,8 @@ export function saveFineTuningConfigApi(data: {
 	unit_id?: number;
 	sensor_id?: number;
 	drawing_id?: number | null;
+	drawing_source?: 'database' | 'builtin_mock';
+	connection_revision?: number;
 	is_debug?: boolean;
 	x?: number | null;
 	y?: number | null;
@@ -100,10 +93,6 @@ export function saveFineTuningConfigApi(data: {
 	savedBy?: string;
 	devices?: any[];
 }) {
-	if (noRosDebug) {
-		return saveNoRosDebugFineTuningConfig(data);
-	}
-
 	return request<any, ApiResponse<FineTuningConfigItem>>({
 		url: '/finetuning/config',
 		method: 'post',
@@ -137,10 +126,6 @@ export function getRosStatus() {
 
 // ==================== 模块管理 ====================
 export function createModule(data: any) {
-	if (noRosDebug) {
-		return createNoRosDebugModule(data);
-	}
-
 	return request<any, ApiResponse<any>>({
 		url: '/module/',
 		method: 'post',
@@ -152,10 +137,6 @@ export function createModule(data: any) {
 
 // ==================== 坐标协调 ====================
 export function sendCoordinate(data: any) {
-	if (noRosDebug) {
-		return sendNoRosDebugCoordination(data);
-	}
-
 	return request<any, ApiResponse<any>>({
 		url: '/coordination/send',
 		method: 'post',
@@ -165,10 +146,6 @@ export function sendCoordinate(data: any) {
 
 // ==================== 微调控制 ====================
 export function sendFineTuning(data: any) {
-	if (noRosDebug) {
-		return sendNoRosDebugFineTuning(data);
-	}
-
 	return request<any, ApiResponse<any>>({
 		url: '/control/finetuning',
 		method: 'post',
@@ -177,6 +154,59 @@ export function sendFineTuning(data: any) {
 }
 
 // ==================== 串口连接测试 ====================
+export interface FineTuningBatch {
+	id: string;
+	request_id: string;
+	module_id: number;
+	unit_id: number;
+	seg: number;
+	status: string;
+	message: string;
+	target_locked: boolean;
+	simulated?: boolean;
+	steps: { parameter_name: string; position: number; device_id: number; status: string }[];
+}
+
+export async function submitFineTuningBatch(data: {
+	request_id: string; module_id: number; unit_id: number;
+	connection_revision?: number;
+	adjustments: { parameter_name: string; position: number }[];
+}) {
+	return request<any, ApiResponse<FineTuningBatch>>({ url: '/control/finetuning/batches', method: 'post', data });
+}
+
+export function getFineTuningBatch(id: string) {
+	return request<any, ApiResponse<FineTuningBatch>>({ url: `/control/finetuning/batches/${encodeURIComponent(id)}`, method: 'get' });
+}
+
+export function getFineTuningBatchByRequest(requestId: string) {
+	return request<any, ApiResponse<FineTuningBatch | null>>({ url: `/control/finetuning/batches/by-request/${encodeURIComponent(requestId)}`, method: 'get' });
+}
+
+export function getActiveFineTuningBatch(module_id: number, unit_id: number) {
+	return request<any, ApiResponse<FineTuningBatch | null>>({ url: '/control/finetuning/batches/active', method: 'get', params: { module_id, unit_id } });
+}
+
+export function interruptFineTuningBatch(id: string) {
+	return request<any, ApiResponse<FineTuningBatch>>({ url: `/control/finetuning/batches/${encodeURIComponent(id)}/interrupt`, method: 'post' });
+}
+
+export function acknowledgeFineTuningBatch(id: string) {
+	return request<any, ApiResponse<FineTuningBatch>>({ url: `/control/finetuning/batches/${encodeURIComponent(id)}/acknowledge`, method: 'post', data: { operator_confirmed: true } });
+}
+
+export function getEmergencyStopState() {
+	return request<any, ApiResponse<{ state: string; simulated: boolean }>>({ url: '/control/emergency_stop/status', method: 'get' });
+}
+
+export function sendEmergencyStop() {
+	return request<any, { success: boolean; message: string; simulated?: boolean }>({ url: '/control/emergency_stop', method: 'post' });
+}
+
+export function releaseEmergencyStop() {
+	return request<any, { success: boolean; message: string; simulated?: boolean }>({ url: '/control/emergency_stop/release', method: 'post' });
+}
+
 export function testSerialConnection() {
 	return request<any, ApiResponse<{ success: boolean; connected: boolean; message: string; bytes_received?: number }>>({
 		url: '/control/serial_test',
@@ -190,14 +220,16 @@ export const saveFineTuningConfig = saveFineTuningConfigApi;
 
 // ==================== 图纸管理 ====================
 export function getDrawingListApi(params?: Record<string, any>) {
-	if (noRosDebug) {
-		return getNoRosDebugDrawingList();
-	}
-
 	return request<any, ApiResponse<DrawingItem[]>>({
 		url: '/drawing/',
 		method: 'get',
 		params
+	});
+}
+
+export function getFineTuningDrawingOptions() {
+	return request<any, ApiResponse<{ drawingId: number | null; drawingName: string; drawingSource: 'database' | 'builtin_mock' }[]>>({
+		url: '/drawing/', method: 'get', params: { for_tuning: true },
 	});
 }
 
@@ -519,10 +551,6 @@ export function deleteModelApi(id: number) {
 
 // ==================== 模块(Device) CRUD ====================
 export function getDeviceListApi() {
-	if (noRosDebug) {
-		return getNoRosDebugDeviceList();
-	}
-
 	return request<any, ApiResponse<any[]>>({
 		url: '/device/',
 		method: 'get'
@@ -575,10 +603,6 @@ export function getUnitListApi() {
 }
 
 export function getUnitsByDeviceApi(deviceId: number) {
-	if (noRosDebug) {
-		return getNoRosDebugUnitsByDevice(deviceId);
-	}
-
 	return request<any, ApiResponse<any[]>>({
 		url: `/unit/by_device/${deviceId}`,
 		method: 'get'

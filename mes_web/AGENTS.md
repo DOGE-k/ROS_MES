@@ -37,6 +37,6 @@
 - 前端相关回归：`npm run test:finetuning`、`npm run test:drawing`；类型及生产构建：`npm run build`。
 - 后端：在 `ros_mes_hou/` 使用虚拟环境执行 `python -m unittest discover -s tests`。
 - 检查 Markdown 引用、`git diff --check` 和实际改动路径；报告通过项、未测项及环境。不要用旧测试总数证明新增场景。
-- 默认使用模拟消息、测试替身和隔离数据库验证控制改动，不自动操作真实设备，不将 `VITE_DEBUG_NO_ROS` 模拟结果写成真实反馈或真机验证。
+- 默认使用模拟消息、测试替身和隔离数据库验证控制改动，不自动操作真实设备。当前真实/模拟连接由个人中心调试设置及后端配置管理，历史 `VITE_DEBUG_NO_ROS` 不再绕过后端；模拟结果不能写成真实反馈或真机验证。
 
 前后端任务建议以 `mes_web/` 为工作目录，或在任务开始时明确读取本入口。根 README 仍是全团队的中立导航。

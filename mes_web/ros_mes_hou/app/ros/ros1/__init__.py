@@ -17,7 +17,8 @@ class Ros1Dispatcher(RosbridgeTransport):
 
     def start_native_node(self) -> None:
         super().start_native_node()  # /robot_status 后台订阅（测试页状态来源）
-        native.start_ros_thread()  # rospy 原生节点（历史兼容，可用时启动）
+        if self.client.execution_mode == "real":
+            native.start_ros_thread()  # rospy 原生节点（历史兼容，可用时启动）
 
     def publish_native_web_cmd(self, command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """rospy 直发通道（保留给需要绕过 rosbridge 的场景，常规用继承的 publish_web_cmd）。"""

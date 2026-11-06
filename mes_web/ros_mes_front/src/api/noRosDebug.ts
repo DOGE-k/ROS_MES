@@ -1,7 +1,9 @@
 import { mockSuccess } from "./mock";
 import { axisDeviceId, armLevelDeviceId } from "./deviceEncoding";
 
-export const noRosDebug = import.meta.env.VITE_DEBUG_NO_ROS === "true";
+// 页面连接配置已接管模拟；业务 API 和反馈统一经过后端。
+// 保留历史辅助函数供旧测试/调用兼容，不再用编译时开关绕过后端。
+export const noRosDebug: boolean = false;
 
 const delay = (ms = 300) => new Promise((resolve) => setTimeout(resolve, ms));
 

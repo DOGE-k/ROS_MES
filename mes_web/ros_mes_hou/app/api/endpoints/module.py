@@ -23,6 +23,8 @@ def first_not_none(*values):
 @router.post("/")
 def lock_and_dispatch_module(payload: dict = Body(...), dispatcher=None):
     dispatcher = dispatcher or get_ros_dispatcher()
+    if payload.get("connection_revision") is not None and payload["connection_revision"] != getattr(dispatcher, "revision", None):
+        raise HTTPException(409, "连接设置已更改，请重新读取设置后确认机械臂")
     x = first_not_none(
         payload.get("x"),
         payload.get("X"),
@@ -128,7 +130,8 @@ def lock_and_dispatch_module(payload: dict = Body(...), dispatcher=None):
     return {
         "code": 200,
         "message": "module locked and confirmation command dispatched",
-        "data": {**dispatch_payload, "seg": seg, "confirmations": confirmations},
+        "data": {**dispatch_payload, "seg": seg, "confirmations": confirmations,
+                 "connection_revision": getattr(dispatcher, "revision", None)},
         "dispatch": {
             "action": "module_confirm",
             "confirmed": True,

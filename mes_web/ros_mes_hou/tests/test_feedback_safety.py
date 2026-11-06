@@ -71,7 +71,8 @@ class FeedbackSafetyTest(unittest.TestCase):
         vacuum = normalize_feedback_message("/hardware/vacuum_loss", {"module_id": 0, "device_id": 21, "position": 1})
         self.assertEqual(pressure["module_id_space"], "seg")
         self.assertEqual(average["module_id_space"], "business")
-        self.assertEqual(vacuum["module_id_space"], "unknown")
+        # 本次已核查 hardware_node：失压与轴遥测同样取自 CAN SEG；均值仍用业务号。
+        self.assertEqual(vacuum["module_id_space"], "seg")
 
     def test_ack_raw_and_fields_are_preserved_without_a_request_id(self):
         message = {"module_id": 0, "device_id": 1, "ack_msg": 1, "result": 0, "detail": 0}
