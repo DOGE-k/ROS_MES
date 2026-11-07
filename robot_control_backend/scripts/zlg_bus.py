@@ -110,17 +110,27 @@ class ZLGBus:
         self.dev_node = _sysfs_node()
         if self._lib.VCI_OpenDevice(DEV_TYPE, 0, 0) != 1:
             raise RuntimeError("ZLG VCI_OpenDevice 失败")
-        timing = _BAUD_TIMING.get(self.bitrate, 0x1C00)
-        cfg = _INIT_CONFIG()
-        cfg.AccCode, cfg.AccMask, cfg.Reserved = 0, 0xFFFFFFFF, 0
-        cfg.Filter, cfg.Mode = 1, 0
-        cfg.Timing0, cfg.Timing1 = timing & 0xFF, timing >> 8
-        # 首次 InitCAN 在某些固件上会失败，重试一次
-        self._lib.VCI_InitCAN(DEV_TYPE, 0, self.channel, ctypes.byref(cfg))
-        if self._lib.VCI_InitCAN(DEV_TYPE, 0, self.channel, ctypes.byref(cfg)) != 1:
-            raise RuntimeError("ZLG VCI_InitCAN 失败")
-        if self._lib.VCI_StartCAN(DEV_TYPE, 0, self.channel) != 1:
-            raise RuntimeError("ZLG VCI_StartCAN 失败")
+        # 关键：Init/Start 失败必须先把设备关掉再抛异常。
+        # 否则句柄仍被本进程占用，上层每秒重试 VCI_OpenDevice 只会一直返回 0，
+        # 反复对同一设备打开还会让适配器固件卡死（内核报 cannot reset err=-110）。
+        try:
+            timing = _BAUD_TIMING.get(self.bitrate, 0x1C00)
+            cfg = _INIT_CONFIG()
+            cfg.AccCode, cfg.AccMask, cfg.Reserved = 0, 0xFFFFFFFF, 0
+            cfg.Filter, cfg.Mode = 1, 0
+            cfg.Timing0, cfg.Timing1 = timing & 0xFF, timing >> 8
+            # 首次 InitCAN 在某些固件上会失败，重试一次
+            self._lib.VCI_InitCAN(DEV_TYPE, 0, self.channel, ctypes.byref(cfg))
+            if self._lib.VCI_InitCAN(DEV_TYPE, 0, self.channel, ctypes.byref(cfg)) != 1:
+                raise RuntimeError("ZLG VCI_InitCAN 失败")
+            if self._lib.VCI_StartCAN(DEV_TYPE, 0, self.channel) != 1:
+                raise RuntimeError("ZLG VCI_StartCAN 失败")
+        except Exception:
+            try:
+                self._lib.VCI_CloseDevice(DEV_TYPE, 0)
+            except Exception:
+                pass
+            raise
 
     def is_alive(self):
         """句柄是否仍对应在场的设备
@@ -185,12 +195,17 @@ class ZLGBus:
         return None
 
     def shutdown(self):
+        if self._closed:
+            return
+        # 设备已经掉线时不要再发 USB 控制请求（ResetCAN），否则会把已失效的端口进一步卡死
+        alive = self.is_alive()
         self._closed = True
         with self._io_lock:
-            try:
-                self._lib.VCI_ResetCAN(DEV_TYPE, 0, self.channel)
-            except Exception:
-                pass
+            if alive:
+                try:
+                    self._lib.VCI_ResetCAN(DEV_TYPE, 0, self.channel)
+                except Exception:
+                    pass
             try:
                 self._lib.VCI_CloseDevice(DEV_TYPE, 0)
             except Exception:
