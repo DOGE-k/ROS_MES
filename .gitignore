@@ -25,3 +25,5 @@ dist/
 .zcodeignore
 # ZCode 会话产物
 .zcode/
+# WorkBuddy 本地记忆与会话产物
+.workbuddy/

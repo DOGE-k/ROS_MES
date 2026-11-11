@@ -15,6 +15,7 @@ from app.db import models
 from app.db.database import SessionLocal
 from app.ros.base import RosbridgeError
 from app.ros.rosbridge import build_fine_tuning_publish_payload, resolve_arm_from_unit_id, resolve_module_seg
+from app.ros.stop_holds import BLOCK_MESSAGE, axes_for, stop_holds
 
 ACTIVE = {"queued", "checking", "executing"}
 ORDER = ("rotation", "swing", "telescopic")
@@ -80,6 +81,34 @@ class BatchManager:
             db.commit()
         return self.safety(mode)
 
+    def hold_target(self, module_id, *, device_id=None, axes=None, mode="real",
+                    message="已执行局部停，停止后续下发；设备实际状态待确认"):
+        """局部停命中当前环境的活动批次：只停止后续下发并转待核实，不重发任何指令。
+
+        `axes` 为命中范围（臂停传该臂的 3 个轴号）；`device_id` 保留给单轴调用方。
+        """
+        wanted = None
+        if axes is not None:
+            wanted = {int(item) for item in axes}
+        elif device_id is not None:
+            wanted = {int(device_id)}
+        with self.sessions() as db:
+            for batch in db.query(models.FineTuningBatch).filter(models.FineTuningBatch.status.in_(ACTIVE)):
+                item = snapshot(batch)
+                if item["safety_mode"] != mode or int(batch.module_id) != int(module_id):
+                    continue
+                if wanted is not None:
+                    try:
+                        hit = axes_for(item["unit_id"], [step["parameter_name"] for step in item["steps"]])
+                    except (ValueError, RosbridgeError):
+                        hit = set()
+                    if not (wanted & hit):
+                        continue
+                batch.cancel_requested = True
+                batch.status = "uncertain"
+                batch.message = message
+            db.commit()
+
     def clear_safety(self, expected_generation, mode="real"):
         """人工确认清除当前版本的 MES 急停记录，保留批次核实流程。"""
         with self.sessions() as db:
@@ -98,10 +127,13 @@ class BatchManager:
             raise HTTPException(409, "急停记录已更新，请查看最新状态后重新确认")
         return state
 
-    def assert_available(self, db, module_id, unit_id, *, mode="real", safety_mode=None):
+    def assert_available(self, db, module_id, unit_id, *, mode="real", safety_mode=None, axes=None):
         safety = db.get(models.ControlSafety, 2 if (safety_mode or mode) == "mock" else 1)
         if safety and safety.state.startswith("stop"):
             raise HTTPException(409, "急停联锁尚未解除，禁止运动下发")
+        # 局部停只锁本模块/本轴；axes 未知时按整模块拦截，宁可多拦也不放过
+        if stop_holds.blocked(db, module_id, axes=axes, mode=mode) is not None:
+            raise HTTPException(409, BLOCK_MESSAGE)
         mode_filter = models.FineTuningBatch.target_key.like("mock:%") if mode == "mock" else ~models.FineTuningBatch.target_key.like("mock:%")
         if db.query(models.FineTuningBatch).filter(mode_filter,
             models.FineTuningBatch.module_id == module_id, models.FineTuningBatch.unit_id == unit_id,
@@ -155,7 +187,12 @@ class BatchManager:
                 if json.dumps(old_request, sort_keys=True) != canonical:
                     raise HTTPException(409, "请求编号已用于另一组调整，禁止复用")
                 return snapshot(old)
-            self.assert_available(db, request.module_id, request.unit_id, mode=mode, safety_mode=safety_mode)
+            try:
+                axes = axes_for(request.unit_id, [item.parameter_name for item in request.adjustments])
+            except (ValueError, RosbridgeError):
+                axes = None  # 轴号换算失败时按整模块拦截
+            self.assert_available(db, request.module_id, request.unit_id, mode=mode,
+                                  safety_mode=safety_mode, axes=axes)
             unit = db.query(models.Unit).filter_by(Module_ID=request.module_id, Unit_ID=request.unit_id, del_flag=False).first()
             if unit is None:
                 raise HTTPException(422, "机械臂未登记在该模块中")

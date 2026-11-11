@@ -58,8 +58,19 @@
       </el-menu-item>
     </el-menu>
 
-    <!-- 底部急停按钮 -->
+    <!-- 底部急停区：上为分级局部停，下为整机急停 -->
     <div class="sidebar-bottom">
+      <el-button
+          class="module-stop-btn"
+          :class="{ 'is-collapsed': layoutStore.fold }"
+          @click="openLocalStop"
+      >
+        <span v-if="!layoutStore.fold">
+          停模块 / 停轴
+          <span v-if="localStopVisibleCount" class="stop-count">{{ localStopVisibleCount }}</span>
+        </span>
+        <span v-else>停</span>
+      </el-button>
       <el-button
           class="e-stop-btn"
           :class="{ 'pressing': isPressing, 'is-collapsed': layoutStore.fold }"
@@ -79,6 +90,8 @@
     </div>
 
   </div>
+
+  <LocalStopPanel ref="localStopPanel" @count="localStopVisibleCount = $event" />
 
   <!-- 急停/解除提示：发送状态与设备实测分开，禁止定时自动恢复。 -->
   <div v-if="isEmergencyActive" class="emergency-overlay">
@@ -122,10 +135,16 @@ import { sendEmergencyStop, releaseEmergencyStop, manualReleaseEmergencyStop, ge
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
 import { useUserStore } from '@/stores/user';
 import RosConnectionSettings from './UserManage/RosConnectionSettings.vue';
+import LocalStopPanel from './LocalStopPanel.vue';
 
 const router = useRouter();
 const route = useRoute();
 const layoutStore = useLayoutSettingStore();
+
+// 局部停入口与全局急停并排：任何页面都能停到模块或单轴，不用先回微调页
+const localStopPanel = ref(null);
+const localStopVisibleCount = ref(0);
+const openLocalStop = () => localStopPanel.value?.open();
 
 const userStore = useUserStore();
 const isAdmin = computed(() => userStore.isAdmin());
@@ -409,6 +428,41 @@ onBeforeUnmount(() => {
 .sidebar-bottom {
   padding: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.module-stop-btn {
+  width: 100%;
+  height: 36px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.45) !important;
+  background: rgba(245, 158, 11, 0.12);
+  border-radius: 10px;
+  padding: 0;
+}
+
+.module-stop-btn:hover {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.module-stop-btn.is-collapsed {
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.stop-count {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .e-stop-btn {

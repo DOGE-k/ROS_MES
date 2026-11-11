@@ -156,6 +156,29 @@ class FineTuningConfigDebugTest(unittest.TestCase):
         with self.session_factory() as db:
             self.assertEqual(db.query(models.FineTuningConfig).count(), 0)
 
+    def test_calibration_save_writes_the_zeroing_remark_into_notes(self):
+        note = "校零：机械臂 1，三轴基准初始值 0.00/0.00/0.00（人工下发归位后保存）2026-11-11 20:20"
+        response = self.client.post("/api/finetuning/config", json=self.payload(calibrated=True, notes=note))
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = response.json()["data"]
+        self.assertEqual(saved["notes"], note)
+        self.assertIs(saved["config"]["calibrated"], True)
+        with self.session_factory() as db:
+            record = db.query(models.FineTuningConfig).one()
+            # 备注列落库：翻数据库能直接看出这条是校零值，不是微调值
+            self.assertEqual(record.notes, note)
+            self.assertIs(json.loads(record.config_json)["calibrated"], True)
+
+    def test_calibration_without_explicit_note_still_gets_a_zeroing_remark(self):
+        response = self.client.post("/api/finetuning/config", json=self.payload(calibrated=True))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("校零", response.json()["data"]["notes"])
+
+    def test_plain_save_leaves_the_notes_column_empty(self):
+        response = self.client.post("/api/finetuning/config", json=self.payload())
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNone(response.json()["data"]["notes"])
+
 
 if __name__ == "__main__":
     unittest.main()

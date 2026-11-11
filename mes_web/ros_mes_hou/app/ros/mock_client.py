@@ -125,3 +125,7 @@ class MockRosClient:
     async def publish_stop_release(self):
         self.robot.stop(False)
         return True
+
+    async def publish_local_stop(self, *, scope, module_id, device_id=None):
+        """模拟局部停：只返回发送成功，不改变模拟遥测，避免看起来像设备已停。"""
+        return True

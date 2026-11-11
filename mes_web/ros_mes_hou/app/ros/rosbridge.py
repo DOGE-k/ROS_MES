@@ -390,6 +390,60 @@ class RosbridgeClient:
             print(f"[紧急故障] 急停解除系统异常: {exc}")
             return False
 
+    async def publish_local_stop(self, *, scope: str, module_id: int, device_id: int | None = None) -> bool:
+        """局部停：直发 /arm/cmd_vel 系统级指令，经 softstop_node 之外的同一话题进入 hardware_node。
+
+        - module: position=[0x08, module_id]，device_id=0 → CAN 0x00000008 | SEG<<18，只停该组
+        - arm:    device_id=臂号，对该臂 3 根轴各发一帧 position=[0x0C, 1]
+        - axis:   device_id=轴号，position=[0x0C, 1] → 单轴停止帧
+        不经过 softstop_node，是因为它只订阅全局急停话题并固定转发 [0x01]，会把局部停升级成全停。
+        """
+        if websockets is None:
+            print("[局部停] websockets 库未安装，无法发送指令")
+            return False
+
+        topic = self.profile.topics["arm_cmd"]
+        if scope == "module":
+            targets = [{"module_id": int(module_id), "device_id": SYSTEM_DEVICE_ID,
+                        "position": [0x08, int(module_id)]}]
+        elif scope in ("arm", "axis") and device_id is not None:
+            if scope == "arm":
+                # 臂停 = 该臂 3 根轴依次发 0x0C；同组其他臂不受影响
+                arm = int(device_id)
+                axes = list(range((arm - 1) * 3 + 1, arm * 3 + 1))
+            else:
+                axes = [int(device_id)]
+            targets = [{"module_id": int(module_id), "device_id": axis, "position": [0x0C, 1]}
+                       for axis in axes]
+        else:
+            print(f"[局部停] 未知 scope 或缺 device_id：{scope!r}/{device_id!r}")
+            return False
+
+        try:
+            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
+                for payload in targets:
+                    message = json.dumps(
+                        {
+                            "op": "publish",
+                            "topic": topic,
+                            "msg": {
+                                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
+                                **payload,
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                    await asyncio.wait_for(ws.send(message), timeout=2.0)
+                    print(f"[局部停] 指令已发送: {topic} scope={scope} "
+                          f"device_id={payload['device_id']} position={payload['position']}")
+            return True
+        except asyncio.TimeoutError:
+            print("[局部停] WebSocket 发送超时")
+            return False
+        except Exception as exc:
+            print(f"[局部停] 发送异常: {exc}")
+            return False
+
     async def publish_web_cmd(self, command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """测试通道：向 /web_cmd 发布 JSON 指令（std_msgs/String）。
 
@@ -657,6 +711,11 @@ class RosbridgeTransport(RosDispatcher):
 
     async def release_emergency_stop(self) -> bool:
         return await self.emergency_client.publish_stop_release()
+
+    async def trigger_local_stop(self, *, scope: str, module_id: int, device_id: int | None = None) -> bool:
+        """局部停：只停目标模块或目标轴，不清除全局联锁，也不影响其他模块。"""
+        return await self.emergency_client.publish_local_stop(
+            scope=scope, module_id=module_id, device_id=device_id)
 
     def start_native_node(self) -> None:
         """启动 /robot_status 后台订阅（测试页状态来源；子类可叠加各自的后台通道）。"""

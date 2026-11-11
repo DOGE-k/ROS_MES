@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test:drawing": "node --test tests/drawing-manage.test.mjs",
-    "test:finetuning": "node --test tests/finetuning-debug.test.mjs tests/emergency-stop.test.mjs tests/control-auth.test.mjs tests/connection-settings.test.mjs",
+    "test:finetuning": "node --test tests/finetuning-debug.test.mjs tests/emergency-stop.test.mjs tests/control-auth.test.mjs tests/connection-settings.test.mjs tests/local-stop-panel.test.mjs",
     "build": "vue-tsc --noEmit -p tsconfig.app.json && vue-tsc --noEmit -p tsconfig.node.json && vite build --configLoader runner",
     "preview": "vite preview"
   },

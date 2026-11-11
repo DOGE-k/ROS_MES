@@ -98,6 +98,7 @@
 
             <el-tab-pane label="调试设置" name="debug">
               <RosConnectionSettings />
+              <FineTuningSessionSettings />
             </el-tab-pane>
 
           </el-tabs>
@@ -115,6 +116,7 @@ import type { UploadProps } from 'element-plus'
 import request from '@/utils/request'
 import { useUserStore } from '@/stores/user'
 import RosConnectionSettings from './RosConnectionSettings.vue'
+import FineTuningSessionSettings from './FineTuningSessionSettings.vue'
 import { useRoute } from 'vue-router'
 
 const userStore = useUserStore()

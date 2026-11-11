@@ -11,6 +11,84 @@
 
 ---
 
+## 2026-11-11（局部停新增“臂停”一级 + 侧栏弹窗下拉不可选修复，已完成）
+
+- 用户反馈两点：① 侧栏弹窗里「模块 / 机械臂」下拉点不开；② 现场只需要“停一整台机械臂”，不需要轴级选择。
+- 下拉打不开的根因：`LocalStopPanel` 的 `el-dialog` 写了 `:z-index="100002"`，Element Plus 的 Select 面板按 2000 段分配层级，被压在弹窗下面（DOM 存在但看不见、点不到）。移除自定义 `z-index`、交回组件库分配后正常。
+- 后端新增 `scope=arm`（臂停）：`LocalStopRequest.scope` 增加 `arm`，`device_id` 传臂号 1~5；[rosbridge.publish_local_stop](../ros_mes_hou/app/ros/rosbridge.py) 对该臂 3 个轴号各发一帧 `position=[0x0C, 1]`；`validate_target` 增加 1~5 校验；`stop_holds.blocked` 用 `(axis-1)//3+1` 反推臂号匹配；`BatchManager.hold_target` 新增 `axes` 参数，臂停只命中该臂自己的批次，不再误伤同模块其他臂。
+- 前端：侧栏弹窗「停哪一级」改为 **整模块 / 整个机械臂**，去掉轴下拉；`scope=arm` 时 `device_id = armIndexFromUnitId(unitId)`（臂号，不是 V2 轴号）。微调页姿态卡片内的「单轴停」三个按钮保留，现场调单轴仍在原地。
+- 验证（2026-11-11 20:58，本机 Windows）：
+  - 后端 `test_local_stop.py`：**Ran 20, OK**（新增 5 条：臂停记录与报文、臂号 0/6/15 拒发 422、臂锁只锁该臂 3 轴、臂停发 3 帧 4/5/6、臂停不误伤其他臂批次）；全量 `Ran 171, OK`。
+  - 前端 `npm run test:finetuning`：**98 pass / 0 fail**（面板用例改为断言 `scope=arm` 且 `device_id` 是臂号）。
+  - 运行中的后端已热重载，`/api/control/stop/holds` 401（需登录）、`/docs` 200，服务正常。
+- `???` 未验证：真机未验证 3 帧 `0x0C` 能否整体停住、固件是否按轴锁存；下拉层级只在代码层修正，未在浏览器实际点选确认。
+
+---
+
+## 2026-11-11（局部停入口上移到侧栏，已完成）
+
+- 用户反馈：模块停藏在微调页，「在别的页面想要马上停止模块还得跑到微调页面去」，分级急停失去意义。按确认口径改为：入口并入侧栏底部急停区、弹窗默认预选当前微调会话模块、模块停与单轴停都搬上去、微调页工具栏「停本模块」删除。
+- 新增 [LocalStopPanel.vue](../ros_mes_front/src/components/Main/LocalStopPanel.vue)：弹窗内选模块（`GET /device/`）→ 整模块 / 单轴（再选机械臂 `GET /unit/by_device/{id}` 与轴）→ 二次确认后调 `POST /control/stop`；轴号由 `armIndexFromUnitId` + `axisDeviceId` 换算，不在前端硬编码。打开时读 `GET /control/session` 预选会话模块（无会话则手动选），并读 `GET /control/stop/holds` 列出生效记录、支持逐条清除（`POST /control/stop/clear?module_id=`）。轮询 8 秒，记录数通过 `count` 事件回传给侧栏做角标。
+- 侧栏 [AsidePage.vue](../ros_mes_front/src/components/Main/AsidePage.vue)：底部改为上下两块——上「停模块 / 停轴」（橙描边，有记录时显示红色数量角标；侧栏折叠显示「停」），下仍是长按两秒的全局急停；弹窗组件挂在侧栏，跨页面可用。
+- 微调页 [FineTuningPage.vue](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)：删除工具栏「停本模块」及 `stopModule`，模块停统一走侧栏；姿态卡片内的「单轴停」和局部停红色横幅/清除按钮保留（现场调单轴时仍在原地，且页面需要显示为何下发被禁用）。
+- 连接版本：弹窗不带会虚构版本号，改为使用 `GET /control/stop/holds` 返回的 `connection_revision` 随停指令提交，版本漂移时后端仍会 409。
+- 后端未重启时的表现：`/control/stop/holds` 或 `/control/session` 返回 404 时，弹窗内直接提示“后端没有加载局部停接口，请用最新代码重启后端”，不再只剩一个空列表加两条 `Not Found` 提示；模块列表仍正常可用。已用 19:36 启动的旧进程复现并定位（新进程代码里路由齐全）。
+- 验证（2026-11-11 20:40，本机 Windows，Node 22.22.2）：
+  - 前端 `npm run test:finetuning`：**98 pass / 0 fail**（新增 `tests/local-stop-panel.test.mjs` 7 条：会话模块预选与机械臂加载、模块停报文、单轴停轴号换算、无模块/机械臂时拒发、记录回传与按模块清除、发送失败仍刷新记录、后端缺接口时提示重启）；微调页用例改为断言「本页不再有停本模块、单轴停与横幅仍在」，原模块停用例移入新文件。
+  - `npm run build`：两套 `vue-tsc` 通过，vite 构建成功（仅既有包体积提示）。
+  - 后端未改动，未重跑后端套件；`POST /control/stop` 报文形态与既有用例一致。
+- `???` 未验证：未做浏览器实际点击；弹窗在真实数据（多模块、多臂、无会话）下的预选表现未现场确认；从任务管理页停模块后，微调页横幅依赖下一次 8 秒轮询才更新。
+
+---
+
+## 2026-11-11（基准初始值固定 0 + 校准标记，已完成）
+
+- 需求口径（用户确认）：下位机与 ROS 都不回传轴初始值，三轴基准初始值统一按 **0**；「校准」**不是**下发归零动作，而是"点亮后影响下一次保存"的标记，用来在数据库备注里区分"校零值"和"微调值"。下发按钮保持原样，不拆成逐轴按钮。
+- 前端 [FineTuningPage.vue](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)：三轴 `initialLocked` 恒 true、`initial` 恒 0，`updateAxisCurrent` 只更新 `current` 不覆盖基准；文案「初始值: —」→「基准初始值: 0.00」；卡片头 `保存当前配置` 左侧新增「校准」切换按钮（`warning`/`info` 两态），点亮时显示「保存时备注记为校零」；保存请求新增 `calibrated`、`notes`，备注含机械臂号、三轴基准值、保存时间；保存成功自动熄灭，保存失败保持点亮以便重试；`resetControlState`（换臂/重新配置）清零，不串到别的臂。
+- 后端：`FineTuningConfigCreate` 新增 `calibrated: bool = False`、`notes: Optional[str]`（≤1000 字）；[crud/finetuning.py](../ros_mes_hou/app/crud/finetuning.py) 把 `notes` 写入 `fine_tuning_config.notes`（该列此前一直为 NULL），`calibrated=true` 且未给备注时补默认校零文案。**未改表结构、未加端点、未动下发/ROS 链路**。字段说明见[接口字段文档 2.4.2](ROS_MES_前后端接口字段文档.md#242-基准初始值与校准标记2026-11-11)。
+- 与 20:05 那版的口径差异：上一版曾计划"逐轴下发 + 校准按钮自动下发归零 + 新增 `GET /finetuning/config/latest` + 批次 `purpose` 字段"，经用户确认全部作废，代码已还原，工作树不留残留。
+- 验证（2026-11-11 20:24，本机 Windows，后端 venv + Node 22.22.2）：
+  - 前端 `npm run test:finetuning`：92 pass / 0 fail（新增 1 条校准用例；改 2 处 `initial` 断言：反馈不再写基准、无反馈时保存写 0 而非 null）。
+  - 后端 `PYTHONPATH=. python -m unittest discover -s tests`：**Ran 166 tests，OK**（上一轮 163 + 新增 3 条：指定备注落库、只给 `calibrated` 补默认备注、普通保存 notes 为空）。
+  - `npx vue-tsc --noEmit -p tsconfig.app.json` 通过；`git diff --check` 无空白问题。
+- `???` 未验证/边界：未做浏览器实际点击与真机验证；历史快照的 `notes` 仍为 NULL，只有本轮之后"点亮校准保存"的记录才有校零备注；校准状态不跨刷新保留（刷新后按钮回到未点亮，数据库记录不受影响）。
+
+---
+
+## 2026-11-11（局部停：模块停/单轴停，已完成）
+
+- 用户提出“急停是全部一起急停，想做分级急停”。按范围确认三档：单轴 / 本模块 / 全局。协议早有定义，本轮把模块停与单轴停接到 MES。
+- 只读核查 ROS 侧：`softstop_node.py` 只订阅 `/control/softstop`、`/control/softstop_release`，`stop_callback` 固定发 `[0x01]`，因此把局部停发给它会升级成整机全停；而 `hardware_node.py:345` 已实现 `0x08` 模块停（按 `_seg_for(module_id)` 组 `0x08|SEG<<18`）与 `0x0C` 单轴停（先清该轴增量队列）。**未修改 `robot_control_backend`**，后端改为直发 `/arm/cmd_vel`，等价于省掉 softstop_node 一跳。
+- 后端：新增 `control_stop_holds` 表与 [局部停管理](../ros_mes_hou/app/ros/stop_holds.py)；`/arm/cmd_vel` 话题键 `arm_cmd`（可用 `ROS_TOPIC_ARM_CMD` 覆盖）；新增 `publish_local_stop`（rosbridge）、`trigger_local_stop`（适配层，基类默认拒绝而不降级为全停）、模拟实现；端点 `POST /control/stop`、`GET /control/stop/holds`、`POST /control/stop/clear`、`POST /control/stop/{id}/clear`。
+- 锁定规则：`assert_available` 增加 scope 判断——模块停拦该模块全部下发，轴停只拦 `(arm-1)*3+轴序` 命中的轴，轴号无法判定时按整模块拦截；`BatchManager.hold_target` 把命中的在途批次停止后续下发并转 `uncertain`，沿用既有“已现场核实”关闭流程。全局急停仍写 `control_safety`，与局部停互不影响。
+- 先落记录再发送：发送失败（502 或 `state=unknown`）保留 MES 锁，避免操作员以为已停住继续下发。scope 非法、轴号不在 1~15、模块缺少 SEG 映射返回 422；连接版本不符返回 409。
+- 前端：微调页工具栏「停本模块」、姿态控制卡片内「单轴停 · 停旋转/停摆动/停伸缩」（轴号来自 `armList.device[i].deviceId`）、局部停红色横幅 + 「清除局部停记录」；受限时「确认下发三轴调整」禁用；进入页面与每 8 秒读取记录，连接配置变更时重新读取。侧栏长按两秒仍是全局急停，未改动。
+- 明确边界：协议只有全局 `[0x04]` 解除。清除局部停记录**只恢复 MES 下发能力，不发送解除或运动指令**；设备侧是否锁存由固件决定，恢复运动需现场确认后清除记录并重新下发，界面与文档均写明，不自动重发。
+- 验证（2026-11-11，本机 Windows，后端 venv + Node 22.22.2）：
+  - 后端 `python -m unittest discover -s tests`：Ran 163 tests，OK（新增 15 项：模块/轴停记录与报文、发送失败保留锁、非法轴号与未映射模块 422、版本不符 409、模块锁只影响本模块、轴锁只影响该轴、轴号换算、清除恢复、记录查询、在途批次命中与否、`/arm/cmd_vel` 报文形态、未知 scope 不发布）。
+  - 前端 `npm run test:finetuning`：91 pass / 0 fail（新增 6 项：控件存在、模块停报文、轴停轴号、局部停阻止下发、清除后恢复、其他模块不受影响）。`npm run test:drawing`：12/12 通过。
+  - `npm run build`：两套 `vue-tsc` 类型检查通过，vite 生产构建成功，仅有既有资源包体积提示。
+- `???` 未测项：真机未验证模块停/单轴停是否真的停住、是否锁存、断电或重新上电后的状态；`0x0C` 与普通增量 12 的区分仅在源码层面核对。多模块并行时“解除只对某个模块生效”在协议层无支持，需固件扩展。
+- 过程记录：本轮期间另一会话曾在 `FineTuningPage.vue`、`rosApi.ts` 并发加入“逐轴下发 + 基准校准”，因缺少 `canDispatch/dispatchAxis/baseline*` 实现导致构建失败；对方已自行回退，本次构建在上述回退后通过，本侧未删除任何他人代码。
+
+---
+
+## 2026-11-11（微调会话保持与续接，已完成）
+
+- 用户现场复现：绑定模块后在微调页做一半、切到任务管理等页面再回来，组件状态全部丢失，只能重新走握手弹窗，返回即退回模块选择；而 `module_confirme_node` 的握手要等目标臂重新上电宣告 UID，已绑定的臂不会再次宣告，因此必须断电才能重绑。本轮把“握手结果”升级为可续接的会话记录，避免为了继续微调去断电。
+- 后端新增 `control_sessions` 表（`id/module_id/device_id/x/y/seg/unit_ids/connection_revision/creator_id/created_at/last_active_at/invalidated_at/invalid_reason`）与 [会话管理器](../ros_mes_hou/app/ros/control_session.py)。`POST /module/` 握手成功后登记会话并在响应中返回 `session_id`/`session`；登记失败只返回 `session_id=null` 与 `session_error`，不把已完成的物理握手判为失败。新增 `GET /control/session`、`POST /control/session/{id}/resume`、`POST /control/session/{id}/close`。有效期由前端偏好按请求传入（15/30/60 分钟或不限），从最后一次续接滑动，服务端不落库。
+- 失效口径：同组号或机械臂有交集的新握手把旧记录标 `superseded`；`runtime_settings.update` 在连接配置变更时批量作废（`connection_changed`）；超过偏好时长 `expired`（判定时落终态）；手动结束 `closed`。急停不使会话失效，下发仍受既有联锁与批次检查。
+- 前端新增 [会话 store](../ros_mes_front/src/stores/fineTuningSession.ts)（开关、时长、`sessionStorage` 界面快照）与 [会话接口](../ros_mes_front/src/api/session.ts)。个人中心“调试设置”新增“微调会话保持”面板（开关+时长+当前会话+结束会话）；模块管理页顶部显示进行中会话卡片（模块坐标、机械臂、剩余时间）与“继续微调/结束会话”，**不自动跳转**，避免阻断换模块；微调页挂载时先尝试续接（同一模块、`session` 参数直连），成功后跳过初始化弹窗、用后端返回的 `seg` 恢复反馈归属、有在途批次时恢复轮询，顶部显示“已续接会话 · 未重新握手”。
+- 跨端或本机快照丢失时按绑定重建最小状态：机械臂行以当前 `Unit` 数据为准，图纸置空并加载可选列表；为让该状态下可以补发图纸，“下发图纸”按钮的启用条件由 `isReady` 改为“该臂已配置”，`openDrawingDialog` 同步改为检查已配置，避免续接后卡在不能选图也不能下发的死锁。真实模式仍未下发图纸前不能提交调整。
+- 验证（2026-11-11，本机 Windows，后端 venv + Node 22.22.2）：
+  - 后端 `python -m unittest discover -s tests`：Ran 148 tests，OK（新增 11 项：登记、同组号/同机械臂抢占、连接版本失效、过期落终态、续接滑动有效期、不限时、手动结束、未知会话、空记录、批量作废）。
+  - 前端 `npm run test:finetuning`：85 pass / 0 fail（新增 7 项：有效会话续接不发模块确认、快照还原各臂数值、跨模块拒绝续接、显式链接失效告警并回落握手、关闭开关不访问会话接口、握手登记并写快照、结束会话清记录）。`npm run test:drawing`：12/12 通过。
+  - `npm run build`：两套 `vue-tsc` 类型检查通过，vite 生产构建成功，仅有既有资源包体积提示。
+- `???` 未测项与边界：续接只读 MES 记录，**未经设备复核**；ROS 侧无“查询当前绑定”的对外入口，若节点重启或机械臂断电，MES 无法自动感知，需现场核对。真机续接、断电后状态、刷新/换端恢复均未做设备验证；页面交互只经脚本检查与构建，未做浏览器实际点击。
+- 与需求 B（分级急停）无关：本轮未改急停链路，仍只有全局 `0x01`，`0x08` 模块停与 `0x0C` 单轴停仍无入口。
+
+---
+
 ## 2026-11-11（角度微调步长与人工解除急停，已完成）
 
 - 按用户确认，底座旋转、摆动输入框采用 0.01° 步长与两位小数，提交增量继续按度传递。单位仍为度（伸缩为 mm），前后端不做单位换算，底层整数编码仍由 ROS 轴节点处理。

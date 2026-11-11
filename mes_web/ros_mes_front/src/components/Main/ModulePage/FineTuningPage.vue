@@ -15,6 +15,7 @@
         <div class="runtime-context">
           <span class="context-kicker">运行状态</span>
           <strong>模块 {{ moduleId }}</strong>
+          <el-tag v-if="resumedFromSession" type="success">已续接会话 · 未重新握手</el-tag>
           <el-tag v-if="isDebugMode" type="warning">调试模式 · 未绑定图纸</el-tag>
           <el-tag :type="feedbackSimulated ? 'warning' : 'info'">{{ noRosDebug || feedbackSimulated ? '后端模拟 · 未连接真实设备' : feedbackConnected ? '反馈通道已连接' : '反馈通道未连接' }}</el-tag>
           <span class="context-divider"></span>
@@ -25,14 +26,26 @@
           <el-select v-model="selectedArmRowId" class="arm-switcher" :disabled="busy || !isReady" placeholder="切换机械臂" @change="handleArmSwitch">
             <el-option v-for="item in armIdList" :key="item.id" :label="`机械臂 ${armNumber(item.Unit_ID)}`" :value="item.id" />
           </el-select>
-          <el-button type="primary" plain :disabled="busy || !isReady || isDebugMode" @click="openDrawingDialog">
+          <el-button type="primary" plain :disabled="busy || isDebugMode || !activeProfile?.configured" @click="openDrawingDialog">
             {{ activeProfile?.drawingId || activeProfile?.drawingSource === 'builtin_mock' ? "重新下发图纸" : "下发图纸" }}
           </el-button>
           <el-button type="primary" plain :disabled="busy || isDebugMode || !pointCloudViews.length" @click="togglePointCloudViews">
             {{ showPointCloudViews ? "隐藏点云图" : "查看点云图" }}
           </el-button>
+          <el-button v-if="activeSession" :disabled="busy" @click="endSession">结束会话</el-button>
         </div>
       </div>
+
+      <el-alert
+        v-if="hasLocalStop"
+        class="local-stop-alert"
+        type="error"
+        :closable="false"
+        :title="`局部停生效中：${localStopText}。只锁定该目标，其他模块照常可用。`"
+      >
+        <p>清除记录仅恢复 MES 下发能力，不发送解除或运动指令；恢复运动需重新下发，设备侧锁存按现场规程处理。</p>
+        <el-button size="small" :disabled="stopBusy" @click="clearLocalStops">清除局部停记录</el-button>
+      </el-alert>
 
       <el-card v-if="showPointCloudViews && pointCloudViews.length" shadow="hover" class="pointcloud-card">
         <template #header>
@@ -56,9 +69,19 @@
               <span class="control-caption">{{ isDebugMode ? '不使用图纸' : activeProfile?.drawingSource === 'builtin_mock' ? '内置模拟图纸' : `图纸 ${activeProfile?.drawingId || '未下发'}` }}</span>
               <el-tag v-if="!isDebugMode && drawingSimulated" type="warning">图纸/三视图模拟</el-tag>
             </div>
-            <el-button type="success" :disabled="busy || !isReady" @click="handleSaveConfig"
-              >保存当前配置</el-button
-            >
+            <div class="save-actions">
+              <el-tag v-if="calibrateMode" type="warning" effect="plain">保存时备注记为校零</el-tag>
+              <el-button
+                :type="calibrateMode ? 'warning' : 'info'"
+                :plain="!calibrateMode"
+                :disabled="busy || !isReady"
+                @click="calibrateMode = !calibrateMode"
+                >校准</el-button
+              >
+              <el-button type="success" :disabled="busy || !isReady" @click="handleSaveConfig"
+                >保存当前配置</el-button
+              >
+            </div>
           </div>
         </template>
         <div class="control-grid">
@@ -80,7 +103,7 @@
               </div>
 
               <span class="real-time-tag"
-                >初始值: {{ armList.device[0].initialLocked ? armList.device[0].initial : '—' }}</span
+                >基准初始值: {{ Number(armList.device[0].initial).toFixed(2) }}</span
               >
               <span class="real-time-tag"
                 >当前实际值: {{ displayFeedback('rotation', armList.device[0].current) }} · {{ fieldStatusLabel('rotation') }}</span
@@ -107,7 +130,7 @@
               </div>
 
               <span class="real-time-tag"
-                >初始值: {{ armList.device[1].initialLocked ? armList.device[1].initial : '—' }}</span
+                >基准初始值: {{ Number(armList.device[1].initial).toFixed(2) }}</span
               >
               <span class="real-time-tag"
                 >当前实际值: {{ displayFeedback('swing', armList.device[1].current) }} · {{ fieldStatusLabel('swing') }}</span
@@ -132,7 +155,7 @@
               </div>
 
               <span class="real-time-tag"
-                >初始值: {{ armList.device[2].initialLocked ? armList.device[2].initial : '—' }}</span
+                >基准初始值: {{ Number(armList.device[2].initial).toFixed(2) }}</span
               >
               <span class="real-time-tag"
                 >当前实际值: {{ displayFeedback('telescopic', armList.device[2].current) }} · {{ fieldStatusLabel('telescopic') }}</span
@@ -141,9 +164,22 @@
           </div>
         </div>
 
+        <div class="local-stop-row">
+          <span class="local-stop-title">单轴停</span>
+          <el-button
+            v-for="item in axisStopOptions"
+            :key="item.index"
+            size="small"
+            :disabled="stopBusy"
+            @click="stopAxis(item.index)"
+            >停{{ item.label }}</el-button
+          >
+          <span class="local-stop-hint">只停当前机械臂对应轴，其他轴与模块照常；不替代全局急停</span>
+        </div>
+
         <div class="batch-controls">
-          <el-button type="primary" :disabled="busy || !isReady || !hasPendingAdjustments" @click="confirmAdjustments">确认下发三轴调整</el-button>
-          <span>输入为本次待提交增量，点击确认后按旋转、摆动、伸缩顺序执行。</span>
+          <el-button type="primary" :disabled="busy || !isReady || !hasPendingAdjustments || hasLocalStop" @click="confirmAdjustments">确认下发三轴调整</el-button>
+          <span>输入为本次待提交增量，点击确认后按旋转、摆动、伸缩顺序执行。基准初始值固定为 0（下位机未回传初始值）；人工下发归位后点亮「校准」再保存，数据库备注会记为校零。</span>
           <el-button v-if="!busy && !isReady" @click="openConfiguration">重新配置机械臂</el-button>
         </div>
         <div v-if="batchState" class="batch-progress">
@@ -266,7 +302,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { ArrowLeft } from "@element-plus/icons-vue";
@@ -290,6 +326,20 @@ import {
   armLevelDeviceId,
   type AxisParameterName,
 } from "@/api/deviceEncoding";
+import {
+  closeControlSession,
+  resumeControlSession,
+  getControlSession,
+  SESSION_REASON_LABELS,
+  type ControlSession,
+} from "@/api/session";
+import { useFineTuningSessionStore } from "@/stores/fineTuningSession";
+import {
+  requestLocalStop,
+  getLocalStopHolds,
+  clearLocalStopHolds,
+  type LocalStopHold,
+} from "@/api/localStop";
 
 const router = useRouter();
 // 每次建立会话前读取服务配置；模式变更后必须重新确认机械臂。
@@ -319,11 +369,14 @@ const sharedDrawingViews = ref<Array<{ name: string; label: string; url: string 
 
 const loading = ref(false);
 const busy = ref(false);
+// 校准标记：点亮后本次「保存当前配置」会在数据库备注里记为校零，用来区分校零值与微调值
+const calibrateMode = ref(false);
 const batchState = ref<FineTuningBatch | null>(null);
 const feedbackSimulated = ref(false);
 const drawingSimulated = ref(false);
 const confirmedConnectionRevision = ref<number | null>(null);
 let batchTimer: ReturnType<typeof setInterval> | undefined;
+let stopHoldTimer: ReturnType<typeof setInterval> | undefined;
 let batchPolling = false;
 let appliedSimulationId = '';
 const axisLabels: Record<string, string> = { rotation: '旋转', swing: '摆动', telescopic: '伸缩' };
@@ -336,6 +389,12 @@ const showPointCloudViews = ref(false);
 const route = useRoute();
 const moduleId = ref<number>(0);
 const moduleDisplay = ref("");
+// 续接所需：会话记录 + 模块坐标（刷新后 query 可能丢失，坐标以会话为准）
+const moduleX = ref<number | null>(null);
+const moduleY = ref<number | null>(null);
+const sessionStore = useFineTuningSessionStore();
+const activeSession = ref<ControlSession | null>(null);
+const resumedFromSession = ref(false);
 const selectedArmRowId = ref(0);
 const confirmedUnitIds = ref<number[]>([]);
 const confirmedSeg = ref<number | null>(null);
@@ -370,10 +429,11 @@ const isReady = computed(() =>
 const armList = reactive({
   id: 0,
   // deviceId 由 applyAxisEncoding 按 V2.1 三轴编码动态填充（1~15 轴级 / 21~25 臂级），禁止硬编码
+  // 下位机与 ROS 不回传初始值：三轴基准初始值统一按 0 记录，不从反馈里取
   device: [
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "底座旋转调整值" },
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "摆动调整值" },
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: false, label: "伸缩杆调整值" },
+    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true, label: "底座旋转调整值" },
+    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true, label: "摆动调整值" },
+    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true, label: "伸缩杆调整值" },
     { deviceId: 0, initial: 0.0, current: 0.0 },
   ],
 });
@@ -442,8 +502,9 @@ const resetControlState = (preserveBatch = false) => {
     item.initial = 0;
     item.adjust = index < 3 ? 0 : undefined;
     item.current = 0;
-    item.initialLocked = false;
+    item.initialLocked = true;
   });
+  calibrateMode.value = false;
   Object.assign(imuFeedback, { swingAngle: 0, rotationAngle: 0, x: 0, y: 0, z: 0 });
   pressureSensorId.value = 0;
   initConfig.sensorId = 0;
@@ -536,10 +597,9 @@ const togglePointCloudViews = () => {
 
 const updateAxisCurrent = (index: number, position: number) => {
   const axis = armList.device[index] as any;
-  if (!axis.initialLocked) {
-    axis.initial = position;
-    axis.initialLocked = true;
-  }
+  // 基准初始值固定为 0：首帧反馈只更新实测值，不能当基准
+  axis.initial = 0;
+  axis.initialLocked = true;
   axis.current = position;
   markReceived(adjustmentKeys[index]);
 };
@@ -679,7 +739,8 @@ const connectFeedbackSocket = () => {
 };
 
 const openDrawingDialog = () => {
-  if (isDebugMode.value || busy.value || !isReady.value) return;
+  // 已配置即允许重新选图：续接的会话可能没有本机图纸记录
+  if (isDebugMode.value || busy.value || !activeProfile.value?.configured) return;
   dialogMode.value = "redraw";
   draftInitConfig.unitRowIds = [Number(initConfig.unitRowId)];
   draftInitConfig.unitRowId = Number(initConfig.unitRowId || selectedArmRowId.value || armIdList.value[0]?.id || 0);
@@ -790,6 +851,13 @@ const confirmInitConfig = async () => {
       confirmedConnectionRevision.value = typeof moduleRes.data?.connection_revision === 'number' ? moduleRes.data.connection_revision : null;
       confirmedUnitIds.value = confirmedUnits.map((item: any) => Number(item.Unit_ID));
       armIdList.value = confirmedUnits;
+      // 后端在握手中登记可续接会话；登记失败时如实提示本次不可续接
+      const registeredSession = (moduleRes.data?.session ?? null) as ControlSession | null;
+      activeSession.value = registeredSession?.id ? registeredSession : null;
+      resumedFromSession.value = false;
+      if (!activeSession.value && moduleRes.data?.session_error) {
+        ElMessage.warning("本次握手已完成，但会话登记失败，离开页面后需重新握手");
+      }
     }
 
     const drawingId = isDebugMode.value ? 0 : Number(draftInitConfig.drawingId);
@@ -964,6 +1032,10 @@ const openConfiguration = async () => {
 
 const confirmAdjustments = async () => {
   if (busy.value || !isReady.value) return;
+  if (hasLocalStop.value) {
+    ElMessage.warning('该模块处于局部停状态，请先清除局部停记录再下发');
+    return;
+  }
   const adjustments = adjustmentKeys.map((parameter_name, index) => ({ parameter_name, position: Number(armList.device[index].adjust) }));
   if (adjustments.some(item => !Number.isFinite(item.position))) {
     ElMessage.warning('请输入有效的微调增量');
@@ -1019,6 +1091,18 @@ const acknowledgeBatch = async () => {
   } catch { /* 取消或 API 错误时保持原锁定状态。 */ }
 };
 
+const calibrationStamp = () => {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+};
+
+// 写入 fine_tuning_config.notes：让人翻数据库时能直接看出这条是校零值，不是微调值
+const buildCalibrationNote = () => {
+  const values = armList.device.slice(0, 3).map((item: any) => Number(item.initial || 0).toFixed(2));
+  return `校零：机械臂 ${armNumber(initConfig.unitId)}，三轴基准初始值 ${values.join("/")}（人工下发归位后保存）${calibrationStamp()}`;
+};
+
 const handleSaveConfig = async () => {
   if (busy.value) return;
   if (!isReady.value) {
@@ -1050,13 +1134,16 @@ const handleSaveConfig = async () => {
         status: fieldStatus(field),
         age_ms: feedbackMarks[field].receivedAt === null ? null : Math.max(0, savedAt - feedbackMarks[field].receivedAt!),
       }])),
+      // 校准标记与备注：点亮「校准」保存时写入校零备注，普通保存备注留空
+      calibrated: calibrateMode.value,
+      notes: calibrateMode.value ? buildCalibrationNote() : null,
       devices: armList.device.map((item: any, index: number) => {
         const base = {
           device_id: Number(item.deviceId || 0),
           unit_id: Number(initConfig.unitId),
           parameter_name: index === 3 ? "pressure" : adjustmentKeys[index],
           label: item.label || "压力传感器",
-          initial: index < 3 && item.initialLocked ? Number(item.initial) : null,
+          initial: index < 3 ? Number(item.initial) : null,
           adjust: Number(item.adjust || 0),
           current: feedbackMarks[index === 3 ? 'pressure' : adjustmentKeys[index]].receivedAt === null ? null : Number(item.current),
         };
@@ -1069,8 +1156,16 @@ const handleSaveConfig = async () => {
 
     const res: any = await saveFineTuningConfig(payload);
     if (res && res.code === 200) {
+      const calibrated = calibrateMode.value;
+      // 保存成功即复位，避免下一组微调值被误标成校零
+      if (calibrated) calibrateMode.value = false;
       saveActiveProfile();
-      ElMessage.success(noRosDebug ? "配置模拟保存完成（未写入数据库）" : isDebugMode.value ? "调试配置保存成功（未绑定图纸）" : "配置保存成功");
+      ElMessage.success(
+        noRosDebug
+          ? calibrated ? "校准标记模拟保存完成（未写入数据库）" : "配置模拟保存完成（未写入数据库）"
+          : calibrated ? "已保存并标记为校零（数据库备注已写入）"
+          : isDebugMode.value ? "调试配置保存成功（未绑定图纸）" : "配置保存成功",
+      );
     } else {
       ElMessage.error(res?.message || res?.msg || "配置保存失败");
     }
@@ -1089,11 +1184,302 @@ const handleSaveConfig = async () => {
 // 返回模块管理页面
 const goBack = () => {
   if (busy.value) return;
+  persistSnapshot();
   router.push("/moduleManagement");
 };
 
+// ========== 会话保持 ==========
+// 握手结果由后端登记为会话；续接只读记录，不发送模块确认，也不自动重发运动。
+const buildSessionSnapshot = () => ({
+  moduleDisplay: moduleDisplay.value,
+  x: moduleX.value,
+  y: moduleY.value,
+  confirmedSeg: confirmedSeg.value,
+  confirmedConnectionRevision: confirmedConnectionRevision.value,
+  confirmedUnitIds: [...confirmedUnitIds.value],
+  selectedArmRowId: selectedArmRowId.value,
+  initConfig: { ...initConfig },
+  armList: { id: armList.id, device: cloneDevices() },
+  imuFeedback: { ...imuFeedback },
+  pressureSensorId: pressureSensorId.value,
+  pointCloudViews: pointCloudViews.value.map((item) => ({ ...item })),
+  showPointCloudViews: showPointCloudViews.value,
+  drawingSimulated: drawingSimulated.value,
+  sharedDrawingId: sharedDrawingId.value,
+  sharedDrawingSource: sharedDrawingSource.value,
+  sharedDrawingViews: sharedDrawingViews.value.map((item) => ({ ...item })),
+  armProfiles: JSON.parse(JSON.stringify(armProfiles)),
+});
+
+let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+const persistSnapshot = () => {
+  const id = activeSession.value?.id;
+  if (!id || !sessionStore.enabled) return;
+  sessionStore.saveSnapshot(id, buildSessionSnapshot());
+};
+
+watch(buildSessionSnapshot, () => {
+  if (!activeSession.value) return;
+  if (snapshotTimer !== undefined) clearTimeout(snapshotTimer);
+  snapshotTimer = setTimeout(persistSnapshot, 500);
+}, { deep: true });
+
+const clearSessionState = () => {
+  if (snapshotTimer !== undefined) clearTimeout(snapshotTimer);
+  snapshotTimer = undefined;
+  activeSession.value = null;
+  resumedFromSession.value = false;
+};
+
+const notifySessionUnavailable = (reason: string | null) => {
+  ElMessage.warning(`上次会话不可续接：${SESSION_REASON_LABELS[reason || ""] || "已失效"}，请重新握手`);
+};
+
+const restoreSessionContext = async (session: ControlSession) => {
+  const snapshot = sessionStore.loadSnapshot<any>(session.id);
+  moduleId.value = Number(session.module_id);
+  initConfig.deviceId = Number(session.device_id ?? session.module_id);
+  moduleX.value = session.x === null ? null : Number(session.x);
+  moduleY.value = session.y === null ? null : Number(session.y);
+  moduleDisplay.value = moduleX.value !== null && moduleY.value !== null
+    ? `模块 ${moduleId.value} (${moduleX.value},${moduleY.value})`
+    : `模块 ${moduleId.value}`;
+
+  // 模式与连接版本以服务端当前配置为准，不用快照里的旧值覆盖
+  await readConnectionContext();
+  if (!isDebugMode.value) {
+    // 真实模式需要图纸列表才能重新下发；拉取失败不阻断续接，只是暂时不能下发图纸
+    try {
+      const drawingRes: any = await getFineTuningDrawingOptions();
+      const drawings = Array.isArray(drawingRes) ? drawingRes : Array.isArray(drawingRes?.data) ? drawingRes.data : [];
+      drawingList.value = drawings.filter((item: any) => Number.isFinite(Number(item.drawingId)));
+    } catch {
+      drawingList.value = [];
+    }
+  }
+  confirmedSeg.value = Number(session.seg);
+  confirmedConnectionRevision.value = session.connection_revision ?? null;
+  confirmedUnitIds.value = session.unit_ids.map((item) => Number(item));
+
+  const unitRes: any = await getUnitsByDeviceApi(initConfig.deviceId);
+  const units = Array.isArray(unitRes) ? unitRes : Array.isArray(unitRes.data) ? unitRes.data : [];
+  const bound = units.filter((item: any) => confirmedUnitIds.value.includes(Number(item.Unit_ID)));
+  armIdList.value = bound.length ? bound : units.filter((item: any) => Number.isFinite(Number(item.id)));
+  if (!armIdList.value.length) {
+    ElMessage.warning("会话对应的模块已没有可用机械臂，请重新握手");
+    return false;
+  }
+
+  for (const key of Object.keys(armProfiles)) delete armProfiles[key];
+  if (snapshot?.armProfiles) {
+    for (const [key, value] of Object.entries(snapshot.armProfiles)) {
+      armProfiles[key] = JSON.parse(JSON.stringify(value));
+    }
+  }
+  sharedDrawingId.value = Number(snapshot?.sharedDrawingId || 0);
+  sharedDrawingSource.value = snapshot?.sharedDrawingSource === "builtin_mock" ? "builtin_mock" : "database";
+  sharedDrawingViews.value = Array.isArray(snapshot?.sharedDrawingViews)
+    ? snapshot.sharedDrawingViews.map((item: any) => ({ ...item }))
+    : [];
+
+  const fallbackUnit = armIdList.value.find((item: any) => Number(item.Unit_ID) === confirmedUnitIds.value[0])
+    || armIdList.value[0];
+  const rowId = Number(snapshot?.selectedArmRowId || 0) || Number(fallbackUnit.id);
+  const profile = armProfiles[String(rowId)];
+  // 快照里的臂可能已被删除或不再属于本次绑定，必须改用仍在会话中的臂
+  const profileUsable = Boolean(profile?.configured) && confirmedUnitIds.value.includes(Number(profile.unitId));
+  if (profileUsable) {
+    selectedArmRowId.value = rowId;
+    restoreArmProfile(profile);
+  } else {
+    // 跨端或快照丢失：按会话绑定重建最小可用状态（图纸需重新下发，不自动继承）
+    resetControlState();
+    const unit = armIdList.value.find((item: any) => Number(item.id) === Number(rowId)) || fallbackUnit;
+    initConfig.unitRowId = Number(unit.id);
+    initConfig.unitId = Number(unit.Unit_ID);
+    initConfig.drawingId = 0;
+    initConfig.drawingSource = "database";
+    selectedArmRowId.value = initConfig.unitRowId;
+    applyAxisEncoding(initConfig.unitId);
+    armList.id = initConfig.unitId;
+    lastLoadedUnitRowId = initConfig.unitRowId;
+    await loadSensorsForUnit(initConfig.unitRowId);
+    // 该臂的绑定仍在，标记为已配置但图纸为空；真实模式下必须重新下发图纸才能下发调整
+    armProfiles[String(initConfig.unitRowId)] = {
+      unitRowId: initConfig.unitRowId,
+      unitId: initConfig.unitId,
+      drawingId: 0,
+      drawingSource: "database",
+      drawingSimulated: false,
+      configured: true,
+      device: cloneDevices(),
+      imu: { ...imuFeedback },
+      pressureSensorId: Number(pressureSensorId.value || 0),
+      feedbackMarks: Object.fromEntries(FEEDBACK_FIELDS.map((field) => [field, { ...feedbackMarks[field] }])),
+      pointCloudViews: [],
+      showPointCloudViews: false,
+      batch: null,
+      ackEvents: [],
+    };
+  }
+  initDialogVisible.value = false;
+  busy.value = Boolean(batchState.value?.target_locked);
+  if (!feedbackSocket) connectFeedbackSocket();
+  if (batchState.value?.target_locked) startBatchPolling();
+  activeSession.value = session;
+  resumedFromSession.value = true;
+  return true;
+};
+
+const tryResumeSession = async (expectedModuleId: number | null, explicitSessionId?: string) => {
+  if (!sessionStore.enabled) return false;
+  try {
+    // 没有显式会话参数时先看是否有可续接记录，避免每次进页面都发两个请求
+    let targetId = explicitSessionId || '';
+    if (!targetId) {
+      const state = (await getControlSession(sessionStore.ttlSeconds)).data;
+      if (!state.session) return false;
+      targetId = state.session.id;
+    }
+    // 有效性以服务端判定为准，并滑动有效期（从最后一次续接起算）
+    const result = (await resumeControlSession(targetId, sessionStore.ttlSeconds)).data;
+    if (!result?.valid || !result.session) {
+      if (explicitSessionId) notifySessionUnavailable(result?.reason ?? null);
+      return false;
+    }
+    const session = result.session;
+    if (expectedModuleId !== null && Number(session.module_id) !== Number(expectedModuleId)) {
+      // 从模块管理改选了别的模块：必须重新握手，不能套用旧会话
+      return false;
+    }
+    if (!(await restoreSessionContext(session))) return false;
+    ElMessage.success("已续接上次微调会话，未重新握手");
+    return true;
+  } catch {
+    // 后端不可用时退回正常握手流程，不冒充续接成功
+    return false;
+  }
+};
+
+const endSession = async () => {
+  const session = activeSession.value;
+  if (!session) return;
+  if (busy.value) {
+    ElMessage.warning("存在执行中的调整，请处理完成后再结束会话");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      "结束会话只清除 MES 的续接记录，不会解绑设备、不会发送任何指令。之后进入微调页需要重新握手。",
+      "结束微调会话",
+      { type: "warning", confirmButtonText: "结束会话", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+  try {
+    await closeControlSession(session.id);
+  } catch {
+    /* 拦截器已提示；仍清除本机快照，避免用失效记录误导下次续接 */
+  }
+  sessionStore.clearSnapshot(session.id);
+  clearSessionState();
+  ElMessage.success("已结束会话记录；本次微调可继续操作，离开后需重新握手");
+};
+
+// ========== 局部停（分级急停） ==========
+// 只锁本模块或本轴；全局急停仍走侧栏长按，不复用本流程。
+const stopHolds = ref<LocalStopHold[]>([]);
+const stopBusy = ref(false);
+const axisStopOptions = [
+  { index: 0, label: '旋转' },
+  { index: 1, label: '摆动' },
+  { index: 2, label: '伸缩' },
+];
+const moduleHolds = computed(() =>
+  stopHolds.value.filter((hold) => Number(hold.module_id) === Number(moduleId.value)),
+);
+const hasLocalStop = computed(() => moduleHolds.value.length > 0);
+const localStopText = computed(() =>
+  moduleHolds.value
+    .map((hold) => (hold.scope === 'module' ? '整模块' : `轴 ${hold.device_id}`))
+    .join('、'),
+);
+
+const loadStopHolds = async () => {
+  try {
+    stopHolds.value = (await getLocalStopHolds()).data.holds ?? [];
+  } catch {
+    /* 读取失败已由拦截器提示；不假设“没有局部停”而放开下发 */
+  }
+};
+
+const sendLocalStop = async (payload: { scope: 'module' | 'axis'; device_id?: number }) => {
+  if (stopBusy.value) return;
+  if (!moduleId.value) {
+    ElMessage.warning('未进入模块会话，无法执行局部停');
+    return;
+  }
+  stopBusy.value = true;
+  try {
+    const res = await requestLocalStop({
+      module_id: Number(moduleId.value),
+      ...payload,
+      ...(confirmedConnectionRevision.value !== null
+        ? { connection_revision: confirmedConnectionRevision.value }
+        : {}),
+    });
+    ElMessage.warning(res.message || '局部停已记录');
+    await loadStopHolds();
+    if (batchState.value?.id) void pollBatch();
+  } catch {
+    // 发送失败同样会留 MES 锁，刷新以显示真实状态
+    await loadStopHolds();
+  } finally {
+    stopBusy.value = false;
+  }
+};
+
+const stopAxis = (index: number) => {
+  const deviceId = Number(armList.device[index]?.deviceId || 0);
+  if (!deviceId) {
+    ElMessage.warning('当前轴号未就绪，无法单轴停');
+    return;
+  }
+  return sendLocalStop({ scope: 'axis', device_id: deviceId });
+};
+
+const clearLocalStops = async () => {
+  if (stopBusy.value) return;
+  try {
+    await ElMessageBox.confirm(
+      '清除只恢复 MES 的下发能力，不会发送解除或运动指令。若设备侧仍锁存，需要按现场规程处理后再运动。',
+      '清除局部停记录',
+      { type: 'warning', confirmButtonText: '清除记录', cancelButtonText: '取消' },
+    );
+  } catch {
+    return;
+  }
+  stopBusy.value = true;
+  try {
+    const res = await clearLocalStopHolds(Number(moduleId.value));
+    ElMessage.success(`已清除 ${res.data.cleared} 条局部停记录；未发送任何指令`);
+    await loadStopHolds();
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    stopBusy.value = false;
+  }
+};
+
+
 // ========== 6. 页面初始化 ==========
 const connectionChanged = () => {
+  // 服务端已因连接变更作废全部会话，本机快照同样不能再用
+  sessionStore.clearSnapshot();
+  clearSessionState();
+  // 局部停记录按环境保存，连接变更后需重新读取
+  void loadStopHolds();
   initDialogVisible.value = false;
   confirmedSeg.value = null;
   confirmedConnectionRevision.value = null;
@@ -1112,10 +1498,18 @@ const connectionChanged = () => {
 onMounted(async () => {
   window.addEventListener?.('ros-connection-changed', connectionChanged);
   feedbackTimer = setInterval(() => { feedbackClock.value = performance.now(); }, 500);
+  // 局部停记录按环境保存在后端：进入页面先读一次，随后低频刷新以反映其他窗口的操作
+  void loadStopHolds();
+  stopHoldTimer = setInterval(() => { void loadStopHolds(); }, 8000);
   const qModuleId = route.query.module_id;
   const qDeviceId = route.query.device_id ?? route.query.Device_ID;
   const qX = route.query.x;
   const qY = route.query.y;
+  const qSession = typeof route.query.session === 'string' ? route.query.session : undefined;
+  const expectedModuleId = qModuleId ? parseInt(qModuleId as string, 10) : null;
+
+  // 会话保持开启时优先续接：不弹握手弹窗、不发送模块确认（下位机无需断电重绑）
+  if (await tryResumeSession(expectedModuleId, qSession)) return;
 
   if (qModuleId) {
     moduleId.value = parseInt(qModuleId as string);
@@ -1127,8 +1521,10 @@ onMounted(async () => {
 
   const lockedDeviceId = qDeviceId ? Number(qDeviceId) : Number(moduleId.value);
   initConfig.deviceId = lockedDeviceId;
-  moduleDisplay.value = qX && qY
-    ? `模块 ${moduleId.value} (${qX},${qY})`
+  moduleX.value = qX ? Number(qX) : null;
+  moduleY.value = qY ? Number(qY) : null;
+  moduleDisplay.value = moduleX.value !== null && moduleY.value !== null
+    ? `模块 ${moduleId.value} (${moduleX.value},${moduleY.value})`
     : `模块 ${moduleId.value}`;
 
   try {
@@ -1187,9 +1583,11 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  persistSnapshot();
   window.removeEventListener?.('ros-connection-changed', connectionChanged);
   if (batchTimer !== undefined) clearInterval(batchTimer);
   if (feedbackTimer !== undefined) clearInterval(feedbackTimer);
+  if (stopHoldTimer !== undefined) clearInterval(stopHoldTimer);
   if (feedbackSocket) {
     feedbackSocket.close();
     feedbackSocket = null;
@@ -1200,6 +1598,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .batch-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+.local-stop-alert { width: min(100%, 980px); }
+.local-stop-alert :deep(.el-alert__content) { width: 100%; }
+.local-stop-alert p { margin: 4px 0 10px; font-size: 13px; line-height: 1.6; }
+.local-stop-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 6px; }
+.local-stop-title { color: #b91c1c; font-size: 13px; font-weight: 600; }
+.local-stop-hint { color: #718096; font-size: 12px; }
 .batch-controls span, .batch-progress p { color: #606266; font-size: 13px; }
 .batch-progress { padding: 16px; border: 1px solid #e4e7ed; border-radius: 8px; }
 .ack-card { width: min(100%, 980px); }
@@ -1365,6 +1769,14 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.save-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .control-heading {

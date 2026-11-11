@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from app.core.config import settings
 from app.db import models
 from app.db.database import SessionLocal
+from app.ros.control_session import session_manager
 
 
 class ConnectionSettings(BaseModel):
@@ -88,6 +89,8 @@ class RuntimeSettings:
             row.revision, row.config_json = revision, config.model_dump_json()
             db.commit()
             self._config, self._revision = config, revision
+            # 地址/模式变更后，旧会话的组号与目标不再可信，统一作废要求重新握手。
+            session_manager.invalidate_all(db)
             return self.snapshot()
 
     @contextmanager

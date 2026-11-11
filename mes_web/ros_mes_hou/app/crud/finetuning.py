@@ -83,12 +83,17 @@ def save_fine_tuning_config(
     creater_id: int = 1,
 ):
     config_dict: Dict[str, Any] = config.model_dump()
+    # 备注列：校零保存时写入"校零…"，普通微调保存留空
+    notes = config.notes
+    if config.calibrated and not notes:
+        notes = "校零：三轴基准初始值按 0 记录（人工下发归位后保存）"
     db_config = models.FineTuningConfig(
         module_id=config.module_id,
         unit_id=config.unit_id,
         sensor_id=int(config.sensor_id),
         config_json=json.dumps(config_dict, ensure_ascii=False),
         creater_id=creater_id,
+        notes=notes,
     )
     db.add(db_config)
     db.commit()

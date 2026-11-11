@@ -87,6 +87,9 @@ export function saveFineTuningConfigApi(data: {
 	y?: number | null;
 	z?: number | null;
 	feedback_state?: Record<string, { status: string; age_ms: number | null }>;
+	// 校准标记与备注：校零保存时写入数据库备注
+	calibrated?: boolean;
+	notes?: string | null;
 	moduleId?: number;
 	deviceId?: number;
 	configJson?: string;

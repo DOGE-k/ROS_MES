@@ -1,9 +1,12 @@
 # app/api/endpoints/module.py
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from sqlalchemy.orm import Session
 
+from app.db.database import get_db
 from app.ros import get_ros_dispatcher
 from app.ros.base import RosbridgeError
+from app.ros.control_session import session_manager
 from app.ros.rosbridge import (
     build_module_confirm_publish_payload,
     resolve_arm_from_unit_id,
@@ -20,8 +23,28 @@ def first_not_none(*values):
     return None
 
 
+def _register_session(db, *, module_id, seg, device_id, x, y, unit_ids, dispatcher) -> dict:
+    """握手成功后登记可续接会话。
+
+    写入失败不影响已完成的物理握手，但必须在响应里如实标注 session_error，
+    前端据此提示“本次不可续接”，不能让失败看起来像成功。
+    """
+    if not isinstance(db, Session):
+        # 直接调用（内部脚本/单测未解析 Depends）时不落会话
+        return {"session_id": None, "session_error": "no_db"}
+    try:
+        record = session_manager.create(
+            db, module_id=module_id, seg=seg, unit_ids=unit_ids, device_id=device_id,
+            x=x, y=y, connection_revision=getattr(dispatcher, "revision", None),
+        )
+        return {"session_id": record["id"], "session": record}
+    except Exception as exc:  # SQLite 写锁等异常不应把已完成的握手判为失败
+        print(f"[会话] 登记失败，本次不可续接：{exc}")
+        return {"session_id": None, "session_error": str(exc)}
+
+
 @router.post("/")
-def lock_and_dispatch_module(payload: dict = Body(...), dispatcher=None):
+def lock_and_dispatch_module(payload: dict = Body(...), db: Session = Depends(get_db), dispatcher=None):
     dispatcher = dispatcher or get_ros_dispatcher()
     if payload.get("connection_revision") is not None and payload["connection_revision"] != getattr(dispatcher, "revision", None):
         raise HTTPException(409, "连接设置已更改，请重新读取设置后确认机械臂")
@@ -131,7 +154,9 @@ def lock_and_dispatch_module(payload: dict = Body(...), dispatcher=None):
         "code": 200,
         "message": "module locked and confirmation command dispatched",
         "data": {**dispatch_payload, "seg": seg, "confirmations": confirmations,
-                 "connection_revision": getattr(dispatcher, "revision", None)},
+                 "connection_revision": getattr(dispatcher, "revision", None),
+                 **_register_session(db, module_id=module_id, seg=seg, device_id=device_id, x=x, y=y,
+                                     unit_ids=unit_ids, dispatcher=dispatcher)},
         "dispatch": {
             "action": "module_confirm",
             "confirmed": True,
