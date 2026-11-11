@@ -183,11 +183,16 @@
           <el-button v-if="!busy && !isReady" @click="openConfiguration">重新配置机械臂</el-button>
         </div>
         <div v-if="batchState" class="batch-progress">
-          <el-alert :title="batchState.message" :type="batchState.status === 'completed' ? 'success' : 'warning'" :closable="false" />
+          <el-alert
+            :title="batchState.message"
+            :type="batchState.status === 'completed' ? (hasStepWarnings ? 'warning' : 'success') : 'warning'"
+            :closable="false"
+          />
           <p v-for="step in batchState.steps" :key="step.parameter_name">
             {{ axisLabels[step.parameter_name] }}：{{ step.position }}{{ step.parameter_name === 'telescopic' ? 'mm' : '°' }} · {{ stepLabels[step.status] || step.status }}
+            <span v-if="step.warning" class="step-warning">{{ step.warning }}</span>
           </p>
-          <el-button @click="pollBatch">刷新执行状态</el-button>
+          <el-button @click="pollBatch(false)">刷新执行状态</el-button>
           <el-button v-if="batchState.id && ['queued', 'checking', 'executing'].includes(batchState.status)" type="warning" @click="interruptBatch">停止后续下发</el-button>
           <el-button v-if="batchState.id && batchState.status === 'uncertain'" type="warning" @click="acknowledgeBatch">{{ batchState.simulated ? '已核实模拟记录，关闭批次' : '已现场核实，关闭待确认批次' }}</el-button>
           <p>“停止后续下发”不停止正在运动的轴；需要立即停止时请使用全局急停。</p>
@@ -379,6 +384,8 @@ let batchTimer: ReturnType<typeof setInterval> | undefined;
 let stopHoldTimer: ReturnType<typeof setInterval> | undefined;
 let batchPolling = false;
 let appliedSimulationId = '';
+// 每个批次只提示一次“到位误差超容差”，避免每秒轮询重复弹窗
+const warnedDeviationBatches = new Set<string>();
 const axisLabels: Record<string, string> = { rotation: '旋转', swing: '摆动', telescopic: '伸缩' };
 const stepLabels: Record<string, string> = { pending: '未下发', sent_unconfirmed: '已发送，等待运行和到位', completed: '已观测到完成', uncertain: '已发送，结果待核实' };
 let feedbackSocket: WebSocket | null = null;
@@ -459,6 +466,8 @@ const armNumber = (unitId: number) => {
 
 const adjustmentKeys: AxisParameterName[] = ["rotation", "swing", "telescopic"];
 const hasPendingAdjustments = computed(() => armList.device.slice(0, 3).some(item => Number(item.adjust) !== 0));
+// 到位误差超容差只做提示，不影响批次状态与下发能力
+const hasStepWarnings = computed(() => Boolean(batchState.value?.steps?.some(step => step.warning)));
 // 反馈 device_id → 轴下标映射：按选中机械臂的 V2 轴号动态构建，见 rebuildFeedbackIndex
 let feedbackDeviceIndex: Record<number, number> = {};
 // 当前选中机械臂的臂级传感器（压力/IMU 共用）device_id 与压力传感器 sensor_ID
@@ -933,6 +942,10 @@ const applyBatch = (batch: FineTuningBatch) => {
   if (batch.module_id !== Number(moduleId.value) || batch.unit_id !== Number(initConfig.unitId)) return;
   batchState.value = batch;
   busy.value = batch.target_locked;
+  if (batch.status === 'completed' && batch.steps.some(step => step.warning) && !warnedDeviationBatches.has(batch.id)) {
+    warnedDeviationBatches.add(batch.id);
+    ElMessage.warning('本批次有轴到位误差超出容差，已记录提示；不影响后续下发');
+  }
   for (const step of batch.steps) {
     if (step.status !== 'completed') continue;
     const index = adjustmentKeys.indexOf(step.parameter_name as AxisParameterName);
@@ -951,7 +964,24 @@ const applyBatch = (batch: FineTuningBatch) => {
   saveActiveProfile();
 };
 
-const pollBatch = async () => {
+// 手动点“刷新执行状态”时回执一次，自动轮询保持静默，避免每秒弹提示
+const batchStatusLabels: Record<string, string> = {
+  submitting: '正在登记请求',
+  queued: '排队中，尚未发送运动指令',
+  checking: '正在检查三轴状态',
+  executing: '执行中',
+  completed: '本批次各轴已完成',
+  blocked: '尚未发送即受阻',
+  uncertain: '结果待核实',
+  closed: '已人工核实关闭',
+};
+
+const pollBatch = async (silent = true) => {
+  if (!silent) {
+    if (batchPolling) { ElMessage.info('正在刷新，请稍候'); return; }
+    if (!batchState.value) { ElMessage.info('当前没有可刷新的批次'); return; }
+    if (noRosDebug && batchState.value.simulated) { ElMessage.info('当前为无 ROS 模拟批次，状态由本页模拟推进'); return; }
+  }
   if (batchPolling || !batchState.value || (noRosDebug && batchState.value.simulated)) return;
   const requestedBatch = batchState.value;
   const isCurrent = () => batchState.value === requestedBatch &&
@@ -965,10 +995,18 @@ const pollBatch = async () => {
     if (result.data) {
       if (result.data.request_id !== requestedBatch.request_id || (requestedBatch.id && result.data.id !== requestedBatch.id)) return;
       applyBatch(result.data);
+      if (!silent) {
+        const label = batchStatusLabels[requestedBatch.status] || requestedBatch.status;
+        ElMessage.success(`已刷新 · ${label} · ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`);
+      }
     }
-    else requestedBatch.message = '暂未找到提交记录，结果仍待核实；请勿重新提交增量';
+    else {
+      requestedBatch.message = '暂未找到提交记录，结果仍待核实；请勿重新提交增量';
+      if (!silent) ElMessage.warning('没有查到这条批次记录，结果仍需现场核实');
+    }
   } catch {
     if (isCurrent()) requestedBatch.message = '执行状态查询失败；不会重发指令，请恢复连接后查询';
+    if (!silent) ElMessage.error('执行状态查询失败；未重发任何指令');
   } finally {
     batchPolling = false;
   }
@@ -1605,6 +1643,7 @@ onBeforeUnmount(() => {
 .local-stop-title { color: #b91c1c; font-size: 13px; font-weight: 600; }
 .local-stop-hint { color: #718096; font-size: 12px; }
 .batch-controls span, .batch-progress p { color: #606266; font-size: 13px; }
+.step-warning { margin-left: 8px; color: #b45309; }
 .batch-progress { padding: 16px; border: 1px solid #e4e7ed; border-radius: 8px; }
 .ack-card { width: min(100%, 980px); }
 .ack-raw { white-space: pre-wrap; overflow-wrap: anywhere; }

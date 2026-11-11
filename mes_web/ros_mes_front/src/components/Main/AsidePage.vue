@@ -60,33 +60,42 @@
 
     <!-- 底部急停区：上为分级局部停，下为整机急停 -->
     <div class="sidebar-bottom">
-      <el-button
-          class="module-stop-btn"
-          :class="{ 'is-collapsed': layoutStore.fold }"
-          @click="openLocalStop"
-      >
-        <span v-if="!layoutStore.fold">
-          停模块 / 停轴
-          <span v-if="localStopVisibleCount" class="stop-count">{{ localStopVisibleCount }}</span>
-        </span>
-        <span v-else>停</span>
-      </el-button>
-      <el-button
-          class="e-stop-btn"
-          :class="{ 'pressing': isPressing, 'is-collapsed': layoutStore.fold }"
-          @mousedown="startLongPress"
-          @mouseup="cancelLongPress"
-          @mouseleave="cancelLongPress"
-          @touchstart="startLongPress"
-          @touchend="cancelLongPress"
-          @touchcancel="cancelLongPress"
-      >
-        <span v-if="!layoutStore.fold" class="e-stop-inner">
-          <span class="e-stop-dot"></span>
-          长按两秒急停
-        </span>
-        <span v-else style="font-size: 13px; letter-spacing: 0;">急停</span>
-      </el-button>
+      <div class="stop-stack">
+        <el-button
+            class="module-stop-btn"
+            :class="{ 'is-collapsed': layoutStore.fold }"
+            @click="openLocalStop"
+        >
+          <span class="module-stop-inner">
+            <span v-if="!layoutStore.fold" class="module-stop-dot"></span>
+            <span>{{ layoutStore.fold ? '停' : '停模块 / 停轴' }}</span>
+          </span>
+          <span
+            v-if="localStopVisibleCount"
+            class="stop-count"
+            :class="{ 'is-collapsed': layoutStore.fold }"
+          >{{ localStopVisibleCount }}</span>
+        </el-button>
+
+        <div v-if="!layoutStore.fold" class="stop-divider"></div>
+
+        <el-button
+            class="e-stop-btn"
+            :class="{ 'pressing': isPressing, 'is-collapsed': layoutStore.fold }"
+            @mousedown="startLongPress"
+            @mouseup="cancelLongPress"
+            @mouseleave="cancelLongPress"
+            @touchstart="startLongPress"
+            @touchend="cancelLongPress"
+            @touchcancel="cancelLongPress"
+        >
+          <span v-if="!layoutStore.fold" class="e-stop-inner">
+            <span class="e-stop-dot"></span>
+            长按两秒急停
+          </span>
+          <span v-else class="e-stop-collapsed-text">急停</span>
+        </el-button>
+      </div>
     </div>
 
   </div>
@@ -426,51 +435,107 @@ onBeforeUnmount(() => {
 
 /* ===== 底部急停 ===== */
 .sidebar-bottom {
-  padding: 10px;
+  padding: 12px 10px 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.module-stop-btn {
+/* 两行按钮共用同一套尺寸，避免一高一矮、字号不一 */
+.stop-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   width: 100%;
-  height: 36px;
-  margin-bottom: 8px;
+}
+
+/* Element Plus 默认给相邻 el-button 加 margin-left，会把第二个按钮顶出侧栏 */
+.stop-stack :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.module-stop-btn,
+.e-stop-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 42px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: 10px;
   font-size: 13px;
   letter-spacing: 1px;
+  line-height: 1;
+}
+
+.module-stop-btn {
   color: #fbbf24;
   border: 1px solid rgba(245, 158, 11, 0.45) !important;
   background: rgba(245, 158, 11, 0.12);
-  border-radius: 10px;
-  padding: 0;
+  box-shadow: none;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 }
 
 .module-stop-btn:hover {
   color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.72) !important;
   background: rgba(245, 158, 11, 0.2);
 }
 
+.module-stop-btn:active {
+  background: rgba(245, 158, 11, 0.28);
+}
+
 .module-stop-btn.is-collapsed {
-  font-size: 13px;
   letter-spacing: 0;
 }
 
+.module-stop-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.module-stop-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+}
+
+/* 分级停 / 整机急停之间的细分隔，避免两块糊在一起 */
+.stop-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
 .stop-count {
-  display: inline-block;
-  min-width: 16px;
-  margin-left: 6px;
-  padding: 0 4px;
-  border-radius: 8px;
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
   background: #dc2626;
   color: #fff;
   font-size: 11px;
-  line-height: 16px;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.55);
+}
+
+.stop-count.is-collapsed {
+  top: 3px;
+  right: 3px;
+  transform: none;
 }
 
 .e-stop-btn {
-  width: 100%;
-  height: 44px;
-  font-size: 14px;
-  font-weight: bold;
-  letter-spacing: 2px;
+  font-weight: 600;
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
   color: #fff;
   /* 保留原有的长按进度机制：背景从右向左推进 */
@@ -478,13 +543,16 @@ onBeforeUnmount(() => {
   background-size: 200% 100%;
   background-position: 100% 0;
   transition: background-position 0s, transform 0.2s ease, box-shadow 0.2s ease;
-  padding: 0;
-  border-radius: 10px;
   box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
 }
 
 .e-stop-btn:hover {
   box-shadow: 0 6px 18px rgba(220, 38, 38, 0.5);
+}
+
+.e-stop-collapsed-text {
+  font-size: 13px;
+  letter-spacing: 0;
 }
 
 .e-stop-inner {

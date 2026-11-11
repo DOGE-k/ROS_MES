@@ -28,18 +28,19 @@ def position(axis, value=0, seg=0):
             "module_id_space": "seg", "module_id": seg, "device_id": axis, "position": value, "position_valid": True}
 
 
-def arrive(axis, value, seg=0):
+def arrive(axis, value, seg=0, pos_error=0):
     return {"data_type": "arrive_notification", "module_id_space": "seg", "module_id": seg, "device_id": axis,
-            "angle": round(value * 100), "pos_error": 0, "status_bits": 5, "flags": 3}
+            "angle": round(value * 100), "pos_error": pos_error, "status_bits": 5, "flags": 3}
 
 
 class FakeClient:
     profile = ROS1_PROFILE
 
-    def __init__(self, *, initial=True, complete=False):
+    def __init__(self, *, initial=True, complete=False, arrive_offset=0.0):
         self.queue = asyncio.Queue()
         self.sent = []
         self.complete = complete
+        self.arrive_offset = arrive_offset
         self.positions = {1: 0, 2: 0, 3: 0}
         if initial:
             for axis in self.positions:
@@ -55,14 +56,14 @@ class FakeClient:
         self.sent.append(payload)
         axis = payload["message"]["device_id"]
         if self.complete:
-            self.finish(axis, payload["message"]["position"][0])
+            self.finish(axis, payload["message"]["position"][0], arrive_offset=self.arrive_offset)
         return {"sent": True}
 
-    def finish(self, axis, increment, *, run=True):
+    def finish(self, axis, increment, *, run=True, arrive_offset=0.0, pos_error=0):
         self.positions[axis] += increment
         if run:
             self.queue.put_nowait(status(axis, 1, 259))
-        self.queue.put_nowait(arrive(axis, self.positions[axis]))
+        self.queue.put_nowait(arrive(axis, self.positions[axis] + arrive_offset, pos_error=pos_error))
         for did, value in self.positions.items():
             self.queue.put_nowait(position(did, value))
             self.queue.put_nowait(status(did, 2 if did == axis else 0))
@@ -137,6 +138,35 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
         await task
         self.assertEqual("uncertain", self.manager.get(job["id"])["status"])
         self.assertEqual(1, len(client.sent))
+
+    async def test_arrival_outside_tolerance_completes_with_warning_instead_of_locking(self):
+        client = FakeClient()
+        job, task = await self.start(client)
+        await self.wait_sent(client)
+        # 实际到位比期望多 0.45°，超出 0.2° 容差：只记提示，仍算这一轴完成并继续下一轴
+        client.finish(1, 2, arrive_offset=0.45)
+        await self.wait_sent(client, 2)
+        self.manager.interrupt(job["id"])
+        await task
+
+        step = self.manager.get(job["id"])["steps"][0]
+        self.assertEqual("completed", step["status"])
+        self.assertAlmostEqual(0.45, step["deviation"], places=2)
+        self.assertIn("相差 +0.45", step["warning"])
+        self.assertIn("不阻止", step["warning"])
+
+    async def test_out_of_tolerance_arrival_keeps_dispatch_available(self):
+        client = FakeClient(complete=True, arrive_offset=0.45)
+        job, task = await self.start(client)
+        await task
+
+        result = self.manager.get(job["id"])
+        self.assertEqual("completed", result["status"])
+        self.assertFalse(result["target_locked"])
+        self.assertTrue(all(step.get("warning") for step in result["steps"]))
+        self.assertIn("未阻止下发", result["message"])
+        # 容差不再锁批次：同一机械臂可以立刻开下一批
+        await self.manager.start(self.request("request_002"), client, 1)
 
     async def test_missing_initial_feedback_blocks_without_sending(self):
         client = FakeClient(initial=False)

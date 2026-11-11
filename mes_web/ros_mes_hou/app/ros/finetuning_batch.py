@@ -393,13 +393,30 @@ class BatchManager:
                     elif kind == "arrive_notification" and ran_at is not None and at >= ran_at:
                         bits, flags, angle, error = (item.get(key) for key in ("status_bits", "flags", "angle", "pos_error"))
                         tolerance = 0.1 if step["parameter_name"] == "telescopic" else 0.2
+                        # 硬条件：收到到位事件、基准有效、无超位/故障、带角度与误差字段
                         arrived = (isinstance(bits, int) and isinstance(flags, int) and bool(bits & 4) and bool(flags & 1)
-                            and not bits & ((1 << 5) | (1 << 7)) and number(angle) and number(error)
-                            and abs(angle / 100.0 - expected) <= tolerance and abs(error / 100.0) <= tolerance)
+                            and not bits & ((1 << 5) | (1 << 7)) and number(angle) and number(error))
+                        if arrived:
+                            # 容差只做提示：现场确认过"误差过大也要能继续下发"，因此不参与判定、不锁批次
+                            deviation = round(angle / 100.0 - expected, 3)
+                            error_value = round(error / 100.0, 3)
+                            step["observed_angle"] = round(angle / 100.0, 3)
+                            step["deviation"] = deviation
+                            step["position_error"] = error_value
+                            if abs(deviation) > tolerance or abs(error_value) > tolerance:
+                                step["warning"] = (
+                                    f"到位角 {angle / 100.0:.2f} 与期望 {expected:.2f} 相差 {deviation:+.2f}"
+                                    f"（容差 {tolerance}），仅提示，不阻止后续轴"
+                                )
                 step["status"] = "completed"
-                self._save(batch_id, "executing", f"轴 {axis} 已观测到运行、目标到位及空闲", steps)
+                warning_note = f"；{step['warning']}" if step.get("warning") else ""
+                self._save(batch_id, "executing", f"轴 {axis} 已观测到运行、目标到位及空闲{warning_note}", steps)
             self._check(batch_id, generation)
-            self._save(batch_id, "completed", "本批次各轴已观测到运行、目标到位和空闲反馈", steps, unlock=True)
+            deviations = [step for step in steps if step.get("warning")]
+            message = "本批次各轴已观测到运行、目标到位和空闲反馈"
+            if deviations:
+                message += f"；{len(deviations)} 个轴到位误差超出容差，已记录提示但未阻止下发"
+            self._save(batch_id, "completed", message, steps, unlock=True)
         except (Exception, asyncio.CancelledError) as exc:
             for step in steps:
                 if step["status"] == "sent_unconfirmed":

@@ -75,7 +75,7 @@ function setup(t, options = {}) {
   if (options.debug !== undefined) settings.skipDrawingBinding = options.debug;
   const calls = { drawings: 0, confirms: [], coordinates: [], saves: [], adjusts: [], events: [], sockets: [], polls: 0, interrupts: 0, acknowledgements: 0, sessions: 0, resumes: 0, closes: 0, stops: [], holdReads: 0, holdClears: [] };
   let latestBatch;
-  const warnings = [], errors = [], navigations = [], mounted = [], unmounted = [];
+  const warnings = [], errors = [], messages = [], navigations = [], mounted = [], unmounted = [];
   let now = 1000;
   const timers = new Map();
   const units = [{ id: 1, Unit_ID: 32 }, { id: 2, Unit_ID: 64 }];
@@ -146,7 +146,7 @@ function setup(t, options = {}) {
   const page = scope.run(() => evaluate(descriptor.scriptSetup.content, {
     vue: { ...vue, onMounted(callback) { mounted.push(callback); }, onBeforeUnmount(callback) { unmounted.push(callback); } },
     'vue-router': { useRoute: () => ({ query: options.query || { module_id: 17, device_id: 17, x: 1, y: 1 } }), useRouter: () => ({ push: target => navigations.push(target) }) },
-    'element-plus': { ElMessageBox: { confirm: async () => { if (options.cancelAcknowledge) throw new Error('cancel'); } }, ElMessage: { success() {}, warning: text => warnings.push(text), error: text => errors.push(text) } },
+    'element-plus': { ElMessageBox: { confirm: async () => { if (options.cancelAcknowledge) throw new Error('cancel'); } }, ElMessage: { success: text => messages.push(['success', text]), info: text => messages.push(['info', text]), warning: text => warnings.push(text), error: text => errors.push(text) } },
     '@element-plus/icons-vue': { ArrowLeft: {} },
     '@/api/rosApi': { ...api, async getFineTuningDrawingOptions() {
       const result = await api.getDrawingListApi();
@@ -197,7 +197,7 @@ function setup(t, options = {}) {
     localStorage: localStore, sessionStorage: snapshotStore,
     WebSocket: FeedbackSocket, console: { warn() {}, error() {}, log() {} },
   }, bindings));
-  return { page, calls, settings, warnings, errors, navigations, timers, storages: { local: localStore, session: snapshotStore },
+  return { page, calls, settings, warnings, errors, messages, navigations, timers, storages: { local: localStore, session: snapshotStore },
     sessionSettings: () => sessionModule.useFineTuningSessionStore(container),
     advance(milliseconds) { now += milliseconds; timers.forEach(callback => callback()); },
     elapseWithoutTimers(milliseconds) { now += milliseconds; },
@@ -275,6 +275,42 @@ test('lost submission response retains request identity and queries instead of r
   assert.equal(h.page.batchState.value.request_id, submitted.request_id);
   assert.equal(h.calls.adjusts.length, 1);
   assert.equal(h.calls.polls, 1);
+});
+
+test('manual refresh confirms the returned status instead of silently re-rendering', async t => {
+  const h = setup(t, { debug: true, poll: async () => {
+    const payload = h.calls.adjusts[0];
+    return batch({ id: 'test-batch', request_id: payload.request_id, status: 'completed', target_locked: false,
+      steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed' })) });
+  } });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  h.messages.length = 0;
+
+  await h.page.pollBatch(false);
+
+  assert.equal(h.calls.polls, 1);
+  assert.ok(h.messages.some(([level, text]) => level === 'success' && String(text).includes('本批次各轴已完成')));
+});
+
+test('out-of-tolerance arrival warns the operator but keeps dispatch available', async t => {
+  assert.match(descriptor.template.content, /step\.warning/);
+  const warning = '到位角 3.60 与期望 3.15 相差 +0.45（容差 0.2），仅提示，不阻止后续轴';
+  const h = setup(t, { debug: true, adjust: async payload => ({ code: 200, data: {
+    id: 'test-batch', request_id: payload.request_id, module_id: 17, unit_id: 32, seg: 0,
+    status: 'completed', target_locked: false,
+    message: '本批次各轴已观测到运行、目标到位和空闲反馈；1 个轴到位误差超出容差，已记录提示但未阻止下发',
+    steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed', deviation: 0.45, warning })),
+  } }) });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+
+  // 批次不再因此锁住，可以继续下发
+  assert.equal(h.page.busy.value, false);
+  assert.equal(h.page.batchState.value.status, 'completed');
+  assert.ok(h.warnings.some(text => String(text).includes('到位误差超出容差')));
 });
 
 test('a restored completed batch can load drawings and begin a new configuration session', async t => {

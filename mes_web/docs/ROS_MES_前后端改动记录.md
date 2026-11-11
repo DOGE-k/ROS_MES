@@ -11,6 +11,28 @@
 
 ---
 
+## 2026-11-11（到位误差容差改为“只提示、不阻止”，已完成）
+
+- 背景：另一侧排查到批次 `expected_position=3.15` 而实际到位 3.60°，差 0.45° 超出 0.2° 容差，60 秒后转 `uncertain` 并保留 `target_locked`，导致前端一直警告、下发按钮禁用。用户决定：**去掉到位容差这个判定条件，误差过大可以弹警告，但不能限制下发**。
+- 后端 [finetuning_batch.py](../ros_mes_hou/app/ros/finetuning_batch.py)：`arrived` 只保留硬条件（收到到位事件、`status_bits & 4`、`flags & 1`、无超位/故障、带 angle 与 pos_error）；角度差与 `pos_error` 超阈值时写入 `steps[].deviation / observed_angle / position_error / warning`，该轴仍记 `completed`，继续下一轴；批次完成消息追加“N 个轴到位误差超出容差，已记录提示但未阻止下发”，`unlock=True` 照常解锁。
+- 前端 [FineTuningPage.vue](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)：批次面板在对应轴后面用琥珀色显示 warning 文案；有 warning 时完成提示条改为黄色；每个批次只弹一次「到位误差超出容差，不影响后续下发」的 toast（`warnedDeviationBatches` 去重，避免每秒轮询重复）。`FineTuningBatch.steps` 类型补 `expected_position/observed_angle/deviation/position_error/warning`。
+- 保留的硬判定（未放松）：没观测到 RUN → 仍按待核实；完全没收到到位事件 → 60 秒超时转 `uncertain` 并保留锁；限位/故障/失压/并行运动 → 停止后续下发。
+- 验证（2026-11-11 21:24，本机 Windows）：
+  - 后端 `test_finetuning_batch.py` **16 条 OK**（新增 2 条：到位超差 0.45° 仍记 completed 且带 warning；超差批次 completed + 解锁且可立刻开下一批）；全量 **Ran 173, OK**。
+  - 前端 `npm run test:finetuning` **100 pass / 0 fail**（新增 1 条：超差完成后 busy=false、状态 completed、弹一次 warning）；`vue-tsc` 与 `npm run build` 通过。
+  - 运行中的后端已重启（`--reload` 实测未生效，改为不带 reload 启动；启动时把旧 worker 进程一并清理）。
+- `???` 风险与未验证：容差不再拦截后，**真机"实际没到位"也会被记成完成**，只剩提示；是否接受由现场按 `warning` 判断。真机未验证超差场景的实际表现。
+
+---
+
+## 2026-11-11（微调页「刷新执行状态」补回执，已完成）
+
+- 用户反馈走查：微调页点「刷新执行状态」像没反应。查后端日志确认按钮**确实在调接口**：`GET /api/control/finetuning/batches/{id}` 连续 5 次 200。原因是批次已 `completed`，返回内容与页面完全一致，前端既无重绘差异也无任何提示，属于纯反馈缺失。
+- 前端 [FineTuningPage.vue](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)：`pollBatch` 增加 `silent` 参数（自动轮询默认静默），模板改为 `@click="pollBatch(false)"`；手动点击后按批次状态弹一次「已刷新 · 本批次各轴已完成 · 21:13:05」。另补四种提示：正在刷新、当前没有批次、无 ROS 模拟批次、查询失败（并保留“未重发任何指令”的措辞）。后端未改动。
+- 验证：`npm run test:finetuning` **99 pass / 0 fail**（新增 1 条：手动刷新会弹出状态回执）；`vue-tsc` 与 `npm run build` 通过。
+
+---
+
 ## 2026-11-11（局部停新增“臂停”一级 + 侧栏弹窗下拉不可选修复，已完成）
 
 - 用户反馈两点：① 侧栏弹窗里「模块 / 机械臂」下拉点不开；② 现场只需要“停一整台机械臂”，不需要轴级选择。
@@ -22,6 +44,7 @@
   - 前端 `npm run test:finetuning`：**98 pass / 0 fail**（面板用例改为断言 `scope=arm` 且 `device_id` 是臂号）。
   - 运行中的后端已热重载，`/api/control/stop/holds` 401（需登录）、`/docs` 200，服务正常。
 - `???` 未验证：真机未验证 3 帧 `0x0C` 能否整体停住、固件是否按轴锁存；下拉层级只在代码层修正，未在浏览器实际点选确认。
+- 21:15 界面微调（仅侧栏底部急停区）：两行按钮统一 42px 高、13px 字号、10px 圆角、10px 间距，中间加 1px 细分隔线；修正 Element Plus 相邻 `el-button` 默认 `margin-left: 12px` 把第二个按钮顶出侧栏的问题；局部停数量角标改为按钮右上角绝对定位，不再把按钮文字挤偏；「停模块」按钮补一个琥珀色小圆点，与整机急停的白色脉冲点形成层级区分。前端 98 项测试与 `npm run build` 仍通过。
 
 ---
 
