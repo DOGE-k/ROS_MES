@@ -813,3 +813,25 @@ test('resetting control context clears the old batch record and its polling time
   assert.equal(h.timers.size, baseTimers);
   assert.equal(h.calls.adjusts.length, 1);
 });
+
+test('both angular inputs use a 0.01-degree step and two decimal places', () => {
+  const inputs = [...descriptor.template.content.matchAll(/<el-input-number\b[^>]*\/>/g)].map(match => match[0]);
+  assert.equal(inputs.length, 3);
+  for (const input of inputs.slice(0, 2)) {
+    assert.match(input, /:step="0\.01"/);
+    assert.match(input, /:precision="2"/);
+  }
+  assert.doesNotMatch(inputs[2], /:step=|:precision=/);
+});
+
+test('0.01-degree angular increments reach batch submission without truncation', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  h.page.armList.device[0].adjust = 0.01;
+  h.page.armList.device[1].adjust = -0.01;
+  await h.page.confirmAdjustments();
+  assert.deepEqual(Array.from(h.calls.adjusts[0].adjustments, item => ({ ...item })), [
+    { parameter_name: 'rotation', position: 0.01 },
+    { parameter_name: 'swing', position: -0.01 },
+  ]);
+});

@@ -195,8 +195,19 @@ export function acknowledgeFineTuningBatch(id: string) {
 	return request<any, ApiResponse<FineTuningBatch>>({ url: `/control/finetuning/batches/${encodeURIComponent(id)}/acknowledge`, method: 'post', data: { operator_confirmed: true } });
 }
 
+export interface EmergencyStopState {
+	state: string;
+	generation: number;
+	simulated: boolean;
+	connection_revision: number;
+}
+
 export function getEmergencyStopState() {
-	return request<any, ApiResponse<{ state: string; simulated: boolean }>>({ url: '/control/emergency_stop/status', method: 'get' });
+	return request<any, ApiResponse<EmergencyStopState>>({ url: '/control/emergency_stop/status', method: 'get' });
+}
+
+export function manualReleaseEmergencyStop(data: { operator_confirmed: true; expected_generation: number; connection_revision: number }) {
+	return request<any, ApiResponse<EmergencyStopState>>({ url: '/control/emergency_stop/manual_release', method: 'post', data });
 }
 
 export function sendEmergencyStop() {

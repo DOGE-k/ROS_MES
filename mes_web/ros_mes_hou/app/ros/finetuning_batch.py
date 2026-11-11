@@ -80,6 +80,24 @@ class BatchManager:
             db.commit()
         return self.safety(mode)
 
+    def clear_safety(self, expected_generation, mode="real"):
+        """人工确认清除当前版本的 MES 急停记录，保留批次核实流程。"""
+        with self.sessions() as db:
+            # 版本条件在同一条更新中核验，迟到请求不能清除后来触发的急停。
+            db.query(models.ControlSafety).filter(
+                models.ControlSafety.id == (2 if mode == "mock" else 1),
+                models.ControlSafety.generation == expected_generation,
+                models.ControlSafety.state != "clear",
+            ).update({
+                models.ControlSafety.state: "clear",
+                models.ControlSafety.generation: models.ControlSafety.generation + 1,
+            }, synchronize_session=False)
+            db.commit()
+        state = self.safety(mode)
+        if state["state"] != "clear":
+            raise HTTPException(409, "急停记录已更新，请查看最新状态后重新确认")
+        return state
+
     def assert_available(self, db, module_id, unit_id, *, mode="real", safety_mode=None):
         safety = db.get(models.ControlSafety, 2 if (safety_mode or mode) == "mock" else 1)
         if safety and safety.state.startswith("stop"):

@@ -197,6 +197,8 @@
 
 三个输入框只保存待提交增量，当前机械臂共用一个“确认下发”按钮。确认时冻结模块、机械臂和三个轴的本次增量，只提交非零项；同一机械臂一次只允许一个执行批次。前端不得将三次 HTTP 成功当作三轴运动完成。
 
+2026-11-11 起，底座旋转、摆动输入框采用 0.01° 步长并保留两位小数。输入 0.01 表示本次增加 0.01°，前后端继续使用度传递增量，ROS 轴节点负责转换为底层整数。
+
 - `POST /control/finetuning/batches`：携带客户端唯一 `request_id`、`module_id`、`unit_id` 和 `adjustments:[{parameter_name, position}]`。批次号只用于 MES 幂等和进度，不添加到 ROS 消息，不声称设备回显它。相同请求号不得重复执行；冲突请求返回 409。
 - `GET /control/finetuning/batches/{id}`：查询每轴及批次进度。刷新页面恢复查询，不自动再次提交。
 - 后端独立订阅反馈，先取得当前模块/机械臂三轴的新鲜位置及有效、空闲、无急停/故障的状态，才允许发送第一轴。等待同轴新运行状态、符合目标位置的到位事件和空闲状态后，才推进下一轴；接受 ACK 本身不推进队列。
@@ -244,6 +246,7 @@
 | 12 | `/control/emergency_stop` | POST | 是 | 适配层急停发布 | 发送全局急停 |
 | 13 | `/control/emergency_stop/release` | POST | 是 | 适配层解除发布 | 发送急停解除 |
 | 13a | `/control/emergency_stop/status` | GET | 是 | MES 持久化联锁记录 | 刷新恢复操作提示，不代表设备实测 |
+| 13b | `/control/emergency_stop/manual_release` | POST | 是 | MES 现场确认记录 | 人工解除当前环境的 MES 急停状态 |
 
 **接口 10：串口连接测试**
 - 响应：`{"code":200, "message":"串口测试完成", "data":{"success":true, "connected":true, "message":"串口连接正常", "bytes_received":128}}`
@@ -265,7 +268,13 @@
 
 解除按钮调用现有解除接口；失败保留待确认状态，已主动返回页面时不重新弹出全屏。真实发送成功显示“解除指令已发送，设备状态待确认”，不自动写成设备已解除；明确的模拟解除成功关闭遮罩并清除模拟联锁。新批次仍须通过后端实时空闲/无急停检查。急停与解除记录在后端控制联锁中，刷新页面不清空；解除急停不等于故障复位。
 
-状态查询返回 `data:{state,generation,simulated,connection_revision}`。`state` 为 `clear`（无联锁记录，或模拟解除成功）、`stop_requested`（请求急停）、`stop_sent`（急停已发送）、`stop_unknown`（发送结果不明）、`release_sent`（真实解除已发送，设备状态仍待确认）。`generation` 是 MES 联锁版本，变化会中止相应控制环境批次的后续下发；解除不会恢复旧批次。侧栏每秒查询；发送期间防重复点击，旧查询结果不得覆盖刚发起的操作。急停/解除响应也包含 `simulated`；只有明确的模拟解除成功才将遮罩直接关闭，真实模式仍保留待确认提示。
+**人工解除急停（2026-11-11）**
+
+急停全屏增加“人工解除急停”。操作员确认机械臂已停止并完成现场处理后，点击按钮清除当前环境保存的 MES 急停记录。成功后关闭全屏并更新提示，刷新页面可读取持久化的清除结果。模拟环境同步清除模拟设备的急停锁存。已有待核实微调批次继续通过“已现场核实，关闭待确认批次”处理，后续新批次经过实时状态检查。
+
+POST `/control/emergency_stop/manual_release` 请求为 `{"operator_confirmed":true,"expected_generation":8,"connection_revision":3}`，版本来自最近一次状态查询。响应为 `{"code":200,"message":"已人工解除 MES 急停状态","data":{"state":"clear","generation":9,"simulated":false,"connection_revision":3}}`。缺少确认或版本、负数版本返回 422，未登录返回 401/403。连接版本变化、当前急停记录已更新或有正在处理的控制操作时返回 409，页面重新读取状态供操作者核实。清除使用数据库版本条件更新，重复请求已清除的状态返回成功。真实、模拟记录分别处理。
+
+状态查询返回 `data:{state,generation,simulated,connection_revision}`。`state` 为 `clear`（无联锁记录、模拟解除成功或人工确认清除）、`stop_requested`（请求急停）、`stop_sent`（急停已发送）、`stop_unknown`（发送结果不明）、`release_sent`（真实解除已发送，设备状态仍待确认）。`generation` 是 MES 联锁版本，变化会中止相应控制环境批次的后续下发。侧栏每秒查询，发送及人工解除期间防重复点击，旧查询结果由页面操作版本核验。急停/解除响应也包含 `simulated`。模拟解除成功或人工确认清除成功可关闭遮罩，真实解除指令发送成功继续显示待确认提示。
 
 ### 2.6 页面调试连接配置（2026-11-07）
 
