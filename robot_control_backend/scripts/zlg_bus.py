@@ -197,15 +197,10 @@ class ZLGBus:
     def shutdown(self):
         if self._closed:
             return
-        # 设备已经掉线时不要再发 USB 控制请求（ResetCAN），否则会把已失效的端口进一步卡死
-        alive = self.is_alive()
         self._closed = True
+        # 只关闭设备，不发 VCI_ResetCAN：对 USBCAN-II 复位请求会把固件留在半死状态，
+        # 导致下一次 OpenDevice 失败并引发 USB 超时（内核报 cannot reset err=-110）
         with self._io_lock:
-            if alive:
-                try:
-                    self._lib.VCI_ResetCAN(DEV_TYPE, 0, self.channel)
-                except Exception:
-                    pass
             try:
                 self._lib.VCI_CloseDevice(DEV_TYPE, 0)
             except Exception:

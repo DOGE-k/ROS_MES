@@ -47,9 +47,9 @@ class SwingSimple:
         TOPIC_SWING_FEEDBACK = os.environ['ROS_TOPIC_SWING_FEEDBACK']
         TOPIC_SWING_OUTPUT = os.environ['ROS_TOPIC_SWING_OUTPUT']
 
+        # 零点由人工调零，下位机不回传基准信息：软件基准固定为 0°
         self.angles = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        # 各臂基准就绪标志：首帧反馈到达前拒绝增量指令（避免按 0 位累加跳变）
-        self.axis_ready = {0: False, 1: False, 2: False, 3: False, 4: False}
+        self.axis_ready = {0: True, 1: True, 2: True, 3: True, 4: True}
         self.last_fb_time = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
 
         rospy.Subscriber(TOPIC_CMD, SwingCmd, self.cmd_callback)
@@ -124,12 +124,6 @@ class SwingSimple:
             rospy.logwarn(f"摆动节点收到无法识别的 device_id: {device_id}")
             return
 
-        # 基准保护：首帧反馈到达前不知道当前角，拒绝增量累加
-        if not self.axis_ready[arm_idx]:
-            rospy.logwarn_throttle(2.0,
-                f"⚠️ Arm{arm_idx+1} 摆动轴尚无反馈基准，请等待反馈，本次增量 {msg.position[0]:+.4f}° 已拒绝")
-            return
-
         delta_deg = float(msg.position[0])
         new_angle = self.angles[arm_idx] + delta_deg
 
@@ -157,19 +151,11 @@ class SwingSimple:
         rospy.loginfo(f"Arm{arm_idx+1} 摆动增量：{delta_deg:+.4f}° → 下发 {delta_centi_deg}(0.01°) | 位置变量 {new_angle:+.3f}°")
 
     def feedback_callback(self, msg):
-        """反馈仅用于定初值；反馈中断超过阈值后恢复时，用新反馈重建软件位置变量"""
+        """零点由人工调零，下位机不回传基准：反馈仅记录时间戳，不参与基准计算"""
         arm_idx = self._device_to_arm_idx(msg.device_id)
         if arm_idx < 0:
             return
-        now = time.time()
-        if not self.axis_ready[arm_idx]:
-            self.angles[arm_idx] = msg.position[0]
-            self.axis_ready[arm_idx] = True
-            rospy.loginfo(f"✅ Arm{arm_idx+1} 摆动轴基准已建立（首帧反馈 {msg.position[0]:+.3f}°），允许增量控制")
-        elif now - self.last_fb_time[arm_idx] > self.FEEDBACK_TIMEOUT:
-            self.angles[arm_idx] = msg.position[0]
-            rospy.logwarn(f"♻️ Arm{arm_idx+1} 摆动反馈中断 {now - self.last_fb_time[arm_idx]:.2f}s 后恢复，已用新反馈 {msg.position[0]:+.3f}° 重建位置变量")
-        self.last_fb_time[arm_idx] = now
+        self.last_fb_time[arm_idx] = time.time()
 
     def shutdown_hook(self):
         self.conn.close()

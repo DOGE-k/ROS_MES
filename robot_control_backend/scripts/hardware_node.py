@@ -728,6 +728,8 @@ class CANBusBridge:
                 self.pub_arrive.publish(ArriveNotification(
                     header=self._header(), module_id=module_id, device_id=device_id,
                     angle=angle, pos_error=pos_err, status_bits=sb, flags=fl))
+                rospy.loginfo("🎯 轴%d 到位 angle=%d(0.01) pos_err=%d status=0x%02X flags=0x%02X",
+                              axis, angle, pos_err, sb, fl)
                 self._archive_event(module_id, device_id, self.EVT_ARRIVE,
                                     {"angle": angle, "pos_error": pos_err,
                                      "status_bits": sb, "flags": fl},
@@ -739,6 +741,8 @@ class CANBusBridge:
                 self.pub_stop.publish(StopNotification(
                     header=self._header(), module_id=module_id, device_id=device_id,
                     stop_reason=data[0], output_level=data[1]))
+                rospy.logwarn("🛑 轴%d 停止 reason=%d(1=到位2=急停3=命令停止) output=%d",
+                              axis, data[0], data[1])
                 self._archive_event(module_id, device_id, self.EVT_STOP,
                                     {"stop_reason": data[0], "output_level": data[1]},
                                     "轴停止")
@@ -992,6 +996,9 @@ class CANBusBridge:
 
     def close(self):
         self.running = False
+        # 先让读线程退出 recv 循环，避免关闭设备时仍有未完成的 USB 读传输
+        if self.read_thread.is_alive():
+            self.read_thread.join(timeout=2.0)
         try:
             with self.db_lock:
                 if self.db_dirty:

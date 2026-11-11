@@ -47,9 +47,9 @@ class RotationSimple:
         # 反馈中断阈值（秒）：超过该时长后恢复反馈，视为基准漂移并用新反馈重建软件位置变量
         self.FEEDBACK_TIMEOUT = 1.0
 
-        # V2：5 臂软件位置变量（度）；axis_ready 标记该臂是否已收到首帧反馈（基准已知）
+        # 零点由人工调零，下位机不回传基准信息：软件基准固定为 0°
         self.angles = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        self.axis_ready = {0: False, 1: False, 2: False, 3: False, 4: False}
+        self.axis_ready = {0: True, 1: True, 2: True, 3: True, 4: True}
         self.last_fb_time = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
 
         rospy.Subscriber(TOPIC_CMD, RotationCmd, self.cmd_callback)
@@ -122,11 +122,6 @@ class RotationSimple:
         if arm_idx < 0:
             rospy.logwarn(f"旋转节点收到无法识别的 device_id: {device_id}")
             return
-        if not self.axis_ready.get(arm_idx, False):
-            rospy.logwarn_throttle(2.0,
-                f"⚠️ Arm{arm_idx+1} 尚未收到首帧反馈（基准未知），拒绝旋转增量指令，请先等待反馈")
-            return
-
         delta_deg = float(msg.position[0])
         new_angle = self.angles[arm_idx] + delta_deg
 
@@ -154,19 +149,11 @@ class RotationSimple:
         rospy.loginfo(f"Arm{arm_idx+1} 旋转增量：{delta_deg:+.4f}° → 下发 {delta_centi_deg}(0.01°) | 位置变量 {new_angle:+.3f}°")
 
     def feedback_callback(self, msg):
-        """反馈仅用于定初值；反馈中断超过阈值后恢复时，用新反馈重建软件位置变量"""
+        """零点由人工调零，下位机不回传基准：反馈仅记录时间戳，不参与基准计算"""
         arm_idx = self._device_to_arm_idx(msg.device_id)
         if arm_idx < 0:
             return
-        now = time.time()
-        if not self.axis_ready[arm_idx]:
-            self.angles[arm_idx] = msg.position[0]
-            self.axis_ready[arm_idx] = True
-            rospy.loginfo(f"✅ Arm{arm_idx+1} 旋转轴基准已建立（首帧反馈 {msg.position[0]:+.3f}°），允许增量控制")
-        elif now - self.last_fb_time[arm_idx] > self.FEEDBACK_TIMEOUT:
-            self.angles[arm_idx] = msg.position[0]
-            rospy.logwarn(f"♻️ Arm{arm_idx+1} 旋转反馈中断 {now - self.last_fb_time[arm_idx]:.2f}s 后恢复，已用新反馈 {msg.position[0]:+.3f}° 重建位置变量")
-        self.last_fb_time[arm_idx] = now
+        self.last_fb_time[arm_idx] = time.time()
 
     def shutdown_hook(self):
         self.conn.close()

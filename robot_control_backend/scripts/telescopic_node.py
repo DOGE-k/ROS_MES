@@ -52,8 +52,9 @@ class TelescopeSimple:
         TOPIC_TELESCOPE_FEEDBACK = os.environ['ROS_TOPIC_TELESCOPE_FEEDBACK']
         TOPIC_TELESCOPE_OUTPUT = os.environ['ROS_TOPIC_TELESCOPE_OUTPUT']
 
+        # 零点由人工调零，下位机不回传基准信息：软件基准固定为 0mm
         self.lengths = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        self.axis_ready = {0: False, 1: False, 2: False, 3: False, 4: False}
+        self.axis_ready = {0: True, 1: True, 2: True, 3: True, 4: True}
         self.last_fb_time = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
 
         rospy.Subscriber(TOPIC_CMD, TelescopicCmd, self.cmd_callback)
@@ -128,12 +129,6 @@ class TelescopeSimple:
             rospy.logwarn(f"伸缩节点收到无法识别的 device_id: {device_id}")
             return
 
-        # 基准保护：首帧反馈到达前不知道当前长度，拒绝增量累加
-        if not self.axis_ready[arm_idx]:
-            rospy.logwarn_throttle(2.0,
-                f"⚠️ Arm{arm_idx+1} 伸缩轴尚无反馈基准，请等待反馈，本次增量 {msg.position[0]:+.2f}mm 已拒绝")
-            return
-
         delta_mm = float(msg.position[0])
         new_len = self.lengths[arm_idx] + delta_mm
 
@@ -161,20 +156,11 @@ class TelescopeSimple:
         rospy.loginfo(f"Arm{arm_idx+1} 伸缩增量：{delta_mm:+.3f}mm → 下发 {delta_centi_mm}(0.01mm) | 长度变量 {new_len:+.3f}mm")
 
     def feedback_callback(self, msg):
-        """反馈为长度(mm，feedback_node 已由 0.01mm 换算)；仅用于定初值，中断超过阈值后恢复时重建"""
+        """零点由人工调零，下位机不回传基准：反馈仅记录时间戳，不参与长度变量计算"""
         arm_idx = self._device_to_arm_idx(msg.device_id)
         if arm_idx < 0:
             return
-        now = time.time()
-        length_mm = msg.position[0]
-        if not self.axis_ready[arm_idx]:
-            self.lengths[arm_idx] = length_mm
-            self.axis_ready[arm_idx] = True
-            rospy.loginfo(f"✅ Arm{arm_idx+1} 伸缩轴基准已建立（首帧反馈 {length_mm:+.3f}mm），允许增量控制")
-        elif now - self.last_fb_time[arm_idx] > self.FEEDBACK_TIMEOUT:
-            self.lengths[arm_idx] = length_mm
-            rospy.logwarn(f"♻️ Arm{arm_idx+1} 伸缩反馈中断 {now - self.last_fb_time[arm_idx]:.2f}s 后恢复，已用新反馈 {length_mm:+.3f}mm 重建长度变量")
-        self.last_fb_time[arm_idx] = now
+        self.last_fb_time[arm_idx] = time.time()
 
     def shutdown_hook(self):
         self.conn.close()

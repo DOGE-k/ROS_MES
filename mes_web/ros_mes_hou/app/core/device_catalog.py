@@ -4,6 +4,8 @@
 现有业务编号与 sqlite_create.py 保持一致，不会因读取配置而补写数据库。
 """
 
+from __future__ import annotations
+
 ARM_OPTIONS = (
     (32, "一号机械臂"),
     (64, "二号机械臂"),
