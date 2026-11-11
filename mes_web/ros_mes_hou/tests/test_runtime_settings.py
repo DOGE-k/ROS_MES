@@ -20,6 +20,7 @@ from app.ros.mock_client import mock_robot
 from app.ros.rosbridge import RosbridgeClient
 from app.ros.runtime_settings import RuntimeSettings, SettingsChange
 from app.schemas.finetuning import FineTuningBatchCreate, FineTuningConfigCreate
+from app.schemas.hardware import ManualEmergencyRelease
 from test_finetuning_batch import FakeClient, status, position
 
 
@@ -63,6 +64,12 @@ class RuntimeSettingsTest(unittest.IsolatedAsyncioTestCase):
         return FineTuningBatchCreate(request_id='runtime_request_001', module_id=17, unit_id=32,
             adjustments=[{'parameter_name': key, 'position': value} for key, value in
                          [('rotation', 2), ('swing', 1), ('telescopic', 0.5)]], **kwargs)
+
+    def manual_release_request(self):
+        connection = self.settings.snapshot()
+        return ManualEmergencyRelease(operator_confirmed=True,
+            expected_generation=self.manager.safety(connection['emergency_mode'])['generation'],
+            connection_revision=connection['revision'])
 
     async def test_configuration_persists_and_restart_reads_the_saved_revision(self):
         value = self.update(ros_mode='mock', ros_url='ws://192.0.2.1:9010')
@@ -135,6 +142,128 @@ class RuntimeSettingsTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result['simulated'])
         self.assertEqual('release_sent', self.manager.safety('real')['state'])
         self.assertEqual('stop_sent', self.manager.safety('mock')['state'])
+
+    async def test_manual_release_persists_and_only_clears_the_current_environment(self):
+        with patch('app.ros.rosbridge.websockets.connect', side_effect=AssertionError('manual release opened a socket')):
+            for mode in ('real', 'mock'):
+                if mode == 'mock':
+                    self.mock()
+                other_mode = 'mock' if mode == 'real' else 'real'
+                other = self.manager.set_safety('stop_unknown', other_mode)
+                for state in ('stop_requested', 'stop_sent', 'stop_unknown', 'release_sent'):
+                    with self.subTest(mode=mode, state=state):
+                        stopped = self.manager.set_safety(state, mode)
+                        result = await control.manually_release_emergency_stop(self.manual_release_request(), self.user)
+                        self.assertEqual(200, result['code'])
+                        self.assertEqual('clear', result['data']['state'])
+                        self.assertEqual(mode == 'mock', result['data']['simulated'])
+                        self.assertEqual(stopped['generation'] + 1, result['data']['generation'])
+                        self.assertEqual(result['data']['generation'], BatchManager(self.sessions).safety(mode)['generation'])
+                        self.assertEqual('clear', BatchManager(self.sessions).safety(mode)['state'])
+                        self.assertEqual(other, self.manager.safety(other_mode))
+
+    async def test_repeated_manual_release_is_idempotent(self):
+        self.manager.set_safety('stop_sent')
+        request = self.manual_release_request()
+        first = await control.manually_release_emergency_stop(request, self.user)
+        second = await control.manually_release_emergency_stop(request, self.user)
+        self.assertEqual(first, second)
+
+    async def test_stale_manual_confirmation_cannot_clear_a_new_stop(self):
+        self.manager.set_safety('stop_sent')
+        request = self.manual_release_request()
+        newer = self.manager.set_safety('stop_sent')
+        with self.assertRaises(HTTPException) as caught:
+            await control.manually_release_emergency_stop(request, self.user)
+        self.assertEqual(409, caught.exception.status_code)
+        self.assertEqual(newer, self.manager.safety())
+
+    async def test_manual_release_rejects_a_changed_connection(self):
+        stopped = self.manager.set_safety('stop_sent')
+        request = self.manual_release_request()
+        self.mock()
+        with self.assertRaises(HTTPException) as caught:
+            await control.manually_release_emergency_stop(request, self.user)
+        self.assertEqual(409, caught.exception.status_code)
+        self.assertEqual(stopped, self.manager.safety())
+
+    async def test_manual_release_waits_for_inflight_control_operations(self):
+        stopped = self.manager.set_safety('stop_requested')
+        with self.settings.operation(0):
+            with self.assertRaises(HTTPException) as caught:
+                await control.manually_release_emergency_stop(self.manual_release_request(), self.user)
+        self.assertEqual(409, caught.exception.status_code)
+        self.assertEqual(stopped, self.manager.safety())
+
+    async def test_manual_release_preserves_the_interrupted_batch_until_operator_acknowledges(self):
+        client = FakeClient(initial=False)
+        job = await self.manager.start(self.request(), client, self.user.User_ID)
+        self.manager.set_safety('stop_sent')
+        await self.manager.tasks[job['id']]
+        await control.manually_release_emergency_stop(self.manual_release_request(), self.user)
+        result = self.manager.get(job['id'])
+        self.assertEqual('uncertain', result['status'])
+        self.assertTrue(result['target_locked'])
+        self.assertEqual([], client.sent)
+        with self.sessions() as db:
+            with self.assertRaises(HTTPException):
+                self.manager.assert_available(db, 17, 32)
+        self.manager.acknowledge(job['id'])
+        with self.sessions() as db:
+            self.manager.assert_available(db, 17, 32)
+
+    async def test_mock_manual_release_allows_a_new_fractional_batch_after_stop(self):
+        self.mock()
+        with patch('app.ros.rosbridge.websockets.connect', side_effect=AssertionError('mock opened a socket')):
+            await control.activate_emergency_stop(self.user)
+            self.assertTrue(mock_robot.stopped)
+            await control.manually_release_emergency_stop(self.manual_release_request(), self.user)
+            self.assertFalse(mock_robot.stopped)
+            request = FineTuningBatchCreate(request_id='after_manual_release', module_id=17, unit_id=32,
+                adjustments=[{'parameter_name': 'rotation', 'position': 0.01},
+                             {'parameter_name': 'swing', 'position': -0.01}], connection_revision=1)
+            job = await control.create_finetuning_batch(request, self.user)
+            await self.manager.tasks[job['data']['id']]
+        self.assertEqual('completed', self.manager.get(job['data']['id'])['status'])
+        self.assertEqual(0.01, mock_robot.positions[(0, 1)])
+        self.assertEqual(-0.01, mock_robot.positions[(0, 2)])
+
+    async def test_manual_release_http_requires_login_confirmation_and_versions(self):
+        app = FastAPI()
+        app.include_router(control.router, prefix='/api/control')
+        def database():
+            with self.sessions() as db:
+                yield db
+        app.dependency_overrides[get_db] = database
+        async def request(payload, token=None):
+            events = []
+            headers = [(b'host', b'test'), (b'content-type', b'application/json')]
+            if token:
+                headers.append((b'authorization', f'Bearer {token}'.encode()))
+            path = '/api/control/emergency_stop/manual_release'
+            scope = {'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1', 'method': 'POST',
+                     'scheme': 'http', 'path': path, 'raw_path': path.encode(), 'query_string': b'',
+                     'headers': headers, 'server': ('test', 80), 'client': ('127.0.0.1', 1)}
+            async def receive():
+                return {'type': 'http.request', 'body': json.dumps(payload).encode(), 'more_body': False}
+            async def send(event):
+                events.append(event)
+            await app(scope, receive, send)
+            return events[0]['status'], json.loads(b''.join(event.get('body', b'') for event in events))
+        self.manager.set_safety('stop_sent')
+        payload = self.manual_release_request().model_dump()
+        code, _ = await request(payload)
+        self.assertIn(code, (401, 403))
+        token = create_access_token({'sub': 'test'})
+        for invalid in ({}, {**payload, 'operator_confirmed': False}, {**payload, 'expected_generation': -1}):
+            code, _ = await request(invalid, token)
+            self.assertEqual(422, code)
+            self.assertEqual('stop_sent', self.manager.safety()['state'])
+        with patch('app.ros.rosbridge.websockets.connect', side_effect=AssertionError('manual release opened a socket')):
+            code, response = await request(payload, token)
+        self.assertEqual(200, code)
+        self.assertEqual('clear', response['data']['state'])
+        self.assertEqual('clear', control.get_emergency_state(self.user)['data']['state'])
 
     async def test_mock_emergency_interrupts_batch_and_release_does_not_resume_it(self):
         self.mock()

@@ -62,3 +62,12 @@ test('existing anonymous configuration and legacy fine-tuning calls remain compa
   assert.ok(h.sent.every(config => config.headers.Authorization === undefined));
   assert.equal(h.redirects.length, 0);
 });
+
+test('manual emergency release requires and carries the login token', async () => {
+  const loggedIn = setup('isolated-test-token');
+  await loggedIn.service({ method: 'post', url: '/control/emergency_stop/manual_release' });
+  assert.equal(loggedIn.sent[0].headers.Authorization, 'Bearer isolated-test-token');
+  const loggedOut = setup();
+  await assert.rejects(loggedOut.service({ method: 'post', url: '/control/emergency_stop/manual_release' }), /请先登录/);
+  assert.equal(loggedOut.sent.length, 0);
+});

@@ -11,7 +11,7 @@ from app.ros.base import RosDispatchError, RosbridgeError
 from app.ros.rosbridge import build_fine_tuning_publish_payload, resolve_arm_from_unit_id
 from app.ros.finetuning_batch import batch_manager
 from app.ros.runtime_settings import runtime_settings, SettingsChange
-from app.schemas.hardware import HardwareFeedback, EmergencyStopResponse
+from app.schemas.hardware import HardwareFeedback, EmergencyStopResponse, ManualEmergencyRelease
 from sqlalchemy.orm import Session
 
 router = APIRouter()
@@ -134,6 +134,23 @@ def get_emergency_state(current_user: models.User = Depends(get_current_user)):
     dispatcher = get_ros_dispatcher()
     return {"code": 200, "message": "MES 控制联锁状态，不是设备实测", "data": {
         **batch_manager.safety(dispatcher.emergency_mode), "connection_revision": dispatcher.revision}}
+
+
+@router.post("/emergency_stop/manual_release")
+async def manually_release_emergency_stop(
+    record: ManualEmergencyRelease,
+    current_user: models.User = Depends(get_current_user),
+):
+    dispatcher = get_ros_dispatcher()
+    if record.connection_revision != dispatcher.revision:
+        raise HTTPException(409, "连接配置已更改，请查看最新急停状态后重新确认")
+    with runtime_settings.operation(dispatcher.revision, require_idle=True):
+        state = batch_manager.clear_safety(record.expected_generation, dispatcher.emergency_mode)
+        if state["simulated"]:
+            dispatcher.emergency_client.robot.stop(False)
+    print(f"操作员 {current_user.Username} 人工确认并清除了 MES 急停记录。")
+    return {"code": 200, "message": "已人工解除 MES 急停状态", "data": {
+        **state, "connection_revision": dispatcher.revision}}
 
 
 @router.websocket("/feedback/ws")

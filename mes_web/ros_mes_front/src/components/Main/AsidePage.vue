@@ -86,9 +86,11 @@
       <h1 style="color: white;">SYSTEM EMERGENCY STOP</h1>
       <h1 style="color: white;">{{ emergencyTitle }}</h1>
       <div class="emergency-actions">
-        <el-button type="danger" :loading="releasing" :disabled="sendingStop || releasing" @click="resetEmergency">发送解除急停指令</el-button>
+        <el-button type="danger" :loading="releasing" :disabled="sendingStop || releasing || manuallyReleasing" @click="resetEmergency">发送解除急停指令</el-button>
+        <el-button type="warning" :loading="manuallyReleasing" :disabled="sendingStop || releasing || manuallyReleasing || !safetySnapshot" @click="manuallyReleaseEmergency">人工解除急停</el-button>
         <el-button @click="isEmergencyActive = false">返回页面（保留急停状态）</el-button>
       </div>
+      <p>确认机械臂已停止并完成现场处理后，可人工解除系统急停状态。</p>
       <p><el-link type="info" @click="connectionDialogVisible = true">打开调试设置</el-link></p>
     </div>
   </div>
@@ -116,7 +118,7 @@ import {
 import { useRouter, useRoute } from 'vue-router';
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
 import { ElMessage } from 'element-plus';
-import { sendEmergencyStop, releaseEmergencyStop, getEmergencyStopState } from '@/api/rosApi';
+import { sendEmergencyStop, releaseEmergencyStop, manualReleaseEmergencyStop, getEmergencyStopState } from '@/api/rosApi';
 import { useLayoutSettingStore } from '@/stores/layoutSetting';
 import { useUserStore } from '@/stores/user';
 import RosConnectionSettings from './UserManage/RosConnectionSettings.vue';
@@ -139,6 +141,7 @@ const handleMenuSelect = (index) => {
 const isPressing = ref(false);
 const isEmergencyActive = ref(false);
 const safetyState = ref('clear');
+const safetySnapshot = ref(null);
 const simulatedEmergency = ref(false);
 const localEmergencyRequested = ref(false);
 const emergencyTitle = computed(() => simulatedEmergency.value
@@ -151,6 +154,7 @@ const safetyNotice = computed(() => simulatedEmergency.value ? '模拟急停状�
 const showEmergencyDetails = () => { localEmergencyRequested.value = false; isEmergencyActive.value = true; };
 const connectionDialogVisible = ref(false);
 const releasing = ref(false);
+const manuallyReleasing = ref(false);
 const sendingStop = ref(false);
 let safetyRevision = 0;
 let safetyPolling = false;
@@ -184,6 +188,7 @@ const triggerEmergency = async () => {
   if (sendingStop.value) return;
   sendingStop.value = true;
   safetyRevision++;
+  safetySnapshot.value = null;
   localEmergencyRequested.value = true;
   isEmergencyActive.value = true;
   safetyState.value = 'stop_requested';
@@ -208,9 +213,10 @@ const triggerEmergency = async () => {
 };
 
 const resetEmergency = async () => {
-  if (releasing.value || sendingStop.value) return;
+  if (releasing.value || sendingStop.value || manuallyReleasing.value) return;
   releasing.value = true;
   safetyRevision++;
+  safetySnapshot.value = null;
   try {
     const result = await releaseEmergencyStop();
     if (result.success !== true) throw new Error('解除发送结果未确认');
@@ -225,14 +231,44 @@ const resetEmergency = async () => {
   }
 };
 
+const manuallyReleaseEmergency = async () => {
+  if (sendingStop.value || releasing.value || manuallyReleasing.value || !safetySnapshot.value) return;
+  const snapshot = safetySnapshot.value;
+  const revision = ++safetyRevision;
+  manuallyReleasing.value = true;
+  try {
+    const result = await manualReleaseEmergencyStop({
+      operator_confirmed: true,
+      expected_generation: snapshot.generation,
+      connection_revision: snapshot.connection_revision,
+    });
+    if (revision !== safetyRevision) return;
+    if (result.code !== 200 || result.data?.state !== 'clear') throw new Error('人工解除结果未确认');
+    safetySnapshot.value = result.data;
+    safetyState.value = 'clear';
+    simulatedEmergency.value = result.data.simulated === true;
+    localEmergencyRequested.value = false;
+    isEmergencyActive.value = false;
+    ElMessage.info(result.message);
+  } catch (error) {
+    if (revision === safetyRevision) {
+      ElMessage.error(error.response?.data?.detail || error.message || '人工解除失败，请查看最新急停状态');
+    }
+  } finally {
+    manuallyReleasing.value = false;
+    await refreshSafetyState();
+  }
+};
+
 const refreshSafetyState = async (initial = false) => {
-  if (safetyPolling || sendingStop.value || releasing.value) return;
+  if (safetyPolling || sendingStop.value || releasing.value || manuallyReleasing.value) return;
   safetyPolling = true;
   const revision = safetyRevision;
   try {
     const result = await getEmergencyStopState();
     // 状态加载期间若操作者已按急停，不得以旧快照覆盖。
     if (revision === safetyRevision) {
+      safetySnapshot.value = result.data;
       simulatedEmergency.value = result.data.simulated === true;
       safetyState.value = result.data.state;
       // 查询和恢复历史状态只更新提示，不能当作操作者新触发急停。
@@ -246,6 +282,7 @@ const refreshSafetyState = async (initial = false) => {
 };
 const connectionChanged = () => {
   safetyRevision++;
+  safetySnapshot.value = null;
   localEmergencyRequested.value = false;
   isEmergencyActive.value = false;
   void refreshSafetyState();
@@ -469,7 +506,7 @@ onBeforeUnmount(() => {
   align-items: stretch;
   justify-content: center;
   gap: 12px;
-  max-width: 560px;
+  max-width: 760px;
   margin: 24px auto 0;
 }
 

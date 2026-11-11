@@ -11,11 +11,11 @@ const script = ts.transpileModule(descriptor.scriptSetup.content, { compilerOpti
 
 function setup(t, options = {}) {
   const mounted = [], timers = [], messages = [];
-  const calls = { stop: 0, release: 0 };
+  const calls = { stop: 0, release: 0, manual: [] };
   const module = { exports: {} };
   const scope = vue.effectScope();
   t.after(() => scope.stop());
-  scope.run(() => vm.runInNewContext(script + '\nObject.assign(module.exports, { triggerEmergency, resetEmergency, safetyState, isEmergencyActive, releasing, showEmergencyDetails, refreshSafetyState, connectionChanged, safetyNotice });', {
+  scope.run(() => vm.runInNewContext(script + '\nObject.assign(module.exports, { triggerEmergency, resetEmergency, manuallyReleaseEmergency, safetySnapshot, safetyState, isEmergencyActive, releasing, manuallyReleasing, showEmergencyDetails, refreshSafetyState, connectionChanged, safetyNotice });', {
     module, exports: module.exports,
     setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; }, clearTimeout() {},
     setInterval(callback, delay) { timers.push({ callback, delay }); return timers.length; }, clearInterval() {},
@@ -27,9 +27,21 @@ function setup(t, options = {}) {
       if (name === '@/stores/user') return { useUserStore: () => ({ isAdmin: () => true }) };
       if (name === 'element-plus') return { ElMessage: Object.fromEntries(['info', 'warning', 'error'].map(key => [key, text => messages.push(text)])) };
       if (name === '@/api/rosApi') return {
-    async getEmergencyStopState() { return { data: { state: options.state || 'clear', simulated: options.simulated === true } }; },
+        async getEmergencyStopState() {
+          if (options.status) return options.status();
+          return { data: { state: options.state || 'clear', simulated: options.simulated === true,
+            generation: options.generation ?? 2, connection_revision: options.revision ?? 0 } };
+        },
         async sendEmergencyStop() { calls.stop++; if (options.stop) return options.stop(); return { success: true }; },
         async releaseEmergencyStop() { calls.release++; if (options.release) return options.release(); return { success: true }; },
+        async manualReleaseEmergencyStop(payload) {
+          calls.manual.push(payload);
+          if (options.manualRelease) return options.manualRelease(payload);
+          options.state = 'clear';
+          options.generation = (options.generation ?? 2) + 1;
+          return { code: 200, message: '已人工解除 MES 急停状态', data: { state: 'clear',
+            generation: options.generation, connection_revision: options.revision ?? 0, simulated: options.simulated === true } };
+        },
       };
       throw new Error(`Unexpected dependency ${name}`);
     },
@@ -135,4 +147,110 @@ test('dismissed overlay stays dismissed after a pending release fails', async t 
   reject(new Error('offline')); await request;
   assert.equal(h.page.isEmergencyActive.value, false);
   assert.equal(h.page.safetyState.value, 'stop_sent');
+});
+
+test('manual release clears persisted state using the displayed version and closes the overlay', async t => {
+  const options = { state: 'stop_unknown', generation: 8, revision: 3 };
+  const h = setup(t, options);
+  await h.mount();
+  h.page.showEmergencyDetails();
+  await h.page.manuallyReleaseEmergency();
+  assert.equal(h.calls.manual.length, 1);
+  assert.deepEqual({ ...h.calls.manual[0] }, { operator_confirmed: true, expected_generation: 8, connection_revision: 3 });
+  assert.equal(h.page.safetyState.value, 'clear');
+  assert.equal(h.page.isEmergencyActive.value, false);
+  assert.equal(h.calls.stop + h.calls.release, 0);
+  assert.ok(h.messages.includes('已人工解除 MES 急停状态'));
+  const refreshed = setup(t, options);
+  await refreshed.mount();
+  assert.equal(refreshed.page.safetyState.value, 'clear');
+  assert.equal(refreshed.calls.manual.length, 0);
+});
+
+test('manual release waits for a status snapshot and sends no request on failure', async t => {
+  const h = setup(t, { state: 'stop_sent', status: async () => { throw new Error('offline'); } });
+  await h.mount();
+  h.page.showEmergencyDetails();
+  await h.page.manuallyReleaseEmergency();
+  assert.equal(h.calls.manual.length, 0);
+  assert.equal(h.page.isEmergencyActive.value, true);
+});
+
+test('failed manual release keeps the overlay and refreshes a changed stop generation', async t => {
+  const options = { state: 'stop_sent', generation: 8, manualRelease: async () => {
+    options.generation = 9;
+    throw { response: { data: { detail: '急停记录已更新' } } };
+  } };
+  const h = setup(t, options);
+  await h.mount();
+  h.page.showEmergencyDetails();
+  await h.page.manuallyReleaseEmergency();
+  assert.equal(h.page.safetyState.value, 'stop_sent');
+  assert.equal(h.page.safetySnapshot.value.generation, 9);
+  assert.equal(h.page.isEmergencyActive.value, true);
+  assert.ok(h.messages.includes('急停记录已更新'));
+});
+
+test('pending manual release blocks repeated manual and command-release requests', async t => {
+  let reject;
+  const waiting = new Promise((_, no) => { reject = no; });
+  const h = setup(t, { state: 'stop_sent', manualRelease: () => waiting });
+  await h.mount();
+  h.page.showEmergencyDetails();
+  const first = h.page.manuallyReleaseEmergency();
+  await h.page.manuallyReleaseEmergency();
+  await h.page.resetEmergency();
+  assert.equal(h.calls.manual.length, 1);
+  assert.equal(h.calls.release, 0);
+  h.page.isEmergencyActive.value = false;
+  reject(new Error('offline'));
+  await first;
+  assert.equal(h.page.manuallyReleasing.value, false);
+  assert.equal(h.page.isEmergencyActive.value, false);
+});
+
+test('a new emergency takes priority over a late manual-release response', async t => {
+  let resolve;
+  const waiting = new Promise(yes => { resolve = yes; });
+  const h = setup(t, { state: 'stop_sent', manualRelease: () => waiting });
+  await h.mount();
+  h.page.showEmergencyDetails();
+  const pending = h.page.manuallyReleaseEmergency();
+  await h.page.triggerEmergency();
+  resolve({ code: 200, message: 'old release', data: { state: 'clear' } });
+  await pending;
+  assert.equal(h.page.safetyState.value, 'stop_sent');
+  assert.equal(h.page.isEmergencyActive.value, true);
+  assert.equal(h.messages.includes('old release'), false);
+});
+
+test('a connection change invalidates the pending manual-release response', async t => {
+  let resolve;
+  const waiting = new Promise(yes => { resolve = yes; });
+  const options = { state: 'stop_sent', revision: 0, manualRelease: () => waiting };
+  const h = setup(t, options);
+  await h.mount();
+  const pending = h.page.manuallyReleaseEmergency();
+  options.state = 'stop_unknown';
+  options.revision = 1;
+  h.page.connectionChanged();
+  resolve({ code: 200, message: 'old release', data: { state: 'clear' } });
+  await pending;
+  assert.equal(h.page.safetyState.value, 'stop_unknown');
+  assert.equal(h.page.safetySnapshot.value.connection_revision, 1);
+  assert.equal(h.messages.includes('old release'), false);
+});
+
+test('a status query started before manual release cannot restore the old stop', async t => {
+  const options = { state: 'stop_sent' };
+  const h = setup(t, options);
+  await h.mount();
+  let resolve;
+  options.status = () => new Promise(yes => { resolve = yes; });
+  const polling = h.page.refreshSafetyState();
+  await h.page.manuallyReleaseEmergency();
+  resolve({ data: { state: 'stop_sent', generation: 2, connection_revision: 0 } });
+  await polling;
+  assert.equal(h.page.safetyState.value, 'clear');
+  assert.equal(h.page.isEmergencyActive.value, false);
 });

@@ -91,11 +91,13 @@ class RuntimeSettings:
             return self.snapshot()
 
     @contextmanager
-    def operation(self, revision):
+    def operation(self, revision, *, require_idle=False):
         # 保持当前动作的地址/模式快照；同步和异步调用都使用同一计数。
         with self._lock:
             if revision != self._revision:
                 raise HTTPException(409, "连接配置已变更，请重新确认操作目标")
+            if require_idle and self._operations:
+                raise HTTPException(409, "控制操作正在处理，请等待完成后再人工解除急停")
             self._operations += 1
         try:
             yield

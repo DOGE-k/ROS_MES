@@ -1,8 +1,8 @@
 # app/schemas/hardware.py
 from datetime import datetime
-from typing import List
+from typing import List, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class HardwareFeedback(BaseModel):
@@ -19,3 +19,9 @@ class EmergencyStopResponse(BaseModel):
     message: str
     timestamp: datetime = datetime.now()
     simulated: bool = False
+
+
+class ManualEmergencyRelease(BaseModel):
+    operator_confirmed: Literal[True]
+    expected_generation: int = Field(ge=0)
+    connection_revision: int = Field(ge=0)

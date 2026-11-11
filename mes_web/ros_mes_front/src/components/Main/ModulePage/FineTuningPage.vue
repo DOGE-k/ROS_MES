@@ -70,6 +70,8 @@
                 >
                 <el-input-number
                   v-model="armList.device[0].adjust"
+                  :step="0.01"
+                  :precision="2"
                   :min="-360"
                   :max="360"
                   placeholder="本次旋转增量"
@@ -95,6 +97,8 @@
                 >
                 <el-input-number
                   v-model="armList.device[1].adjust"
+                  :step="0.01"
+                  :precision="2"
                   :min="-360"
                   :max="360"
                   placeholder="本次摆动增量"
