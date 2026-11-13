@@ -86,7 +86,19 @@ def save_fine_tuning_config(
     # 备注列：校零保存时写入"校零…"，普通微调保存留空
     notes = config.notes
     if config.calibrated and not notes:
-        notes = "校零：三轴基准初始值按 0 记录（人工下发归位后保存）"
+        drawing_references = {
+            device.parameter_name: device.reference_position
+            for device in config.devices if device.reference_source == "drawing_settled"
+        }
+        if drawing_references:
+            reference_parts = []
+            for parameter, label, unit in (("rotation", "旋转", "°"), ("swing", "摆动", "°"), ("telescopic", "伸缩", "mm")):
+                reference = drawing_references.get(parameter)
+                value = "待采集" if reference is None else f"{reference:.2f}{unit}"
+                reference_parts.append(f"{label} {value}")
+            notes = "校零记录采用图纸固定基准，" + "，".join(reference_parts)
+        else:
+            notes = "校零：三轴基准初始值按 0 记录（人工下发归位后保存）"
     db_config = models.FineTuningConfig(
         module_id=config.module_id,
         unit_id=config.unit_id,

@@ -123,6 +123,110 @@ class FineTuningConfigDebugTest(unittest.TestCase):
         config = response.json()["data"]["config"]
         self.assertIs(config["is_debug"], False)
         self.assertIsNone(config["drawing_id"])
+        self.assertEqual("raw", config["devices"][0]["position_mode"])
+        self.assertEqual("command_start", config["devices"][0]["reference_source"])
+        self.assertNotIn("adjust", config["devices"][0])
+        self.assertIsNone(config["devices"][0]["requested_delta"])
+        self.assertIsNone(config["devices"][0]["reference_position"])
+        self.assertIsNone(config["devices"][0]["raw_current"])
+
+    def test_relative_snapshot_keeps_command_and_measured_values(self):
+        response = self.client.post("/api/finetuning/config", json=self.payload(
+            is_debug=True,
+            devices=[{
+                "device_id": 1, "parameter_name": "rotation", "initial": 0,
+                "requested_delta": 10, "current": 9.5, "position_mode": "relative",
+                "reference_position": 37.25, "raw_current": 46.75,
+            }, {
+                "device_id": 21, "sensor_id": 49, "parameter_name": "pressure", "current": 1.5,
+            }],
+        ))
+        self.assertEqual(response.status_code, 200, response.text)
+        config = response.json()["data"]["config"]
+        axis = config["devices"][0]
+        self.assertEqual("relative", axis["position_mode"])
+        self.assertEqual("command_start", axis["reference_source"])
+        self.assertNotIn("adjust", axis)
+        self.assertEqual(10, axis["requested_delta"])
+        self.assertEqual(9.5, axis["current"])
+        self.assertEqual(37.25, axis["reference_position"])
+        self.assertEqual(46.75, axis["raw_current"])
+        self.assertEqual("raw", config["devices"][1]["position_mode"])
+        with self.session_factory() as db:
+            self.assertEqual(json.loads(db.query(models.FineTuningConfig).one().config_json), config)
+
+    def test_relative_snapshot_preserves_unavailable_measurements(self):
+        response = self.client.post("/api/finetuning/config", json=self.payload(
+            is_debug=True,
+            devices=[{
+                "device_id": 1, "position_mode": "relative", "current": None,
+                "reference_position": None, "raw_current": None,
+            }],
+        ))
+        self.assertEqual(response.status_code, 200, response.text)
+        axis = response.json()["data"]["config"]["devices"][0]
+        self.assertEqual("relative", axis["position_mode"])
+        self.assertIsNone(axis["current"])
+        self.assertIsNone(axis["reference_position"])
+        self.assertIsNone(axis["raw_current"])
+
+    def test_drawing_settled_snapshot_keeps_a_nonzero_fixed_reference_across_adjustments(self):
+        for measured_delta, raw_current in ((9.5, 46.75), (20, 57.25)):
+            response = self.client.post("/api/finetuning/config", json=self.payload(
+                is_debug=False, drawing_id=12,
+                devices=[{
+                    "device_id": 1, "parameter_name": "rotation", "initial": 37.25,
+                    "position_mode": "relative", "reference_source": "drawing_settled",
+                    "reference_position": 37.25, "raw_current": raw_current,
+                    "current": measured_delta, "requested_delta": 10,
+                }],
+            ))
+            self.assertEqual(response.status_code, 200, response.text)
+            saved = response.json()["data"]
+            axis = saved["config"]["devices"][0]
+            self.assertEqual("drawing_settled", axis["reference_source"])
+            self.assertEqual(37.25, axis["initial"])
+            self.assertEqual(37.25, axis["reference_position"])
+            self.assertEqual(raw_current, axis["raw_current"])
+            self.assertEqual(measured_delta, axis["current"])
+            self.assertAlmostEqual(raw_current - axis["reference_position"], axis["current"])
+            self.assertEqual(10, axis["requested_delta"])
+            self.assertNotIn("adjust", axis)
+            with self.session_factory() as db:
+                record = db.get(models.FineTuningConfig, saved["id"])
+                self.assertEqual(saved["config"], json.loads(record.config_json))
+        with self.session_factory() as db:
+            self.assertEqual(2, db.query(models.FineTuningConfig).count())
+
+    def test_drawing_snapshot_before_reference_lock_preserves_null_reference_values(self):
+        response = self.client.post("/api/finetuning/config", json=self.payload(
+            is_debug=False, drawing_id=12,
+            devices=[{
+                "device_id": 1, "parameter_name": "rotation", "initial": None,
+                "position_mode": "relative", "reference_source": "drawing_settled",
+                "reference_position": None, "raw_current": 37.25,
+                "current": None, "requested_delta": 10,
+            }],
+        ))
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = response.json()["data"]
+        axis = saved["config"]["devices"][0]
+        self.assertEqual("drawing_settled", axis["reference_source"])
+        self.assertIsNone(axis["initial"])
+        self.assertIsNone(axis["reference_position"])
+        self.assertIsNone(axis["current"])
+        self.assertEqual(37.25, axis["raw_current"])
+        self.assertEqual(10, axis["requested_delta"])
+        with self.session_factory() as db:
+            self.assertEqual(saved["config"], json.loads(db.get(models.FineTuningConfig, saved["id"]).config_json))
+
+    def test_unknown_reference_sources_are_rejected_without_saving(self):
+        response = self.client.post("/api/finetuning/config", json=self.payload(
+            devices=[{"device_id": 1, "reference_source": "unknown"}],
+        ))
+        self.assertEqual(response.status_code, 422)
+        with self.session_factory() as db:
+            self.assertEqual(0, db.query(models.FineTuningConfig).count())
 
     def test_snapshot_preserves_unknown_values_and_historical_feedback_state(self):
         feedback_state = {"rotation": {"status": "waiting", "age_ms": None},
@@ -173,6 +277,32 @@ class FineTuningConfigDebugTest(unittest.TestCase):
         response = self.client.post("/api/finetuning/config", json=self.payload(calibrated=True))
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIn("校零", response.json()["data"]["notes"])
+
+    def test_drawing_calibration_without_note_uses_actual_fixed_references_and_pending_values(self):
+        response = self.client.post("/api/finetuning/config", json=self.payload(
+            calibrated=True, is_debug=False, drawing_id=12,
+            devices=[{
+                "device_id": 1, "parameter_name": "rotation", "initial": 0,
+                "reference_source": "drawing_settled", "reference_position": 37.25,
+            }, {
+                "device_id": 2, "parameter_name": "swing", "initial": None,
+                "reference_source": "drawing_settled", "reference_position": None,
+            }, {
+                "device_id": 3, "parameter_name": "telescopic", "initial": 0,
+                "reference_source": "drawing_settled", "reference_position": 7.5,
+            }],
+        ))
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = response.json()["data"]
+        note = saved["notes"]
+        self.assertIn("校零", note)
+        self.assertIn("图纸固定基准", note)
+        self.assertIn("旋转 37.25°", note)
+        self.assertIn("摆动 待采集", note)
+        self.assertIn("伸缩 7.50mm", note)
+        self.assertNotIn("按 0 记录", note)
+        with self.session_factory() as db:
+            self.assertEqual(note, db.get(models.FineTuningConfig, saved["id"]).notes)
 
     def test_plain_save_leaves_the_notes_column_empty(self):
         response = self.client.post("/api/finetuning/config", json=self.payload())

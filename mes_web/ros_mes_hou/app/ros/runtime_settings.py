@@ -8,7 +8,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, ValidationError, model_validator
 
 from app.core.config import settings
 from app.db import models
@@ -21,6 +21,7 @@ class ConnectionSettings(BaseModel):
     ros_mode: Literal["real", "mock"] = "real"
     drawing_mode: Literal["skip", "real", "mock"] = "real"
     emergency_mode: Literal["real", "mock"] = "real"
+    finetuning_preflight_enabled: StrictBool = True
     ros_url: str = settings.ROSBRIDGE_URL
     drawing_ros_url: str = ""
     emergency_ros_url: str = ""

@@ -24,7 +24,7 @@ export function feedbackTimeouts(env: Record<string, unknown>) {
   };
   // 显示新鲜度策略，不代表硬件发布周期或故障判断；现场可分别调整。
   return {
-    axis: milliseconds('VITE_ROS_AXIS_STALE_MS', 5000),
+    axis: milliseconds('VITE_ROS_AXIS_STALE_MS', 60000),
     pressure: milliseconds('VITE_ROS_PRESSURE_STALE_MS', 10000),
     imu: milliseconds('VITE_ROS_IMU_STALE_MS', 5000),
   };

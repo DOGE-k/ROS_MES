@@ -17,6 +17,7 @@
           <strong>模块 {{ moduleId }}</strong>
           <el-tag v-if="resumedFromSession" type="success">已续接会话 · 未重新握手</el-tag>
           <el-tag v-if="isDebugMode" type="warning">调试模式 · 未绑定图纸</el-tag>
+          <el-tag v-if="finetuningPreflightEnabled" type="info">下发前检查已开启</el-tag>
           <el-tag :type="feedbackSimulated ? 'warning' : 'info'">{{ noRosDebug || feedbackSimulated ? '后端模拟 · 未连接真实设备' : feedbackConnected ? '反馈通道已连接' : '反馈通道未连接' }}</el-tag>
           <span class="context-divider"></span>
           <span>当前机械臂</span>
@@ -35,6 +36,14 @@
           <el-button v-if="activeSession" :disabled="busy" @click="endSession">结束会话</el-button>
         </div>
       </div>
+
+      <el-alert
+        v-if="!finetuningPreflightEnabled"
+        title="微调下发前检查已关闭"
+        description="当前轴按相对增量发送，批次随后等待运行、到位和空闲反馈。缺少回传时，60 秒后进入待核实。缺少动作起点时，相对实测量显示为 —。"
+        type="warning"
+        :closable="false"
+      />
 
       <el-alert
         v-if="hasLocalStop"
@@ -84,6 +93,12 @@
             </div>
           </div>
         </template>
+        <el-alert
+          v-if="!isDebugMode"
+          :title="drawingBaselineLabel"
+          :type="activeDrawingBaseline?.status === 'locked' ? 'success' : 'info'"
+          :closable="false"
+        />
         <div class="control-grid">
           <div class="control-item">
             <div class="label-box">
@@ -103,10 +118,10 @@
               </div>
 
               <span class="real-time-tag"
-                >基准初始值: {{ Number(armList.device[0].initial).toFixed(2) }}</span
+                >{{ isDebugMode ? '本次相对起点' : '图纸固定基准' }}: {{ isDebugMode ? '0.00' : displayDrawingReference(0) }}</span
               >
               <span class="real-time-tag"
-                >当前实际值: {{ displayFeedback('rotation', armList.device[0].current) }} · {{ fieldStatusLabel('rotation') }}</span
+                >{{ isDebugMode ? '本次实际转动' : '相对基准变化量' }}: {{ displayAxisFeedback(0) }}° · {{ axisFeedbackLabel(0) }}</span
               >
             </div>
           </div>
@@ -130,10 +145,10 @@
               </div>
 
               <span class="real-time-tag"
-                >基准初始值: {{ Number(armList.device[1].initial).toFixed(2) }}</span
+                >{{ isDebugMode ? '本次相对起点' : '图纸固定基准' }}: {{ isDebugMode ? '0.00' : displayDrawingReference(1) }}</span
               >
               <span class="real-time-tag"
-                >当前实际值: {{ displayFeedback('swing', armList.device[1].current) }} · {{ fieldStatusLabel('swing') }}</span
+                >{{ isDebugMode ? '本次实际转动' : '相对基准变化量' }}: {{ displayAxisFeedback(1) }}° · {{ axisFeedbackLabel(1) }}</span
               >
             </div>
           </div>
@@ -155,10 +170,10 @@
               </div>
 
               <span class="real-time-tag"
-                >基准初始值: {{ Number(armList.device[2].initial).toFixed(2) }}</span
+                >{{ isDebugMode ? '本次相对起点' : '图纸固定基准' }}: {{ isDebugMode ? '0.00' : displayDrawingReference(2) }}</span
               >
               <span class="real-time-tag"
-                >当前实际值: {{ displayFeedback('telescopic', armList.device[2].current) }} · {{ fieldStatusLabel('telescopic') }}</span
+                >{{ isDebugMode ? '本次实际移动' : '相对基准变化量' }}: {{ displayAxisFeedback(2) }}mm · {{ axisFeedbackLabel(2) }}</span
               >
             </div>
           </div>
@@ -179,7 +194,8 @@
 
         <div class="batch-controls">
           <el-button type="primary" :disabled="busy || !isReady || !hasPendingAdjustments || hasLocalStop" @click="confirmAdjustments">确认下发三轴调整</el-button>
-          <span>输入为本次待提交增量，点击确认后按旋转、摆动、伸缩顺序执行。基准初始值固定为 0（下位机未回传初始值）；人工下发归位后点亮「校准」再保存，数据库备注会记为校零。</span>
+          <span v-if="!isDebugMode">输入为相对增量，例如 +10° 表示从当前位置再转 10°。图纸运动后，三轴连续静止 10 秒时锁定图纸基准，后续微调显示相对这组固定基准的变化量。</span>
+          <span v-else>输入为本次相对增量，无图纸调试显示该次动作的实际移动量。人工归位后点亮「校准」再保存可记录校零备注。</span>
           <el-button v-if="!busy && !isReady" @click="openConfiguration">重新配置机械臂</el-button>
         </div>
         <div v-if="batchState" class="batch-progress">
@@ -189,7 +205,8 @@
             :closable="false"
           />
           <p v-for="step in batchState.steps" :key="step.parameter_name">
-            {{ axisLabels[step.parameter_name] }}：{{ step.position }}{{ step.parameter_name === 'telescopic' ? 'mm' : '°' }} · {{ stepLabels[step.status] || step.status }}
+            {{ axisLabels[step.parameter_name] }}：本次增量 {{ step.position }}{{ step.parameter_name === 'telescopic' ? 'mm' : '°' }} · {{ stepLabels[step.status] || step.status }}
+            <span v-if="step.observed_delta != null"> · 到位实际增量 {{ step.observed_delta }}{{ step.parameter_name === 'telescopic' ? 'mm' : '°' }}</span>
             <span v-if="step.warning" class="step-warning">{{ step.warning }}</span>
           </p>
           <el-button @click="pollBatch(false)">刷新执行状态</el-button>
@@ -264,7 +281,7 @@
         <div class="dialog-intro-icon">⌁</div>
         <div>
           <strong>{{ dialogMode === "initial" ? "建立本次微调会话" : "更新当前机械臂图纸" }}</strong>
-          <p>{{ isDebugMode ? '完成机械臂确认后直接进入微调。真实或模拟由连接设置决定，当前配置不绑定图纸。' : dialogMode === "initial" ? "先确认需要参与本模块的机械臂，再统一下发目标图纸。" : "重新下发图纸只作用于当前机械臂。" }}</p>
+          <p>{{ isDebugMode ? '完成机械臂确认后直接进入微调。真实或模拟由连接设置决定，当前配置不绑定图纸。' : dialogMode === "initial" ? "先确认需要参与本模块的机械臂，再统一下发目标图纸。" : "重新下发后，重新观察已确认机械臂的图纸运动并采集固定基准。" }}</p>
         </div>
       </div>
       <el-form label-position="top" class="config-form">
@@ -323,8 +340,13 @@ import {
   saveFineTuningConfig,
 } from "@/api/rosApi";
 import { noRosDebug } from "@/api/noRosDebug";
-import { getConnectionSettings } from '@/api/connectionSettings';
+import { getConnectionSettings, type ConnectionSettings } from '@/api/connectionSettings';
 import { emptyFeedbackMarks, feedbackTimeouts, feedbackStatus, finiteFeedbackNumber, FEEDBACK_FIELDS, FEEDBACK_STATUS_LABELS, type FeedbackField } from '@/api/feedbackState';
+import {
+  createDrawingBaseline, observeDrawingPosition, observeDrawingRunning, confirmDrawingBaseline,
+  tickDrawingBaseline, interruptDrawingBaseline, restoreDrawingBaseline, type DrawingBaselineState,
+  DRAWING_BASELINE_STABLE_MS, DRAWING_BASELINE_MAX_SAMPLE_GAP_MS,
+} from '@/api/drawingBaseline';
 import {
   armIndexFromUnitId,
   axisDeviceId,
@@ -349,6 +371,7 @@ import {
 const router = useRouter();
 // 每次建立会话前读取服务配置；模式变更后必须重新确认机械臂。
 const isDebugMode = ref(false);
+const finetuningPreflightEnabled = ref(true);
 const drawingContextRevision = ref<number | null>(null);
 
 // 数据准备完成后再打开配置弹窗，避免接口加载期间短暂显示空表单。
@@ -380,6 +403,7 @@ const batchState = ref<FineTuningBatch | null>(null);
 const feedbackSimulated = ref(false);
 const drawingSimulated = ref(false);
 const confirmedConnectionRevision = ref<number | null>(null);
+let configurationGeneration = 0;
 let batchTimer: ReturnType<typeof setInterval> | undefined;
 let stopHoldTimer: ReturnType<typeof setInterval> | undefined;
 let batchPolling = false;
@@ -406,6 +430,7 @@ const selectedArmRowId = ref(0);
 const confirmedUnitIds = ref<number[]>([]);
 const confirmedSeg = ref<number | null>(null);
 const feedbackMarks = reactive(emptyFeedbackMarks());
+const drawingBaselines = reactive<Record<string, DrawingBaselineState>>({});
 const feedbackClock = ref(performance.now());
 const feedbackConnected = ref(false);
 const timeouts = feedbackTimeouts(import.meta.env);
@@ -438,12 +463,46 @@ const armList = reactive({
   // deviceId 由 applyAxisEncoding 按 V2.1 三轴编码动态填充（1~15 轴级 / 21~25 臂级），禁止硬编码
   // 下位机与 ROS 不回传初始值：三轴基准初始值统一按 0 记录，不从反馈里取
   device: [
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true, label: "底座旋转调整值" },
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true, label: "摆动调整值" },
-    { deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true, label: "伸缩杆调整值" },
+    {
+      deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true,
+      requestedDelta: null as number | null,
+      referencePosition: null as number | null, referenceReady: false, label: "底座旋转相对增量",
+    },
+    {
+      deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true,
+      requestedDelta: null as number | null,
+      referencePosition: null as number | null, referenceReady: false, label: "摆动相对增量",
+    },
+    {
+      deviceId: 0, initial: 0.0, adjust: 0.0, current: 0.0, initialLocked: true,
+      requestedDelta: null as number | null,
+      referencePosition: null as number | null, referenceReady: false, label: "伸缩杆相对增量",
+    },
     { deviceId: 0, initial: 0.0, current: 0.0 },
   ],
 });
+const relativeAxisValue = (index: number): number | null => {
+  const axis = armList.device[index];
+  const reference = axisReferencePosition(index);
+  const current = finiteFeedbackNumber(axis.current);
+  if (reference === null || current === null || (isDebugMode.value && !axis.referenceReady) || feedbackMarks[adjustmentKeys[index]].receivedAt === null) return null;
+  return current - reference;
+};
+const displayAxisFeedback = (index: number) => {
+  const value = relativeAxisValue(index);
+  return value === null ? '—' : (Math.abs(value) < 0.005 ? 0 : value).toFixed(2);
+};
+const axisFeedbackLabel = (index: number) => {
+  if (!isDebugMode.value) return activeDrawingBaseline.value?.status === 'locked'
+    ? fieldStatusLabel(adjustmentKeys[index]) : '等待图纸基准锁定';
+  const axis = armList.device[index];
+  if (finiteFeedbackNumber(axis.referencePosition) === null) {
+    const step = batchState.value?.steps.find(item => item.parameter_name === adjustmentKeys[index]);
+    const requested = step ? step.status !== 'pending' : finiteFeedbackNumber(axis.requestedDelta) !== null;
+    return requested ? '缺少起点反馈' : '等待本次下发';
+  }
+  return axis.referenceReady ? fieldStatusLabel(adjustmentKeys[index]) : '等待本次反馈';
+};
 const imuFeedback = reactive({
   swingAngle: 0,
   rotationAngle: 0,
@@ -465,6 +524,25 @@ const armNumber = (unitId: number) => {
 };
 
 const adjustmentKeys: AxisParameterName[] = ["rotation", "swing", "telescopic"];
+const activeDrawingBaseline = computed(() => drawingBaselines[String(initConfig.unitId)] ?? null);
+const axisReferencePosition = (index: number): number | null => isDebugMode.value
+  ? finiteFeedbackNumber(armList.device[index].referencePosition)
+  : finiteFeedbackNumber(activeDrawingBaseline.value?.values?.[index]);
+const displayDrawingReference = (index: number) => {
+  const value = axisReferencePosition(index);
+  return value === null ? '—' : value.toFixed(2);
+};
+const drawingBaselineLabel = computed(() => {
+  const baseline = activeDrawingBaseline.value;
+  if (!baseline) return '等待图纸下发后采集固定基准';
+  if (baseline.status === 'locked') return '图纸固定基准已锁定，后续微调沿用这组基准';
+  if (baseline.status === 'failed') return '图纸下发结果待核实，固定基准尚未锁定';
+  if (!baseline.confirmed) return '图纸下发中，正在观察机械臂运动';
+  if (!baseline.motionObserved) return '等待图纸运动反馈';
+  if (baseline.stableSince === null) return '等待连续有效的三轴位置反馈';
+  const remaining = Math.max(0, Math.ceil((DRAWING_BASELINE_STABLE_MS - (feedbackClock.value - baseline.stableSince)) / 1000));
+  return `正在等待机械臂静止满 10 秒，还需 ${remaining} 秒`;
+});
 const hasPendingAdjustments = computed(() => armList.device.slice(0, 3).some(item => Number(item.adjust) !== 0));
 // 到位误差超容差只做提示，不影响批次状态与下发能力
 const hasStepWarnings = computed(() => Boolean(batchState.value?.steps?.some(step => step.warning)));
@@ -511,6 +589,11 @@ const resetControlState = (preserveBatch = false) => {
     item.initial = 0;
     item.adjust = index < 3 ? 0 : undefined;
     item.current = 0;
+    if (index < 3) {
+      item.requestedDelta = null;
+      item.referencePosition = null;
+      item.referenceReady = false;
+    }
     item.initialLocked = true;
   });
   calibrateMode.value = false;
@@ -533,7 +616,18 @@ const restoreArmProfile = (profile: any) => {
   initConfig.drawingId = Number(profile.drawingId);
   initConfig.drawingSource = profile.drawingSource || 'database';
   drawingSimulated.value = Boolean(profile.drawingSimulated);
-  armList.device.splice(0, armList.device.length, ...profile.device.map((item: any) => ({ ...item })));
+  armList.device.splice(0, armList.device.length, ...profile.device.map((item: any, index: number) => {
+    if (index >= 3) return { ...item };
+    const referencePosition = finiteFeedbackNumber(item.referencePosition);
+    const lastStep = batchState.value?.steps.find(step =>
+      step.parameter_name === adjustmentKeys[index] && step.status !== 'pending');
+    return {
+      ...item,
+      requestedDelta: finiteFeedbackNumber(item.requestedDelta === undefined ? lastStep?.position : item.requestedDelta),
+      referencePosition,
+      referenceReady: referencePosition !== null && item.referenceReady !== false,
+    };
+  }));
   Object.assign(imuFeedback, profile.imu || {});
   pressureSensorId.value = Number(profile.pressureSensorId || 0);
   initConfig.sensorId = pressureSensorId.value;
@@ -551,6 +645,8 @@ const restoreArmProfile = (profile: any) => {
   }
   feedbackClock.value = performance.now();
   loading.value = feedbackMarks.pressure.receivedAt !== null;
+  syncActiveDrawingSamples();
+  if (batchState.value) void refreshLegacyBatch(batchState.value);
 };
 
 // 依据机械臂 Unit_ID（32/64/96 → 臂1/2/3）计算 V2 轴号，填充三轴与臂级 deviceId
@@ -575,9 +671,11 @@ const rebuildFeedbackIndex = () => {
 
 // 拉取选中机械臂的传感器列表，取压力传感器的 sensor_ID 供配置保存使用
 const loadSensorsForUnit = async (unitRowId: number) => {
+  const generation = configurationGeneration;
   pressureSensorId.value = 0;
   try {
     const res: any = await getSensorsByUnitApi(unitRowId);
+    if (generation !== configurationGeneration || Number(initConfig.unitRowId) !== Number(unitRowId)) return;
     const sensors: any[] = Array.isArray(res)
       ? res
       : Array.isArray(res?.data)
@@ -610,7 +708,44 @@ const updateAxisCurrent = (index: number, position: number) => {
   axis.initial = 0;
   axis.initialLocked = true;
   axis.current = position;
+  axis.referenceReady = finiteFeedbackNumber(axis.referencePosition) !== null;
   markReceived(adjustmentKeys[index]);
+};
+
+const syncActiveDrawingSamples = () => {
+  if (isDebugMode.value) return;
+  const baseline = activeDrawingBaseline.value;
+  if (!baseline) return;
+  baseline.samples.forEach((sample, index) => {
+    if (!sample) return;
+    armList.device[index].current = sample.position;
+    feedbackMarks[adjustmentKeys[index]] = { receivedAt: sample.receivedAt, historical: false };
+  });
+};
+
+const interruptPendingDrawingBaselines = () => {
+  Object.values(drawingBaselines).forEach(interruptDrawingBaseline);
+};
+
+const observeDrawingFeedback = (feedback: any) => {
+  const deviceId = finiteFeedbackNumber(feedback.device_id);
+  if (deviceId === null || !Number.isInteger(deviceId) || deviceId < 1 || deviceId > 15) return;
+  const unitId = confirmedUnitIds.value.find(unit => {
+    const first = axisDeviceId(armIndexFromUnitId(unit), 'rotation');
+    return deviceId >= first && deviceId < first + 3;
+  });
+  const baseline = unitId === undefined ? null : drawingBaselines[String(unitId)];
+  if (!baseline || baseline.seg !== confirmedSeg.value || baseline.connectionRevision !== confirmedConnectionRevision.value) return;
+  const index = (deviceId - 1) % 3;
+  const kind = feedback.data_type;
+  const now = performance.now();
+  const types = ['rotation_axis_encoder', 'swing_axis_encoder', 'telescope_axis_encoder'];
+  if (kind === 'axis_encoder' || kind === types[index]) {
+    observeDrawingPosition(baseline, index, feedback.position_valid === false ? null : finiteFeedbackNumber(feedback.position), now);
+  } else if (kind === 'axis_status') {
+    const bits = finiteFeedbackNumber(feedback.status_bits);
+    if (feedback.axis_state === 1 || (bits !== null && Number.isInteger(bits) && (bits & 2))) observeDrawingRunning(baseline, now);
+  }
 };
 
 const applyMockInitialFeedback = () => {
@@ -657,6 +792,7 @@ const applyAck = (feedback: any) => {
 const applyFeedback = (feedback: any) => {
   if (feedback?.data_type === 'config_changed') { connectionChanged(); return; }
   if (!feedback || feedback.data_type === "error") {
+    interruptPendingDrawingBaselines();
     feedbackConnected.value = false;
     if (feedback?.message) {
       console.warn("ROS 反馈订阅异常：", feedback.message);
@@ -668,9 +804,13 @@ const applyFeedback = (feedback: any) => {
     return;
   }
   // 仅这些已核对的遥测话题使用 CAN SEG；均值和回执不能套用本规则。
-  if (confirmedSeg.value === null || !confirmedUnitIds.value.includes(Number(initConfig.unitId))) return;
+  if (confirmedSeg.value === null) return;
   if (feedback.module_id_space && feedback.module_id_space !== 'seg') return;
   if (finiteFeedbackNumber(feedback.module_id) !== confirmedSeg.value) return;
+  if (feedback.connection_revision !== undefined && confirmedConnectionRevision.value !== null &&
+      finiteFeedbackNumber(feedback.connection_revision) !== confirmedConnectionRevision.value) return;
+  observeDrawingFeedback(feedback);
+  if (!confirmedUnitIds.value.includes(Number(initConfig.unitId))) return;
   feedbackSimulated.value = feedback.simulated === true;
   const position = finiteFeedbackNumber(feedback.position);
   if (
@@ -730,21 +870,29 @@ const connectFeedbackSocket = () => {
     feedbackSocket.close();
   }
 
-  feedbackSocket = new WebSocket(getFeedbackWsUrl());
-  feedbackSocket.onopen = () => { feedbackConnected.value = true; };
-  feedbackSocket.onmessage = (event) => {
+  const socket = new WebSocket(getFeedbackWsUrl());
+  feedbackSocket = socket;
+  socket.onopen = () => { if (feedbackSocket === socket) feedbackConnected.value = true; };
+  socket.onmessage = (event) => {
+    if (feedbackSocket !== socket) return;
     try {
       applyFeedback(JSON.parse(event.data));
     } catch (err) {
       console.warn("ROS 反馈解析失败：", err);
     }
   };
-  feedbackSocket.onclose = () => {
+  socket.onclose = () => {
+    if (feedbackSocket !== socket) return;
+    interruptPendingDrawingBaselines();
     feedbackConnected.value = false;
     feedbackClock.value = performance.now();
     feedbackSocket = null;
   };
-  feedbackSocket.onerror = () => { feedbackConnected.value = false; };
+  socket.onerror = () => {
+    if (feedbackSocket !== socket) return;
+    feedbackConnected.value = false;
+    interruptPendingDrawingBaselines();
+  };
 };
 
 const openDrawingDialog = () => {
@@ -793,6 +941,7 @@ const handleArmSwitch = async (rowId: number) => {
   try {
     await loadSensorsForUnit(initConfig.unitRowId);
     if (noRosDebug) connectFeedbackSocket();
+    syncActiveDrawingSamples();
     saveActiveProfile(true);
   } finally {
     busy.value = false;
@@ -823,12 +972,22 @@ const confirmInitConfig = async () => {
     return;
   }
 
+  const operationGeneration = ++configurationGeneration;
+  const operationIsCurrent = () => configurationGeneration === operationGeneration;
+  let drawingGeneration: string | null = null;
+  let drawingScope: number[] = [];
+  let drawingSeg: number | null = null;
+  let drawingRevision: number | null = null;
+  const drawingIsCurrent = () => operationIsCurrent() && drawingGeneration !== null && confirmedSeg.value === drawingSeg &&
+    confirmedConnectionRevision.value === drawingRevision && drawingScope.every(unitId =>
+      drawingBaselines[String(unitId)]?.generation === drawingGeneration);
   busy.value = true;
   try {
     let confirmedUnits = selectedUnits;
     if (dialogMode.value === "initial") {
       for (const unit of selectedUnits) {
         const active = await getActiveFineTuningBatch(Number(moduleId.value), Number(unit.Unit_ID));
+        if (!operationIsCurrent()) return;
         if (active.data) { await restoreBatch(unit, active.data); return; }
       }
       const qX = Number(route.query.x || 0);
@@ -842,6 +1001,7 @@ const confirmInitConfig = async () => {
         position: 0,
         ...(drawingContextRevision.value !== null ? { connection_revision: drawingContextRevision.value } : {}),
       });
+      if (!operationIsCurrent()) return;
       if (!moduleRes || moduleRes.code !== 200 || moduleRes.dispatch?.confirmed === false) {
         throw new Error(moduleRes?.message || moduleRes?.msg || "机械臂模块确认失败");
       }
@@ -870,9 +1030,29 @@ const confirmInitConfig = async () => {
     }
 
     const drawingId = isDebugMode.value ? 0 : Number(draftInitConfig.drawingId);
+    if (dialogMode.value === 'initial') {
+      for (const key of Object.keys(drawingBaselines)) delete drawingBaselines[key];
+    }
     let firstDrawingResponse: any = null;
     if (!isDebugMode.value) {
+      drawingGeneration = globalThis.crypto?.randomUUID?.() || `drawing_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      drawingScope = [...confirmedUnitIds.value];
+      drawingSeg = confirmedSeg.value;
+      drawingRevision = confirmedConnectionRevision.value;
+      const now = performance.now();
+      // 图纸 ROS 消息只携带路径，按本次已确认臂分别重新观察。
+      for (const unitId of drawingScope) {
+        const previous = drawingBaselines[String(unitId)];
+        const seeds = previous?.samples.map(sample => sample && now - sample.receivedAt <= DRAWING_BASELINE_MAX_SAMPLE_GAP_MS
+          ? sample.position : null);
+        drawingBaselines[String(unitId)] = createDrawingBaseline({
+          generation: drawingGeneration, unitId, seg: Number(drawingSeg), connectionRevision: drawingRevision,
+          drawingId: builtinDrawing ? null : drawingId, drawingSource: builtinDrawing ? 'builtin_mock' : 'database',
+        }, seeds);
+      }
+      if (!noRosDebug && !feedbackSocket) connectFeedbackSocket();
       for (const unit of confirmedUnits) {
+        if (!drawingIsCurrent()) return;
         const response: any = await sendCoordination({
           device_id: Number(initConfig.deviceId),
           module_id: Number(moduleId.value),
@@ -882,11 +1062,13 @@ const confirmInitConfig = async () => {
           drawing_source: builtinDrawing ? 'builtin_mock' : 'database',
           ...(confirmedConnectionRevision.value !== null ? { connection_revision: confirmedConnectionRevision.value } : {}),
         });
+        if (!drawingIsCurrent()) return;
         if (!response || response.code !== 200) {
           throw new Error(response?.message || response?.msg || `机械臂 ${unit.Unit_ID} 图纸下发失败`);
         }
         firstDrawingResponse ||= response;
       }
+      drawingScope.forEach(unitId => confirmDrawingBaseline(drawingBaselines[String(unitId)], performance.now()));
     }
 
     const activeUnit = confirmedUnits[0];
@@ -898,6 +1080,7 @@ const confirmInitConfig = async () => {
       selectedArmRowId.value = initConfig.unitRowId;
       applyAxisEncoding(initConfig.unitId);
       await loadSensorsForUnit(initConfig.unitRowId);
+      if (!operationIsCurrent()) return;
       if (noRosDebug) connectFeedbackSocket();
       lastLoadedUnitRowId = initConfig.unitRowId;
       armList.id = initConfig.unitId;
@@ -905,9 +1088,8 @@ const confirmInitConfig = async () => {
     initConfig.drawingId = drawingId;
     initConfig.drawingSource = !isDebugMode.value && builtinDrawing ? 'builtin_mock' : 'database';
     drawingSimulated.value = firstDrawingResponse?.simulated === true;
-    // 初次建立会话时，图纸才是所有已确认机械臂的共享默认值。
-    // 重新下发只更新当前机械臂，避免影响尚未切换到的机械臂。
-    if (dialogMode.value === "initial") {
+    // 图纸消息携带路径，同步本次已确认会话内的图纸关联。
+    if (dialogMode.value === "initial" || !isDebugMode.value) {
       sharedDrawingId.value = drawingId;
       sharedDrawingSource.value = initConfig.drawingSource;
     }
@@ -920,10 +1102,19 @@ const confirmInitConfig = async () => {
       url: `${url}${String(url).includes("?") ? "&" : "?"}t=${timestamp}`,
     }));
     pointCloudViews.value = dispatchedViews;
-    if (dialogMode.value === "initial") {
+    if (dialogMode.value === "initial" || !isDebugMode.value) {
       sharedDrawingViews.value = dispatchedViews.map((item) => ({ ...item }));
     }
+    for (const profile of Object.values(armProfiles)) {
+      if (!drawingScope.includes(Number(profile.unitId))) continue;
+      profile.drawingId = drawingId;
+      profile.drawingSource = initConfig.drawingSource;
+      profile.drawingSimulated = drawingSimulated.value;
+      profile.pointCloudViews = dispatchedViews.map(item => ({ ...item }));
+      profile.showPointCloudViews = false;
+    }
     showPointCloudViews.value = false;
+    syncActiveDrawingSamples();
     saveActiveProfile(true);
     initDialogVisible.value = false;
     if (!noRosDebug && !feedbackSocket) connectFeedbackSocket();
@@ -931,6 +1122,15 @@ const confirmInitConfig = async () => {
       ? `已确认 ${confirmedUnits.length} 台机械臂，进入无图纸调试模式`
       : `已确认 ${confirmedUnits.length} 台机械臂并完成图纸下发`);
   } catch (err: any) {
+    if (drawingGeneration !== null) {
+      for (const unitId of drawingScope) {
+        const baseline = drawingBaselines[String(unitId)];
+        if (baseline?.generation !== drawingGeneration) continue;
+        baseline.status = 'failed';
+        baseline.values = null;
+        baseline.stableSince = null;
+      }
+    }
     console.error("机械臂确认或图纸下发失败：", err.response?.data || err);
     const detail = err.response?.data?.detail;
     ElMessage.error(typeof detail === 'string' ? detail : detail?.reason || err.message || "机械臂确认或图纸下发失败");
@@ -938,7 +1138,7 @@ const confirmInitConfig = async () => {
     busy.value = Boolean(batchState.value?.target_locked);
   }
 };
-const applyBatch = (batch: FineTuningBatch) => {
+const applyBatch = (batch: FineTuningBatch, preserveDrafts = false) => {
   if (batch.module_id !== Number(moduleId.value) || batch.unit_id !== Number(initConfig.unitId)) return;
   batchState.value = batch;
   busy.value = batch.target_locked;
@@ -947,13 +1147,21 @@ const applyBatch = (batch: FineTuningBatch) => {
     ElMessage.warning('本批次有轴到位误差超出容差，已记录提示；不影响后续下发');
   }
   for (const step of batch.steps) {
-    if (step.status !== 'completed') continue;
     const index = adjustmentKeys.indexOf(step.parameter_name as AxisParameterName);
-    if (index < 0) continue;
-    armList.device[index].adjust = 0;
+    if (index < 0 || step.status === 'pending') continue;
+    const axis = armList.device[index];
+    axis.requestedDelta = finiteFeedbackNumber(step.position);
+    const start = finiteFeedbackNumber(step.start_position);
+    if (isDebugMode.value && step.start_position !== undefined && axis.referencePosition !== start) {
+      axis.referencePosition = start;
+      axis.referenceReady = false;
+    }
+    if (step.status !== 'completed') continue;
+    if (!preserveDrafts) axis.adjust = 0;
     // 只有明确的无 ROS 模拟可本地更新模拟位置；真实实测仍只来自遥测。
-    if (noRosDebug && batch.simulated && appliedSimulationId !== batch.id) {
-      updateAxisCurrent(index, Number(armList.device[index].current) + step.position);
+    if (!preserveDrafts && noRosDebug && batch.simulated && appliedSimulationId !== batch.id) {
+      if (isDebugMode.value && start === null) axis.referencePosition = axis.current;
+      updateAxisCurrent(index, Number(axis.current) + step.position);
     }
   }
   if (batch.simulated) appliedSimulationId = batch.id;
@@ -1017,6 +1225,31 @@ const startBatchPolling = () => {
   if (batchState.value?.target_locked) batchTimer = setInterval(() => { void pollBatch(); }, 1000);
 };
 
+const refreshLegacyBatch = async (cached: FineTuningBatch) => {
+  if (cached.finetuning_preflight_enabled === false) return;
+  const needsRefresh = cached.id && cached.steps.some(step => step.status !== 'pending' &&
+    (finiteFeedbackNumber(step.start_position) === null ||
+      (step.status === 'completed' && finiteFeedbackNumber(step.observed_delta) === null)) &&
+    (step.expected_position !== undefined || step.observed_angle !== undefined || step.warning));
+  if (!needsRefresh) return;
+  for (const step of cached.steps) {
+    if (step.warning && cached.message.includes(step.warning)) cached.message = '正在读取历史批次的相对运动结果';
+    delete step.warning;
+  }
+  const revision = confirmedConnectionRevision.value;
+  const seg = confirmedSeg.value;
+  const isCurrent = () => batchState.value === cached && confirmedConnectionRevision.value === revision &&
+    confirmedSeg.value === seg && confirmedUnitIds.value.includes(cached.unit_id);
+  try {
+    const result = await getFineTuningBatch(cached.id);
+    if (!isCurrent()) return;
+    if (result.data?.id === cached.id && result.data.request_id === cached.request_id) applyBatch(result.data, true);
+    else cached.message = '历史批次的相对运动结果待核实，请刷新执行状态';
+  } catch {
+    if (isCurrent()) cached.message = '历史批次的相对运动结果读取失败，请刷新执行状态';
+  }
+};
+
 const restoreBatch = async (unit: any, batch: FineTuningBatch) => {
   initConfig.unitRowId = Number(unit.id);
   initConfig.unitId = Number(unit.Unit_ID);
@@ -1038,6 +1271,7 @@ const restoreBatch = async (unit: any, batch: FineTuningBatch) => {
 const readConnectionContext = async () => {
   const value = (await getConnectionSettings()).data;
   isDebugMode.value = value.drawing_mode === 'skip';
+  finetuningPreflightEnabled.value = value.finetuning_preflight_enabled !== false;
   drawingContextRevision.value = value.revision;
 };
 
@@ -1081,25 +1315,42 @@ const confirmAdjustments = async () => {
   }
   const pending = adjustments.filter(item => item.position !== 0);
   if (!pending.length) { ElMessage.warning('没有待下发的非零调整'); return; }
+  pending.forEach(item => {
+    const axis = armList.device[adjustmentKeys.indexOf(item.parameter_name)];
+    if (isDebugMode.value) {
+      axis.referencePosition = null;
+      axis.referenceReady = false;
+    }
+  });
   const requestId = globalThis.crypto?.randomUUID?.() || `batch_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   batchState.value = { id: '', request_id: requestId, module_id: Number(moduleId.value), unit_id: Number(initConfig.unitId), seg: Number(confirmedSeg.value),
     status: 'submitting', message: '正在登记本次调整', target_locked: true, steps: pending.map(item => ({ ...item, device_id: 0, status: 'pending' })) };
+  const submittingBatch = batchState.value;
+  const requestedRevision = confirmedConnectionRevision.value;
+  const requestedSeg = confirmedSeg.value;
+  const isCurrent = () => batchState.value === submittingBatch &&
+    confirmedConnectionRevision.value === requestedRevision && confirmedSeg.value === requestedSeg &&
+    confirmedUnitIds.value.includes(submittingBatch.unit_id);
   busy.value = true;
   try {
     const result = await submitFineTuningBatch({ request_id: requestId, module_id: Number(moduleId.value), unit_id: Number(initConfig.unitId), adjustments: pending,
       ...(confirmedConnectionRevision.value !== null ? { connection_revision: confirmedConnectionRevision.value } : {}) });
+    if (!isCurrent()) return;
     applyBatch(result.data);
   } catch (error: any) {
+    if (!isCurrent()) return;
     // 网络失败可能发生在服务已登记之后，保留请求号，查询而不重发。
     if (error.response?.status === 409) {
       try {
         const active = await getActiveFineTuningBatch(Number(moduleId.value), Number(initConfig.unitId));
+        if (!isCurrent()) return;
         if (active.data) { applyBatch(active.data); startBatchPolling(); return; }
         batchState.value.target_locked = false;
         batchState.value.status = 'blocked';
         busy.value = false;
       } catch { /* 归属不明时继续保持锁定并查询原请求。 */ }
     }
+    if (!isCurrent()) return;
     if (error.response?.status === 422 || error.response?.status === 401) {
       batchState.value.target_locked = false;
       batchState.value.status = 'blocked';
@@ -1137,8 +1388,9 @@ const calibrationStamp = () => {
 
 // 写入 fine_tuning_config.notes：让人翻数据库时能直接看出这条是校零值，不是微调值
 const buildCalibrationNote = () => {
-  const values = armList.device.slice(0, 3).map((item: any) => Number(item.initial || 0).toFixed(2));
-  return `校零：机械臂 ${armNumber(initConfig.unitId)}，三轴基准初始值 ${values.join("/")}（人工下发归位后保存）${calibrationStamp()}`;
+  const values = [0, 1, 2].map(index => isDebugMode.value ? '0.00' : displayDrawingReference(index));
+  const label = isDebugMode.value ? '三轴基准初始值' : '图纸三轴固定基准';
+  return `校零：机械臂 ${armNumber(initConfig.unitId)}，${label} ${values.join("/")}（人工下发归位后保存）${calibrationStamp()}`;
 };
 
 const handleSaveConfig = async () => {
@@ -1176,19 +1428,25 @@ const handleSaveConfig = async () => {
       calibrated: calibrateMode.value,
       notes: calibrateMode.value ? buildCalibrationNote() : null,
       devices: armList.device.map((item: any, index: number) => {
+        const reference = index < 3 ? axisReferencePosition(index) : null;
+        const rawCurrent = feedbackMarks[index === 3 ? 'pressure' : adjustmentKeys[index]].receivedAt === null
+          ? null : Number(item.current);
         const base = {
           device_id: Number(item.deviceId || 0),
           unit_id: Number(initConfig.unitId),
           parameter_name: index === 3 ? "pressure" : adjustmentKeys[index],
           label: item.label || "压力传感器",
-          initial: index < 3 ? Number(item.initial) : null,
-          adjust: Number(item.adjust || 0),
-          current: feedbackMarks[index === 3 ? 'pressure' : adjustmentKeys[index]].receivedAt === null ? null : Number(item.current),
+          initial: isDebugMode.value && index < 3 ? 0 : reference,
+          current: rawCurrent,
         };
         // 轴的 device_id 与传感器的 sensor_id 是两套编码：仅臂级压力项携带 sensor_id
-        return index === 3
-          ? { ...base, sensor_id: pressureSensorId.value || undefined }
-          : base;
+        if (index === 3) return { ...base, sensor_id: pressureSensorId.value || undefined };
+        return {
+          ...base, current: relativeAxisValue(index), position_mode: 'relative',
+          requested_delta: item.requestedDelta,
+          reference_source: isDebugMode.value ? 'command_start' : 'drawing_settled',
+          reference_position: reference, raw_current: rawCurrent,
+        };
       }),
     };
 
@@ -1228,26 +1486,36 @@ const goBack = () => {
 
 // ========== 会话保持 ==========
 // 握手结果由后端登记为会话；续接只读记录，不发送模块确认，也不自动重发运动。
-const buildSessionSnapshot = () => ({
-  moduleDisplay: moduleDisplay.value,
-  x: moduleX.value,
-  y: moduleY.value,
-  confirmedSeg: confirmedSeg.value,
-  confirmedConnectionRevision: confirmedConnectionRevision.value,
-  confirmedUnitIds: [...confirmedUnitIds.value],
-  selectedArmRowId: selectedArmRowId.value,
-  initConfig: { ...initConfig },
-  armList: { id: armList.id, device: cloneDevices() },
-  imuFeedback: { ...imuFeedback },
-  pressureSensorId: pressureSensorId.value,
-  pointCloudViews: pointCloudViews.value.map((item) => ({ ...item })),
-  showPointCloudViews: showPointCloudViews.value,
-  drawingSimulated: drawingSimulated.value,
-  sharedDrawingId: sharedDrawingId.value,
-  sharedDrawingSource: sharedDrawingSource.value,
-  sharedDrawingViews: sharedDrawingViews.value.map((item) => ({ ...item })),
-  armProfiles: JSON.parse(JSON.stringify(armProfiles)),
-});
+const buildSessionSnapshot = () => {
+  const profiles = JSON.parse(JSON.stringify(armProfiles));
+  const currentProfile = profiles[String(initConfig.unitRowId)];
+  if (currentProfile) {
+    currentProfile.device = cloneDevices();
+    currentProfile.imu = { ...imuFeedback };
+    currentProfile.feedbackMarks = Object.fromEntries(FEEDBACK_FIELDS.map(field => [field, { ...feedbackMarks[field] }]));
+  }
+  return {
+    moduleDisplay: moduleDisplay.value,
+    x: moduleX.value,
+    y: moduleY.value,
+    confirmedSeg: confirmedSeg.value,
+    confirmedConnectionRevision: confirmedConnectionRevision.value,
+    confirmedUnitIds: [...confirmedUnitIds.value],
+    selectedArmRowId: selectedArmRowId.value,
+    initConfig: { ...initConfig },
+    armList: { id: armList.id, device: cloneDevices() },
+    imuFeedback: { ...imuFeedback },
+    pressureSensorId: pressureSensorId.value,
+    pointCloudViews: pointCloudViews.value.map((item) => ({ ...item })),
+    showPointCloudViews: showPointCloudViews.value,
+    drawingSimulated: drawingSimulated.value,
+    sharedDrawingId: sharedDrawingId.value,
+    sharedDrawingSource: sharedDrawingSource.value,
+    sharedDrawingViews: sharedDrawingViews.value.map((item) => ({ ...item })),
+    armProfiles: profiles,
+    drawingBaselines: JSON.parse(JSON.stringify(drawingBaselines)),
+  };
+};
 
 let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
 const persistSnapshot = () => {
@@ -1257,9 +1525,11 @@ const persistSnapshot = () => {
 };
 
 watch(buildSessionSnapshot, () => {
-  if (!activeSession.value) return;
-  if (snapshotTimer !== undefined) clearTimeout(snapshotTimer);
-  snapshotTimer = setTimeout(persistSnapshot, 500);
+  if (!activeSession.value || !sessionStore.enabled || snapshotTimer !== undefined) return;
+  snapshotTimer = setTimeout(() => {
+    snapshotTimer = undefined;
+    persistSnapshot();
+  }, 500);
 }, { deep: true });
 
 const clearSessionState = () => {
@@ -1298,6 +1568,12 @@ const restoreSessionContext = async (session: ControlSession) => {
   confirmedSeg.value = Number(session.seg);
   confirmedConnectionRevision.value = session.connection_revision ?? null;
   confirmedUnitIds.value = session.unit_ids.map((item) => Number(item));
+  for (const key of Object.keys(drawingBaselines)) delete drawingBaselines[key];
+  for (const [key, saved] of Object.entries(snapshot?.drawingBaselines ?? {})) {
+    const baseline = restoreDrawingBaseline(saved);
+    if (baseline && baseline.seg === confirmedSeg.value && baseline.connectionRevision === confirmedConnectionRevision.value &&
+        confirmedUnitIds.value.includes(baseline.unitId) && key === String(baseline.unitId)) drawingBaselines[key] = baseline;
+  }
 
   const unitRes: any = await getUnitsByDeviceApi(initConfig.deviceId);
   const units = Array.isArray(unitRes) ? unitRes : Array.isArray(unitRes.data) ? unitRes.data : [];
@@ -1512,7 +1788,11 @@ const clearLocalStops = async () => {
 
 
 // ========== 6. 页面初始化 ==========
-const connectionChanged = () => {
+const connectionChanged = (event?: Event) => {
+  configurationGeneration++;
+  const config = (event as CustomEvent<ConnectionSettings> | undefined)?.detail;
+  if (config) finetuningPreflightEnabled.value = config.finetuning_preflight_enabled !== false;
+  else void readConnectionContext().catch(() => {});
   // 服务端已因连接变更作废全部会话，本机快照同样不能再用
   sessionStore.clearSnapshot();
   clearSessionState();
@@ -1522,6 +1802,7 @@ const connectionChanged = () => {
   confirmedSeg.value = null;
   confirmedConnectionRevision.value = null;
   confirmedUnitIds.value = [];
+  for (const key of Object.keys(drawingBaselines)) delete drawingBaselines[key];
   for (const key of Object.keys(armProfiles)) delete armProfiles[key];
   Object.assign(feedbackMarks, emptyFeedbackMarks());
   feedbackConnected.value = false;
@@ -1534,8 +1815,12 @@ const connectionChanged = () => {
 };
 
 onMounted(async () => {
+  window.addEventListener?.('pagehide', persistSnapshot);
   window.addEventListener?.('ros-connection-changed', connectionChanged);
-  feedbackTimer = setInterval(() => { feedbackClock.value = performance.now(); }, 500);
+  feedbackTimer = setInterval(() => {
+    feedbackClock.value = performance.now();
+    Object.values(drawingBaselines).forEach(baseline => tickDrawingBaseline(baseline, feedbackClock.value));
+  }, 500);
   // 局部停记录按环境保存在后端：进入页面先读一次，随后低频刷新以反映其他窗口的操作
   void loadStopHolds();
   stopHoldTimer = setInterval(() => { void loadStopHolds(); }, 8000);
@@ -1621,7 +1906,11 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  configurationGeneration++;
+  if (snapshotTimer !== undefined) clearTimeout(snapshotTimer);
+  snapshotTimer = undefined;
   persistSnapshot();
+  window.removeEventListener?.('pagehide', persistSnapshot);
   window.removeEventListener?.('ros-connection-changed', connectionChanged);
   if (batchTimer !== undefined) clearInterval(batchTimer);
   if (feedbackTimer !== undefined) clearInterval(feedbackTimer);

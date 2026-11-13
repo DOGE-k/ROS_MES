@@ -167,9 +167,11 @@ export interface FineTuningBatch {
 	message: string;
 	target_locked: boolean;
 	simulated?: boolean;
+	finetuning_preflight_enabled?: boolean;
 	steps: {
 		parameter_name: string; position: number; device_id: number; status: string;
-		expected_position?: number; observed_angle?: number; deviation?: number; position_error?: number;
+		start_position?: number | null; observed_delta?: number | null;
+		expected_position?: number | null; observed_angle?: number; deviation?: number | null; position_error?: number;
 		// 到位误差超出容差时的提示：只记录，不阻止下发
 		warning?: string;
 	}[];

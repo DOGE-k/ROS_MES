@@ -26,21 +26,59 @@ class Halt(Exception):
     pass
 
 
+def number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def relative_motion_warning(step):
+    observed_delta, requested_delta = step.get("observed_delta"), step.get("position")
+    unit = "mm" if step["parameter_name"] == "telescopic" else "°"
+    motion = "移动" if step["parameter_name"] == "telescopic" else "转动"
+    tolerance = 0.1 if step["parameter_name"] == "telescopic" else 0.2
+    error_value = step.get("position_error")
+    firmware_error = f"{error_value:+.2f}{unit}" if number(error_value) else "待核实"
+    if not number(observed_delta) or not number(requested_delta) or not number(observed_delta - requested_delta):
+        return (
+            "本次相对运动结果待核实，缺少有效起点或到位反馈，"
+            f"固件误差 {firmware_error}（容差 {tolerance}{unit}），仅提示，不阻止后续轴"
+        )
+    return (
+        f"本次实际{motion} {observed_delta:.2f}{unit}，指令增量 {requested_delta:.2f}{unit}，"
+        f"相差 {observed_delta - requested_delta:+.2f}{unit}，固件误差 {firmware_error}"
+        f"（容差 {tolerance}{unit}），仅提示，不阻止后续轴"
+    )
+
+
 def snapshot(row):
     context = json.loads(row.request_json).get("_execution", {})
     simulated = context.get("mode", "real") == "mock"
+    steps = json.loads(row.progress_json)
+    message = row.message
+    for step in steps:
+        expected, requested = step.get("expected_position"), step.get("position")
+        if "start_position" not in step and number(expected) and number(requested) and number(expected - requested):
+            step["start_position"] = expected - requested
+        start, observed = step.get("start_position"), step.get("observed_angle")
+        if "observed_delta" not in step and number(start) and number(observed) and number(observed - start):
+            step["observed_delta"] = round(observed - start, 3)
+        old_warning = step.get("warning")
+        if isinstance(old_warning, str) and old_warning:
+            step["warning"] = relative_motion_warning(step)
+            if not message.startswith("轴 ") or message.startswith(f"轴 {step.get('device_id')} "):
+                message = message.replace(old_warning, step["warning"])
     return {
         "id": row.id, "request_id": row.request_id, "module_id": row.module_id,
         "unit_id": row.unit_id, "seg": row.seg, "status": row.status,
-        "message": ("【后端模拟】" if simulated else "") + row.message, "steps": json.loads(row.progress_json),
+        "message": ("【后端模拟】" if simulated else "") + message, "steps": steps,
         "target_locked": row.target_key is not None,
         "simulated": simulated, "execution_mode": context.get("mode", "real"),
         "safety_mode": context.get("safety_mode", "real"), "connection": context,
+        "finetuning_preflight_enabled": context.get("finetuning_preflight_enabled", True),
     }
 
 
 class BatchManager:
-    def __init__(self, sessions=SessionLocal, *, state_timeout=10.0, motion_timeout=60.0, freshness=3.0):
+    def __init__(self, sessions=SessionLocal, *, state_timeout=60.0, motion_timeout=60.0, freshness=3.0):
         self.sessions = sessions
         self.state_timeout = state_timeout
         self.motion_timeout = motion_timeout
@@ -209,6 +247,7 @@ class BatchManager:
                 request_json=json.dumps({**json.loads(canonical), "_execution": {
                     "mode": mode, "safety_mode": safety_mode, "url": getattr(client, "url", None),
                     "revision": getattr(client, "connection_revision", None),
+                    "finetuning_preflight_enabled": getattr(client, "finetuning_preflight_enabled", True),
                 }}, sort_keys=True),
                 progress_json=json.dumps(steps), status="queued", message="等待新鲜轴状态，尚未发送运动指令",
             )
@@ -273,6 +312,7 @@ class BatchManager:
     async def _execute(self, batch_id, client):
         job = self.get(batch_id)
         steps = job["steps"]
+        preflight_enabled = job["finetuning_preflight_enabled"]
         generation = self.safety(job["safety_mode"])["generation"]
         arm = resolve_arm_from_unit_id(job["unit_id"])
         axes = tuple(range((arm - 1) * 3 + 1, arm * 3 + 1))
@@ -287,9 +327,6 @@ class BatchManager:
                 await queue.put((time.monotonic(), {"data_type": "error", "message": "反馈连接已结束"}))
             except Exception:
                 await queue.put((time.monotonic(), {"data_type": "error", "message": "反馈连接失败"}))
-
-        def number(value):
-            return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
         def consume(at, item):
             if item.get("simulated") is True and not job["simulated"]:
@@ -315,10 +352,12 @@ class BatchManager:
                 raise Halt("收到非正常到位的停止事件，执行结果待核实")
             if kind == "axis_status":
                 bits = item.get("status_bits")
-                if not isinstance(bits, int) or item.get("axis_state") not in (0, 1, 2, 3) or item.get("base_valid") != 1:
-                    raise Halt("轴状态缺少有效基准/状态字段，禁止继续下发")
-                if bits & ((1 << 3) | (1 << 4) | (1 << 5) | (1 << 7)) or item.get("axis_state") == 3:
+                if (isinstance(bits, int) and bits & ((1 << 3) | (1 << 4) | (1 << 5) | (1 << 7))) or item.get("axis_state") == 3:
                     raise Halt("轴处于限位、故障或急停状态")
+                if not isinstance(bits, int) or item.get("axis_state") not in (0, 1, 2, 3) or item.get("base_valid") != 1:
+                    if preflight_enabled:
+                        raise Halt("轴状态缺少有效基准/状态字段，禁止继续下发")
+                    return False
                 states[did] = (at, item)
             elif kind in ENCODERS and kind == ENCODERS[(did - 1) % 3] and item.get("position_valid") is True and number(item.get("position")):
                 samples[did] = (at, item["position"])
@@ -343,31 +382,41 @@ class BatchManager:
 
         reader = asyncio.create_task(pump())
         try:
-            self._save(batch_id, "checking", "等待当前臂三轴有效空闲状态和实测位置", steps)
-            await asyncio.wait_for(ready.wait(), self.state_timeout)
+            state_deadline = time.monotonic() + self.state_timeout
+            if preflight_enabled:
+                self._save(batch_id, "checking", "等待当前臂三轴有效空闲状态和实测位置", steps)
+                try:
+                    await asyncio.wait_for(ready.wait(), self.state_timeout)
+                except asyncio.TimeoutError:
+                    raise Halt("等待反馈通道就绪超时；未发送运动指令") from None
+            else:
+                self._save(batch_id, "checking", "已跳过下发前状态和位置检查，准备发送相对增量", steps)
+                await asyncio.sleep(0)
             for step in steps:
-                deadline = time.monotonic() + self.state_timeout
                 # 每一轴下发前重新获得当前臂的有效空闲及位置；不能凭 HTTP 成功推进。
-                while not all(idle(did) and did in samples and time.monotonic() - samples[did][0] <= self.freshness for did in axes):
-                    at, item = await next_event(deadline)
+                while preflight_enabled and not all(idle(did) and did in samples and time.monotonic() - samples[did][0] <= self.freshness for did in axes):
+                    at, item = await next_event(state_deadline)
                     consume(at, item)
                 # 清空已收到的旧事件，避免前一动作的到位事件在发送后被消费。
                 while not queue.empty():
                     at, item = queue.get_nowait()
                     consume(at, item)
-                if not all(idle(did) for did in axes):
+                if preflight_enabled and not all(idle(did) for did in axes):
                     raise Halt("发送前检测到机械臂忙，尚未发送本轴")
                 self._check(batch_id, generation)
                 axis = step["device_id"]
-                expected = samples[axis][1] + step["position"]
-                if not math.isfinite(expected):
+                sample = samples.get(axis)
+                start_position = sample[1] if sample is not None and time.monotonic() - sample[0] <= self.freshness else None
+                expected = start_position + step["position"] if start_position is not None else None
+                if expected is not None and not math.isfinite(expected):
                     raise Halt("目标位置无效，尚未发送本轴")
-                step.update(status="sent_unconfirmed", expected_position=expected)
+                step.update(status="sent_unconfirmed", start_position=start_position, expected_position=expected,
+                            observed_delta=None, deviation=None)
                 self._save(batch_id, "executing", f"轴 {axis}：发送并等待运行、到位及空闲反馈", steps)
                 payload = build_fine_tuning_publish_payload(step["parameter_name"], step["position"], job["module_id"], axis, profile=client.profile)
                 with self.sessions() as db:
                     db.add(models.FineTuning(module_id=job["module_id"], unit_id=job["unit_id"],
-                        parameter_name=step["parameter_name"], old_value=samples[axis][1], new_value=step["position"],
+                        parameter_name=step["parameter_name"], old_value=start_position, new_value=step["position"],
                         creater_id=job_creator(self.sessions, batch_id), notes=f"batch={batch_id}; mode={job['execution_mode']}; 增量发送记录，不证明设备执行"))
                     db.commit()
                 attempted = True
@@ -398,19 +447,19 @@ class BatchManager:
                             and not bits & ((1 << 5) | (1 << 7)) and number(angle) and number(error))
                         if arrived:
                             # 容差只做提示：现场确认过"误差过大也要能继续下发"，因此不参与判定、不锁批次
-                            deviation = round(angle / 100.0 - expected, 3)
+                            observed_delta = angle / 100.0 - start_position if start_position is not None else None
+                            deviation = round(observed_delta - step["position"], 3) if observed_delta is not None else None
                             error_value = round(error / 100.0, 3)
                             step["observed_angle"] = round(angle / 100.0, 3)
+                            step["observed_delta"] = round(observed_delta, 3) if observed_delta is not None else None
                             step["deviation"] = deviation
                             step["position_error"] = error_value
-                            if abs(deviation) > tolerance or abs(error_value) > tolerance:
-                                step["warning"] = (
-                                    f"到位角 {angle / 100.0:.2f} 与期望 {expected:.2f} 相差 {deviation:+.2f}"
-                                    f"（容差 {tolerance}），仅提示，不阻止后续轴"
-                                )
+                            if (deviation is not None and abs(deviation) > tolerance) or abs(error_value) > tolerance:
+                                step["warning"] = relative_motion_warning(step)
                 step["status"] = "completed"
                 warning_note = f"；{step['warning']}" if step.get("warning") else ""
                 self._save(batch_id, "executing", f"轴 {axis} 已观测到运行、目标到位及空闲{warning_note}", steps)
+                state_deadline = time.monotonic() + self.state_timeout
             self._check(batch_id, generation)
             deviations = [step for step in steps if step.get("warning")]
             message = "本批次各轴已观测到运行、目标到位和空闲反馈"

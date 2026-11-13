@@ -651,6 +651,7 @@ class RosbridgeTransport(RosDispatcher):
             value.execution_mode = mode
             value.safety_mode = self.emergency_mode
             value.connection_revision = self.revision
+            value.finetuning_preflight_enabled = config["finetuning_preflight_enabled"]
             return value
 
         self.client = client(config["ros_mode"], config["ros_url"])

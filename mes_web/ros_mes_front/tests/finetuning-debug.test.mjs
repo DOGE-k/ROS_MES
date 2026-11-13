@@ -27,6 +27,7 @@ const read = path => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
 const debugModule = evaluate(read('../src/stores/debugSettings.ts'), { vue, pinia });
 const encoding = evaluate(read('../src/api/deviceEncoding.ts'), {});
 const feedbackState = evaluate(read('../src/api/feedbackState.ts'), {});
+const drawingBaseline = evaluate(read('../src/api/drawingBaseline.ts'), {});
 const { descriptor } = parse(read('../src/components/Main/ModulePage/FineTuningPage.vue'));
 const bindings = `Object.assign(module.exports, {
   isReady, busy, loading, initConfig, draftInitConfig, initDialogVisible,
@@ -35,6 +36,8 @@ const bindings = `Object.assign(module.exports, {
   batchState, pollBatch, interruptBatch, acknowledgeBatch, openConfiguration, connectionChanged, resetControlState,
   applyFeedback, openDrawingDialog, togglePointCloudViews,
   confirmedSeg, feedbackMarks, feedbackClock, feedbackConnected, fieldStatus, displayFeedback, ackEvents,
+  relativeAxisValue, displayAxisFeedback, axisFeedbackLabel, finetuningPreflightEnabled,
+  drawingBaselines, activeDrawingBaseline, drawingBaselineLabel, displayDrawingReference,
   endSession, activeSession, resumedFromSession, tryResumeSession, persistSnapshot, drawingList, confirmedUnitIds,
   stopAxis, clearLocalStops, hasLocalStop, moduleHolds, localStopText, stopHolds, loadStopHolds, axisStopOptions,
 });
@@ -78,6 +81,8 @@ function setup(t, options = {}) {
   const warnings = [], errors = [], messages = [], navigations = [], mounted = [], unmounted = [];
   let now = 1000;
   const timers = new Map();
+  const timeouts = new Map(), windowEvents = new Map();
+  let timeoutSequence = 0;
   const units = [{ id: 1, Unit_ID: 32 }, { id: 2, Unit_ID: 64 }];
   const api = {
     async getUnitsByDeviceApi() { return { data: units }; },
@@ -108,7 +113,7 @@ function setup(t, options = {}) {
         simulated: Boolean(options.noRosDebug), steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed' })) };
       return { code: 200, data: latestBatch };
     },
-    async getActiveFineTuningBatch(moduleId, unitId) { return { data: options.active ? options.active(moduleId, unitId) : null }; },
+    async getActiveFineTuningBatch(moduleId, unitId) { return { data: options.active ? await options.active(moduleId, unitId) : null }; },
     async getFineTuningBatch(id) { calls.polls++; return { data: options.poll ? await options.poll(id) : latestBatch }; },
     async getFineTuningBatchByRequest(id) { calls.polls++; return { data: options.byRequest ? await options.byRequest(id) : latestBatch }; },
     async interruptFineTuningBatch() { calls.interrupts++; return { data: { ...latestBatch, ...options.batch, status: 'uncertain', target_locked: true, message: 'stopped' } }; },
@@ -152,7 +157,10 @@ function setup(t, options = {}) {
       const result = await api.getDrawingListApi();
       return { data: options.drawingMode === 'mock' ? [{ drawingId: null, drawingName: '内置模拟图纸', drawingSource: 'builtin_mock' }, ...result.data] : result.data };
     } },
-    '@/api/connectionSettings': { async getConnectionSettings() { return { data: { revision: 0, drawing_mode: settings.skipDrawingBinding ? 'skip' : options.drawingMode || 'real' } }; } },
+    '@/api/connectionSettings': { async getConnectionSettings() { return { data: {
+      revision: 0, drawing_mode: settings.skipDrawingBinding ? 'skip' : options.drawingMode || 'real',
+      finetuning_preflight_enabled: options.preflightEnabled,
+    } }; } },
     '@/api/noRosDebug': { noRosDebug: Boolean(options.noRosDebug) },
     '@/api/session': {
       SESSION_REASON_LABELS: { closed: '已结束', superseded: '已被新的握手取代', connection_changed: '连接设置已变更', expired: '已超过保持时长', missing: '没有可续接的记录' },
@@ -187,13 +195,22 @@ function setup(t, options = {}) {
     '@/stores/fineTuningSession': sessionModule,
     '@/api/deviceEncoding': encoding,
     '@/api/feedbackState': feedbackState,
+    '@/api/drawingBaseline': drawingBaseline,
     '@/stores/debugSettings': debugModule,
   }, {
-    window: { location: { protocol: 'http:', host: 'localhost' } },
+    window: { location: { protocol: 'http:', host: 'localhost' },
+      addEventListener(name, callback) { windowEvents.set(name, callback); },
+      removeEventListener(name) { windowEvents.delete(name); },
+    },
     performance: { now: () => now },
     setInterval(callback) { const id = timers.size + 1; timers.set(id, callback); return id; },
     clearInterval(id) { timers.delete(id); },
-    setTimeout() { return 0; }, clearTimeout() {},
+    setTimeout(callback, delay = 0) {
+      const id = ++timeoutSequence;
+      timeouts.set(id, { callback, due: now + delay });
+      return id;
+    },
+    clearTimeout(id) { timeouts.delete(id); },
     localStorage: localStore, sessionStorage: snapshotStore,
     WebSocket: FeedbackSocket, console: { warn() {}, error() {}, log() {} },
   }, bindings));
@@ -201,6 +218,14 @@ function setup(t, options = {}) {
     sessionSettings: () => sessionModule.useFineTuningSessionStore(container),
     advance(milliseconds) { now += milliseconds; timers.forEach(callback => callback()); },
     elapseWithoutTimers(milliseconds) { now += milliseconds; },
+    flushTimeouts() {
+      for (const [id, timeout] of timeouts) {
+        if (timeout.due > now) continue;
+        timeouts.delete(id);
+        timeout.callback();
+      }
+    },
+    windowEvents,
     mount: () => mounted[0]() };
 }
 
@@ -209,6 +234,473 @@ async function enter(harness, arms = [1]) {
   harness.page.draftInitConfig.unitRowIds = arms;
   await harness.page.confirmInitConfig();
 }
+
+function relativeBatch(payload, starts) {
+  const parameters = ['rotation', 'swing', 'telescopic'];
+  return batch({
+    ...payload, id: payload.request_id, status: 'completed', target_locked: false,
+    steps: payload.adjustments.map(item => ({
+      ...item, device_id: (payload.unit_id / 32 - 1) * 3 + parameters.indexOf(item.parameter_name) + 1,
+      status: 'completed', start_position: starts[item.parameter_name],
+      expected_position: starts[item.parameter_name] + item.position,
+    })),
+  });
+}
+
+function drawingArmFeedback(harness, arm, positions) {
+  const kinds = ['rotation_axis_encoder', 'swing_axis_encoder', 'telescope_axis_encoder'];
+  positions.forEach((position, index) => harness.page.applyFeedback({
+    module_id: 0, device_id: (arm - 1) * 3 + index + 1, data_type: kinds[index], position,
+  }));
+}
+
+function drawingStillness(harness, arms, seconds = 10) {
+  for (let second = 0; second < seconds; second++) {
+    harness.elapseWithoutTimers(1000);
+    for (const [arm, positions] of arms) drawingArmFeedback(harness, arm, positions);
+    harness.advance(0);
+  }
+}
+
+test('drawing motion settles for ten seconds and locks one baseline across consecutive relative commands', async t => {
+  const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload,
+    { rotation: h.page.armList.device[0].current }),
+  }) });
+  await enter(h);
+  drawingArmFeedback(h, 1, [37.25, 4, 8]);
+  drawingArmFeedback(h, 1, [47.25, 6, 9]);
+  drawingStillness(h, [[1, [47.25, 6, 9]]], 9);
+  assert.equal(h.page.activeDrawingBaseline.value.status, 'settling');
+  assert.equal(h.page.displayDrawingReference(0), '—');
+  drawingStillness(h, [[1, [47.25, 6, 9]]], 1);
+  assert.equal(h.page.activeDrawingBaseline.value.status, 'locked');
+  assert.equal(h.page.displayDrawingReference(0), '47.25');
+  assert.equal(h.page.displayAxisFeedback(0), '0.00');
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  drawingArmFeedback(h, 1, [57.25, 6, 9]);
+  assert.equal(h.page.displayAxisFeedback(0), '10.00');
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  drawingArmFeedback(h, 1, [67.25, 6, 9]);
+  assert.equal(h.page.displayAxisFeedback(0), '20.00');
+  assert.equal(h.page.displayDrawingReference(0), '47.25');
+  await h.page.handleSaveConfig();
+  const saved = h.calls.saves[0].devices[0];
+  assert.equal(saved.initial, 47.25);
+  assert.equal(saved.reference_position, 47.25);
+  assert.equal(saved.reference_source, 'drawing_settled');
+  assert.equal(saved.current, 20);
+  assert.equal(saved.raw_current, 67.25);
+  assert.equal(saved.requested_delta, 10);
+});
+
+test('drawing feedback during the HTTP request is collected for an initially unselected arm', async t => {
+  const started = deferred(), response = deferred();
+  const h = setup(t, { coordinate: async () => { started.resolve(); return response.promise; } });
+  const entering = enter(h, [2]);
+  await started.promise;
+  drawingArmFeedback(h, 2, [10, 4, 8]);
+  drawingArmFeedback(h, 2, [20, 6, 9]);
+  drawingStillness(h, [[2, [20, 6, 9]]]);
+  assert.equal(h.page.drawingBaselines['64'].motionObserved, true);
+  assert.equal(h.page.drawingBaselines['64'].confirmed, false);
+  assert.equal(h.page.drawingBaselines['64'].values, null);
+  response.resolve({ code: 200, views: {} });
+  await entering;
+  assert.equal(h.page.initConfig.unitId, 64);
+  assert.equal(h.page.activeDrawingBaseline.value.status, 'locked');
+  assert.equal(h.page.displayDrawingReference(0), '20.00');
+  assert.equal(h.page.armList.device[0].current, 20);
+  assert.equal(h.page.displayAxisFeedback(0), '0.00');
+});
+
+test('all confirmed arms collect independent drawing baselines before being selected', async t => {
+  const h = setup(t);
+  await enter(h, [1, 2]);
+  drawingArmFeedback(h, 1, [10, 4, 8]);
+  drawingArmFeedback(h, 2, [30, 5, 9]);
+  drawingArmFeedback(h, 1, [20, 6, 10]);
+  drawingArmFeedback(h, 2, [40, 7, 11]);
+  drawingStillness(h, [[1, [20, 6, 10]], [2, [40, 7, 11]]]);
+  assert.equal(h.page.drawingBaselines['32'].values[0], 20);
+  assert.equal(h.page.drawingBaselines['64'].values[0], 40);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.displayDrawingReference(0), '40.00');
+  assert.equal(h.page.displayAxisFeedback(0), '0.00');
+  await h.page.handleArmSwitch(1);
+  assert.equal(h.page.displayDrawingReference(0), '20.00');
+  assert.equal(h.calls.adjusts.length, 0);
+});
+
+test('a drawing baseline stays unknown when feedback disappears and does not become a new dispatch gate', async t => {
+  const h = setup(t, { preflightEnabled: false });
+  await enter(h);
+  drawingArmFeedback(h, 1, [10, 4, 8]);
+  drawingArmFeedback(h, 1, [20, 6, 9]);
+  h.advance(10000);
+  assert.equal(h.page.activeDrawingBaseline.value.values, null);
+  assert.equal(h.page.activeDrawingBaseline.value.stableSince, null);
+  assert.equal(h.page.isReady.value, true);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 1);
+  assert.equal(h.page.displayAxisFeedback(0), '—');
+  await h.page.handleSaveConfig();
+  const saved = h.calls.saves[0].devices[0];
+  assert.equal(saved.initial, null);
+  assert.equal(saved.reference_position, null);
+  assert.equal(saved.current, null);
+  assert.equal(saved.raw_current, 20);
+});
+
+test('drawing redispatch starts a new observation generation for the confirmed arm scope', async t => {
+  const h = setup(t);
+  await enter(h, [1, 2]);
+  drawingArmFeedback(h, 1, [10, 4, 8]);
+  drawingArmFeedback(h, 2, [30, 5, 9]);
+  drawingArmFeedback(h, 1, [20, 6, 10]);
+  drawingArmFeedback(h, 2, [40, 7, 11]);
+  drawingStillness(h, [[1, [20, 6, 10]], [2, [40, 7, 11]]]);
+  const previous = h.page.drawingBaselines['32'].generation;
+  h.page.openDrawingDialog();
+  await h.page.confirmInitConfig();
+  assert.notEqual(h.page.drawingBaselines['32'].generation, previous);
+  assert.equal(h.page.drawingBaselines['32'].values, null);
+  assert.equal(h.page.drawingBaselines['64'].values, null);
+  assert.equal(h.calls.coordinates.length, 3);
+});
+
+test('failed drawing requests cannot freeze the positions observed during the request', async t => {
+  const started = deferred(), response = deferred();
+  const h = setup(t, { coordinate: async () => { started.resolve(); return response.promise; } });
+  const entering = enter(h);
+  await started.promise;
+  drawingArmFeedback(h, 1, [10, 4, 8]);
+  drawingArmFeedback(h, 1, [20, 6, 9]);
+  drawingStillness(h, [[1, [20, 6, 9]]]);
+  response.reject(new Error('drawing result unknown'));
+  await entering;
+  assert.equal(h.page.drawingBaselines['32'].status, 'failed');
+  assert.equal(h.page.drawingBaselines['32'].values, null);
+});
+
+test('late drawing responses after connection changes cannot recreate an old fixed baseline', async t => {
+  const started = deferred(), response = deferred();
+  const h = setup(t, { coordinate: async () => { started.resolve(); return response.promise; } });
+  const entering = enter(h);
+  await started.promise;
+  h.page.connectionChanged({ detail: { finetuning_preflight_enabled: false } });
+  response.resolve({ code: 200, views: {} });
+  await entering;
+  assert.equal(Object.keys(h.page.drawingBaselines).length, 0);
+  assert.equal(h.page.isReady.value, false);
+});
+
+for (const visited of [false, true]) {
+  test(`drawing redispatch updates drawing identity for an ${visited ? 'already visited' : 'unvisited'} confirmed arm`, async t => {
+    const h = setup(t, { drawings: [{ drawingId: 7, drawingName: 'first' }, { drawingId: 8, drawingName: 'second' }] });
+    await enter(h, [1, 2]);
+    if (visited) {
+      await h.page.handleArmSwitch(2);
+      await h.page.handleArmSwitch(1);
+    }
+    h.page.openDrawingDialog();
+    h.page.draftInitConfig.drawingId = 8;
+    await h.page.confirmInitConfig();
+    await h.page.handleArmSwitch(2);
+    assert.equal(h.page.initConfig.drawingId, 8);
+    assert.equal(h.page.activeDrawingBaseline.value.drawingId, 8);
+    await h.page.handleSaveConfig();
+    assert.equal(h.calls.saves[0].drawing_id, 8);
+  });
+}
+
+test('a late module confirmation cannot recreate binding or baseline after connection changes', async t => {
+  const started = deferred(), confirmation = deferred();
+  const h = setup(t, { confirm: async () => { started.resolve(); return confirmation.promise; } });
+  const entering = enter(h);
+  await started.promise;
+  h.page.connectionChanged({ detail: { finetuning_preflight_enabled: false } });
+  confirmation.resolve({ code: 200, data: { seg: 0,
+    confirmations: [{ unit_id: 32, confirmed: true }], session: { id: 'late-session' },
+  } });
+  await entering;
+  assert.equal(h.page.confirmedSeg.value, null);
+  assert.equal(h.page.confirmedUnitIds.value.length, 0);
+  assert.equal(h.page.activeSession.value, null);
+  assert.equal(Object.keys(h.page.drawingBaselines).length, 0);
+  assert.equal(h.calls.coordinates.length, 0);
+});
+
+test('old socket callbacks cannot interrupt a new drawing observation', async t => {
+  const h = setup(t);
+  await enter(h);
+  const oldSocket = h.calls.sockets[0];
+  h.page.connectionChanged({ detail: { finetuning_preflight_enabled: false } });
+  await h.page.openConfiguration();
+  h.page.draftInitConfig.unitRowIds = [1];
+  await h.page.confirmInitConfig();
+  const socket = h.calls.sockets.at(-1);
+  const receive = positions => positions.forEach((position, index) => socket.receive({
+    module_id: 0, device_id: index + 1,
+    data_type: ['rotation_axis_encoder', 'swing_axis_encoder', 'telescope_axis_encoder'][index], position,
+  }));
+  receive([10, 4, 8]);
+  receive([20, 6, 9]);
+  const since = h.page.activeDrawingBaseline.value.stableSince;
+  oldSocket.onclose();
+  oldSocket.onerror();
+  assert.equal(h.page.activeDrawingBaseline.value.stableSince, since);
+  assert.equal(h.page.activeDrawingBaseline.value.samples[0].position, 20);
+});
+
+test('the fine-tuning page reads the preflight switch and defaults older responses to enabled', async t => {
+  const legacy = setup(t, { debug: true });
+  await enter(legacy);
+  assert.equal(legacy.page.finetuningPreflightEnabled.value, true);
+  const bypass = setup(t, { debug: true, preflightEnabled: false });
+  await enter(bypass);
+  assert.equal(bypass.page.finetuningPreflightEnabled.value, false);
+  assert.match(descriptor.template.content, /微调下发前检查已关闭/);
+  assert.match(descriptor.template.content, /运行、到位和空闲反馈/);
+});
+
+test('a sent batch without an initial position shows an unknown relative measurement and preserves raw feedback', async t => {
+  const h = setup(t, { debug: true, preflightEnabled: false, adjust: async payload => ({ data: {
+    ...relativeBatch(payload, { rotation: 12 }), finetuning_preflight_enabled: false,
+    steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed',
+      start_position: null, expected_position: null, observed_delta: null, deviation: null,
+    })),
+  } }) });
+  await enter(h, [1, 2]);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  h.page.applyFeedback({ module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: 14 });
+  assert.equal(h.page.relativeAxisValue(0), null);
+  assert.equal(h.page.displayAxisFeedback(0), '—');
+  assert.equal(h.page.axisFeedbackLabel(0), '缺少起点反馈');
+  await h.page.handleSaveConfig();
+  const saved = h.calls.saves[0].devices[0];
+  assert.equal(saved.current, null);
+  assert.equal(saved.reference_position, null);
+  assert.equal(saved.raw_current, 14);
+  assert.equal(saved.requested_delta, 2);
+  assert.match(descriptor.template.content, /step\.observed_delta != null/);
+  await h.page.handleArmSwitch(2);
+  await h.page.handleArmSwitch(1);
+  assert.equal(h.page.axisFeedbackLabel(0), '缺少起点反馈');
+  assert.equal(h.calls.polls, 0);
+});
+
+test('preflight setting events update the displayed switch while clearing the old confirmation', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  h.page.connectionChanged({ detail: { finetuning_preflight_enabled: false } });
+  assert.equal(h.page.finetuningPreflightEnabled.value, false);
+  assert.equal(h.page.isReady.value, false);
+  assert.equal(h.calls.adjusts.length, 0);
+  h.page.connectionChanged({ detail: { finetuning_preflight_enabled: true } });
+  assert.equal(h.page.finetuningPreflightEnabled.value, true);
+});
+
+test('relative motion uses each nonzero start while consecutive commands keep their increments', async t => {
+  const h = setup(t, { debug: true, adjust: async payload => ({
+    data: relativeBatch(payload, { rotation: h.page.armList.device[0].current }),
+  }) });
+  await enter(h);
+  const receive = value => h.page.applyFeedback({
+    module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: value,
+  });
+  receive(12);
+  assert.equal(h.page.displayAxisFeedback(0), '—');
+  assert.equal(h.page.axisFeedbackLabel(0), '等待本次下发');
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  receive(22);
+  assert.equal(h.page.displayAxisFeedback(0), '10.00');
+
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.displayAxisFeedback(0), '—');
+  assert.equal(h.page.axisFeedbackLabel(0), '等待本次反馈');
+  receive(32);
+  assert.equal(h.page.displayAxisFeedback(0), '10.00');
+  h.page.armList.device[0].adjust = -3;
+  await h.page.confirmAdjustments();
+  receive(29);
+  assert.equal(h.page.displayAxisFeedback(0), '-3.00');
+  assert.deepEqual(h.calls.adjusts.map(item => item.adjustments[0].position), [10, 10, -3]);
+  assert.equal(h.page.armList.device[0].current, 29);
+  assert.match(descriptor.template.content, /本次实际转动/);
+  assert.match(descriptor.template.content, /到位实际增量/);
+});
+
+test('configuration keeps each axis command and measurement after the inputs clear', async t => {
+  const parameters = ['rotation', 'swing', 'telescopic'];
+  const h = setup(t, { debug: true, adjust: async payload => ({ data: relativeBatch(payload,
+    Object.fromEntries(parameters.map((name, index) => [name, h.page.armList.device[index].current]))),
+  }) });
+  await enter(h);
+  const receive = (index, value) => h.page.applyFeedback({
+    module_id: 0, device_id: index + 1,
+    data_type: ['rotation_axis_encoder', 'swing_axis_encoder', 'telescope_axis_encoder'][index], position: value,
+  });
+  [12, 4, 8].forEach((value, index) => receive(index, value));
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  receive(0, 21.5);
+  h.page.armList.device[1].adjust = 2;
+  h.page.armList.device[2].adjust = -0.5;
+  await h.page.confirmAdjustments();
+  receive(1, 6);
+  receive(2, 7.5);
+  assert.deepEqual([0, 1, 2].map(index => h.page.displayAxisFeedback(index)), ['9.50', '2.00', '-0.50']);
+  assert.deepEqual(Array.from(h.page.armList.device.slice(0, 3), item => item.adjust), [0, 0, 0]);
+  h.page.armList.device[0].adjust = 3;
+  await h.page.handleSaveConfig();
+  const devices = h.calls.saves[0].devices;
+  assert.deepEqual(Array.from(devices.slice(0, 3), item => item.requested_delta), [10, 2, -0.5]);
+  assert.ok(devices.every(item => !Object.hasOwn(item, 'adjust')));
+  assert.equal(h.page.armList.device[0].adjust, 3);
+  assert.deepEqual(Array.from(devices.slice(0, 3), item => item.current), [9.5, 2, -0.5]);
+  assert.deepEqual(Array.from(devices.slice(0, 3), item => item.raw_current), [21.5, 6, 7.5]);
+  assert.deepEqual(Array.from(devices.slice(0, 3), item => item.reference_position), [12, 4, 8]);
+  assert.ok(devices.slice(0, 3).every(item => item.position_mode === 'relative'));
+  assert.equal(devices[3].requested_delta, undefined);
+});
+
+test('queued batches wait for a sent reference and a fresh sample before showing relative motion', async t => {
+  let result;
+  const h = setup(t, { debug: true,
+    adjust: async payload => {
+      result = relativeBatch(payload, { rotation: 12 });
+      result.status = 'queued';
+      result.target_locked = true;
+      result.steps[0].status = 'pending';
+      return { data: result };
+    },
+    poll: async () => result,
+  });
+  await enter(h);
+  h.page.applyFeedback({ module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: 12 });
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.armList.device[0].requestedDelta, null);
+  assert.equal(h.page.relativeAxisValue(0), null);
+  result = { ...result, status: 'executing', steps: result.steps.map(step => ({ ...step, status: 'sent_unconfirmed' })) };
+  await h.page.pollBatch();
+  assert.equal(h.page.armList.device[0].requestedDelta, 2);
+  assert.equal(h.page.displayAxisFeedback(0), '—');
+  assert.equal(h.page.axisFeedbackLabel(0), '等待本次反馈');
+  h.page.applyFeedback({ module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: 14 });
+  assert.equal(h.page.displayAxisFeedback(0), '2.00');
+});
+
+test('relative references follow each arm and invalid samples keep their previous measurement and age', async t => {
+  const h = setup(t, { debug: true, adjust: async payload => ({ data: relativeBatch(payload,
+    { rotation: h.page.armList.device[0].current }),
+  }) });
+  await enter(h, [1, 2]);
+  const receive = (deviceId, value) => h.page.applyFeedback({
+    module_id: 0, device_id: deviceId, data_type: 'rotation_axis_encoder', position: value,
+  });
+  receive(1, 12);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  receive(1, 14);
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.relativeAxisValue(0), null);
+  receive(4, 50);
+  h.page.armList.device[0].adjust = -3;
+  await h.page.confirmAdjustments();
+  receive(4, 47);
+  assert.equal(h.page.displayAxisFeedback(0), '-3.00');
+  await h.page.handleArmSwitch(1);
+  assert.equal(h.page.displayAxisFeedback(0), '2.00');
+  assert.match(h.page.axisFeedbackLabel(0), /历史缓存/);
+  receive(1, 14);
+  h.advance(59999);
+  receive(1, null);
+  receive(1, Infinity);
+  assert.equal(h.page.displayAxisFeedback(0), '2.00');
+  assert.equal(h.page.axisFeedbackLabel(0), '实时反馈');
+  h.advance(1);
+  assert.equal(h.page.axisFeedbackLabel(0), '数据已过期');
+});
+
+test('late submission responses after a connection change cannot restore the previous reference', async t => {
+  const pending = deferred();
+  const h = setup(t, { debug: true, adjust: () => pending.promise });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  const request = h.page.confirmAdjustments();
+  const payload = h.calls.adjusts[0];
+  h.page.connectionChanged();
+  pending.resolve({ data: relativeBatch(payload, { rotation: 12 }) });
+  await request;
+  assert.equal(h.page.armList.device[0].referencePosition, null);
+  assert.equal(h.page.displayAxisFeedback(0), '—');
+});
+
+test('a newer backend start waits for fresh telemetry instead of subtracting an older sample', async t => {
+  const h = setup(t, { debug: true, adjust: async payload => ({ data: relativeBatch(payload, { rotation: 14 }) }) });
+  await enter(h);
+  const receive = value => h.page.applyFeedback({
+    module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: value,
+  });
+  receive(12);
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.relativeAxisValue(0), null);
+  assert.equal(h.page.axisFeedbackLabel(0), '等待本次反馈');
+  receive(14);
+  assert.equal(h.page.displayAxisFeedback(0), '0.00');
+  receive(24);
+  assert.equal(h.page.displayAxisFeedback(0), '10.00');
+});
+
+for (const outcome of ['response', 'error']) {
+  test(`a late 409 recovery ${outcome} cannot restore references after a connection change`, async t => {
+    const recovery = deferred();
+    const recoveryStarted = deferred();
+    let recovering = false;
+    const h = setup(t, { debug: true,
+      adjust: async () => { recovering = true; throw { response: { status: 409 } }; },
+      active: () => {
+        if (!recovering) return null;
+        recoveryStarted.resolve();
+        return recovery.promise;
+      },
+    });
+    await enter(h);
+    h.page.armList.device[0].adjust = 2;
+    const request = h.page.confirmAdjustments();
+    await recoveryStarted.promise;
+    h.page.connectionChanged();
+    const oldMessage = h.page.batchState.value.message;
+    if (outcome === 'response') recovery.resolve(relativeBatch(h.calls.adjusts[0], { rotation: 12 }));
+    else recovery.reject(new Error('recovery unavailable'));
+    await request;
+    assert.equal(h.page.armList.device[0].referencePosition, null);
+    assert.equal(h.page.displayAxisFeedback(0), '—');
+    assert.equal(h.page.batchState.value.message, oldMessage);
+  });
+}
+
+test('the legacy local simulation keeps each consecutive relative movement independent', async t => {
+  const h = setup(t, { debug: true, noRosDebug: true,
+    adjust: async payload => ({ data: { ...relativeBatch(payload, { rotation: h.page.armList.device[0].current }), simulated: true } }),
+  });
+  await enter(h);
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.displayAxisFeedback(0), '10.00');
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.displayAxisFeedback(0), '10.00');
+  assert.equal(h.page.armList.device[0].current, 20);
+});
 
 test('three inputs are drafts and one confirmation submits only changed axes in one batch', async t => {
   assert.equal(/@change="sendSingleAdjust/.test(descriptor.template.content), false);
@@ -573,7 +1065,7 @@ test('missing, invalid and nonfinite samples do not overwrite or refresh actual 
   await enter(h);
   const receive = position => h.page.applyFeedback({ module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position });
   receive(0);
-  h.advance(6000);
+  h.advance(60000);
   for (const value of [null, undefined, '', false, [], 'invalid', NaN, Infinity]) receive(value);
   assert.equal(h.page.armList.device[0].current, 0);
   assert.equal(h.page.fieldStatus('rotation'), 'stale');
@@ -593,7 +1085,7 @@ test('axis, pressure and each IMU component have independent validity and freshn
   assert.equal(h.page.fieldStatus('z'), 'waiting');
   assert.equal(h.page.fieldStatus('swing_angle'), 'current');
   h.advance(6000);
-  assert.equal(h.page.fieldStatus('rotation'), 'stale');
+  assert.equal(h.page.fieldStatus('rotation'), 'current');
   assert.equal(h.page.fieldStatus('x'), 'stale');
   assert.equal(h.page.fieldStatus('pressure'), 'current');
   h.advance(5000);
@@ -628,6 +1120,7 @@ test('unknown measurements save as null and historical measurements retain their
   // 下位机不回传初始值，基准固定 0，即使没有反馈也写 0 而不是 null
   assert.equal(first.devices[0].initial, 0);
   assert.equal(first.devices[0].current, null);
+  assert.equal(first.devices[0].requested_delta, null);
   assert.equal(first.devices[3].current, null);
   assert.equal(first.x, null);
   assert.equal(first.feedback_state.pressure.status, 'waiting');
@@ -637,7 +1130,10 @@ test('unknown measurements save as null and historical measurements retain their
   await h.page.handleSaveConfig();
   const second = h.calls.saves[1];
   assert.equal(second.devices[0].initial, 0);
-  assert.equal(second.devices[0].current, 0);
+  assert.equal(second.devices[0].current, null);
+  assert.equal(second.devices[0].raw_current, 0);
+  assert.equal(second.devices[0].position_mode, 'relative');
+  assert.equal(second.devices[0].reference_position, null);
   assert.equal(second.feedback_state.rotation.status, 'history');
 });
 
@@ -671,10 +1167,10 @@ test('saving refreshes the age/status clock even if the browser has throttled ti
   const h = setup(t, { debug: true });
   await enter(h);
   h.page.applyFeedback({ module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: 2 });
-  h.elapseWithoutTimers(6000);
+  h.elapseWithoutTimers(60000);
   await h.page.handleSaveConfig();
   assert.equal(h.calls.saves[0].feedback_state.rotation.status, 'stale');
-  assert.equal(h.calls.saves[0].feedback_state.rotation.age_ms, 6000);
+  assert.equal(h.calls.saves[0].feedback_state.rotation.age_ms, 60000);
 });
 
 test('ACK events show acceptance/rejection without changing measurements or retrying a command', async t => {
@@ -1029,6 +1525,164 @@ test('resume restores per-arm snapshot values and stays locked out of a new hand
   assert.equal(h.page.armList.device[0].adjust, 1.5);
   assert.equal(h.page.armList.device[0].initial, 10);
   assert.equal(h.page.armProfiles['1'].configured, true);
+  assert.equal(h.page.displayAxisFeedback(0), '—');
+  assert.equal(h.page.axisFeedbackLabel(0), '等待本次下发');
+});
+
+test('session snapshots preserve the latest measured relative motion and restore it as historical', async t => {
+  const h = setup(t, { debug: true, adjust: async payload => ({ data: relativeBatch(payload, { rotation: 12 }) }) });
+  await enter(h);
+  const receive = value => h.page.applyFeedback({
+    module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: value,
+  });
+  receive(12);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  receive(14);
+  h.page.applyFeedback({ module_id: 0, device_id: 21, data_type: 'imu_pose', x: 12, rotation_angle: 3 });
+  h.page.activeSession.value = heldSession({ seg: 0 });
+  h.sessionSettings().setEnabled(true);
+  h.page.persistSnapshot();
+  const snapshotText = h.storages.session.getItem('mes.finetuning.session.snapshot.session-1');
+  const stored = JSON.parse(snapshotText);
+  assert.equal(stored.armProfiles['1'].device[0].current, 14);
+  assert.equal(stored.armProfiles['1'].device[0].referencePosition, 12);
+  assert.equal(stored.armProfiles['1'].device[0].requestedDelta, 2);
+  assert.equal(stored.armProfiles['1'].device[0].referenceReady, true);
+  assert.equal(stored.armProfiles['1'].imu.x, 12);
+
+  const session = heldSession({ seg: 0 });
+  const resumed = setup(t, { debug: true,
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: memoryStorage({ 'mes.finetuning.session.snapshot.session-1': snapshotText }),
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+  });
+  await resumed.mount();
+  assert.equal(resumed.page.displayAxisFeedback(0), '2.00');
+  assert.match(resumed.page.axisFeedbackLabel(0), /历史缓存/);
+  assert.equal(resumed.page.imuFeedback.x, 12);
+  assert.equal(resumed.page.imuFeedback.rotationAngle, 3);
+  await resumed.page.handleSaveConfig();
+  assert.equal(resumed.calls.saves[0].devices[0].current, 2);
+  assert.equal(resumed.calls.saves[0].devices[0].requested_delta, 2);
+  assert.equal(resumed.calls.saves[0].devices[0].raw_current, 14);
+  assert.equal(resumed.calls.saves[0].devices[0].reference_position, 12);
+});
+
+test('locked drawing baselines survive session resume with their measured cumulative offset', async t => {
+  const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload, { rotation: 20 }) }) });
+  await enter(h);
+  drawingArmFeedback(h, 1, [10, 4, 8]);
+  drawingArmFeedback(h, 1, [20, 6, 9]);
+  drawingStillness(h, [[1, [20, 6, 9]]]);
+  h.page.armList.device[0].adjust = 3;
+  await h.page.confirmAdjustments();
+  drawingArmFeedback(h, 1, [23, 6, 9]);
+  const session = heldSession({ seg: 0, connection_revision: null });
+  h.page.activeSession.value = session;
+  h.sessionSettings().setEnabled(true);
+  h.page.persistSnapshot();
+  const snapshotText = h.storages.session.getItem('mes.finetuning.session.snapshot.session-1');
+  const resumed = setup(t, {
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: memoryStorage({ 'mes.finetuning.session.snapshot.session-1': snapshotText }),
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+  });
+  await resumed.mount();
+  assert.equal(resumed.page.activeDrawingBaseline.value.status, 'locked');
+  assert.equal(resumed.page.displayDrawingReference(0), '20.00');
+  assert.equal(resumed.page.displayAxisFeedback(0), '3.00');
+  assert.match(resumed.page.axisFeedbackLabel(0), /历史缓存/);
+  await resumed.page.handleSaveConfig();
+  assert.equal(resumed.calls.saves[0].devices[0].initial, 20);
+  assert.equal(resumed.calls.saves[0].devices[0].reference_source, 'drawing_settled');
+});
+
+test('continuous telemetry and page hiding persist the latest fixed drawing baseline', async t => {
+  const h = setup(t);
+  await enter(h);
+  drawingArmFeedback(h, 1, [10, 4, 8]);
+  drawingArmFeedback(h, 1, [20, 6, 9]);
+  drawingStillness(h, [[1, [20, 6, 9]]]);
+  h.page.activeSession.value = heldSession({ seg: 0, connection_revision: null });
+  h.sessionSettings().setEnabled(true);
+  for (let sample = 0; sample < 6; sample++) {
+    h.elapseWithoutTimers(100);
+    drawingArmFeedback(h, 1, [20, 6, 9]);
+    await vue.nextTick();
+  }
+  h.flushTimeouts();
+  const key = 'mes.finetuning.session.snapshot.session-1';
+  let saved = JSON.parse(h.storages.session.getItem(key));
+  assert.equal(saved.drawingBaselines['32'].values[0], 20);
+  assert.equal(saved.armProfiles['1'].device[0].current, 20);
+  drawingArmFeedback(h, 1, [23, 6, 9]);
+  h.windowEvents.get('pagehide')();
+  saved = JSON.parse(h.storages.session.getItem(key));
+  assert.equal(saved.drawingBaselines['32'].values[0], 20);
+  assert.equal(saved.armProfiles['1'].device[0].current, 23);
+});
+
+test('unfinished drawing baselines restart the full ten-second observation after a refresh', async t => {
+  const h = setup(t);
+  await enter(h);
+  drawingArmFeedback(h, 1, [10, 4, 8]);
+  drawingArmFeedback(h, 1, [20, 6, 9]);
+  drawingStillness(h, [[1, [20, 6, 9]]], 4);
+  const session = heldSession({ seg: 0, connection_revision: null });
+  h.page.activeSession.value = session;
+  h.sessionSettings().setEnabled(true);
+  h.page.persistSnapshot();
+  const snapshotText = h.storages.session.getItem('mes.finetuning.session.snapshot.session-1');
+  const resumed = setup(t, {
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: memoryStorage({ 'mes.finetuning.session.snapshot.session-1': snapshotText }),
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+  });
+  await resumed.mount();
+  assert.equal(resumed.page.activeDrawingBaseline.value.stableSince, null);
+  drawingArmFeedback(resumed, 1, [20, 6, 9]);
+  drawingStillness(resumed, [[1, [20, 6, 9]]], 6);
+  assert.equal(resumed.page.activeDrawingBaseline.value.values, null);
+  drawingStillness(resumed, [[1, [20, 6, 9]]], 4);
+  assert.equal(resumed.page.displayDrawingReference(0), '20.00');
+});
+
+test('completed legacy snapshots refresh relative results without clearing new drafts', async t => {
+  const session = heldSession();
+  const oldWarning = '到位角 14.45 与期望 14.00 相差 +0.45';
+  const cached = snapshotOf();
+  cached.armProfiles['1'].batch = batch({ id: 'old-batch', request_id: 'old-request',
+    status: 'completed', target_locked: false, message: `轴 1 已观测到运行、到位及空闲；${oldWarning}`,
+    steps: [{ parameter_name: 'rotation', device_id: 1, position: 2, status: 'completed',
+      expected_position: 14, observed_angle: 14.45, warning: oldWarning }],
+  });
+  const pending = deferred();
+  const h = setup(t, { debug: true,
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: memoryStorage({ 'mes.finetuning.session.snapshot.session-1': JSON.stringify(cached) }),
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+    poll: () => pending.promise,
+  });
+  await h.mount();
+  assert.equal(h.calls.polls, 1);
+  assert.equal(h.page.armList.device[0].requestedDelta, 2);
+  assert.equal(h.page.batchState.value.steps[0].warning, undefined);
+  assert.equal(h.page.batchState.value.message, '正在读取历史批次的相对运动结果');
+  h.page.armList.device[0].adjust = 3;
+  pending.resolve({ ...cached.armProfiles['1'].batch, message: '历史相对结果已读取', steps: [{
+    ...cached.armProfiles['1'].batch.steps[0], start_position: 12, observed_delta: 2.45,
+    warning: '本次实际转动 2.45°，指令增量 2.00°，相差 +0.45°',
+  }] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.page.armList.device[0].adjust, 3);
+  assert.equal(h.page.armList.device[0].referencePosition, 12);
+  assert.equal(h.page.batchState.value.steps[0].observed_delta, 2.45);
+  assert.match(h.page.batchState.value.steps[0].warning, /本次实际转动/);
 });
 
 test('resume is refused when the requested module differs from the held session', async t => {

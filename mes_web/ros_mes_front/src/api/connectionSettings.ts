@@ -6,6 +6,7 @@ export interface ConnectionSettings {
   ros_mode: ConnectionMode;
   drawing_mode: ConnectionMode | 'skip';
   emergency_mode: ConnectionMode;
+  finetuning_preflight_enabled: boolean;
   ros_url: string;
   drawing_ros_url: string;
   emergency_ros_url: string;

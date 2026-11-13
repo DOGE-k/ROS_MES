@@ -93,8 +93,12 @@ class FineTuningConfigDevice(BaseModel):
     parameter_name: Optional[str] = None
     label: Optional[str] = None
     initial: Optional[float] = 0
-    adjust: Optional[float] = 0
     current: Optional[float] = 0
+    position_mode: Literal["raw", "relative"] = "raw"
+    requested_delta: Optional[float] = Field(default=None, allow_inf_nan=False)
+    reference_source: Literal["command_start", "drawing_settled"] = "command_start"
+    reference_position: Optional[float] = None
+    raw_current: Optional[float] = None
 
 
 class FineTuningConfigCreate(BaseModel):

@@ -1,6 +1,6 @@
 # 后端与 ROS 接口对接状态清单
 
-核查日期：2026-11-11。维护范围：前后端视角的接入状态、证据和缺口。本清单不是 ROS 协议定义，不替代根 `docs/` 的[三轴版 V2.1 共享契约](../../docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md)。前后端任务入口见 [AGENTS.md](../AGENTS.md)，HTTP/WS 字段见[接口文档](ROS_MES_前后端接口字段文档.md)，本次最终验证结果由[改动记录](ROS_MES_前后端改动记录.md)统一维护。
+核查日期 2026-11-13。维护范围：前后端视角的接入状态、证据和缺口。本清单不是 ROS 协议定义，不替代根 `docs/` 的[三轴版 V2.1 共享契约](../../docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md)。前后端任务入口见 [AGENTS.md](../AGENTS.md)，HTTP/WS 字段见[接口文档](ROS_MES_前后端接口字段文档.md)，本次最终验证结果由[改动记录](ROS_MES_前后端改动记录.md)统一维护。
 
 ## 1. 状态与证据口径
 
@@ -17,13 +17,13 @@
 
 | 接口/用途 | ROS 话题与消息 | ROS 源码实现状态 | 下位机支持 | 后端接入 | 前端使用 | 证据与缺口 | 优先级/后续条件 |
 |---|---|---|---|---|---|---|---|
-| GET/PATCH `/api/control/debug-settings`，页面选择连接 | 不新增 ROS 消息，仅配置后端传输 | ROS 节点未改 | 不适用 | 持久化模式/地址/版本，操作中拒绝切换；真实/模拟联锁分离 | 个人中心调试设置及急停遮罩共用面板，逐项手动自动应用；图纸三选 skip/mock/real 替代独立跳过开关 | [运行配置](../ros_mes_hou/app/ros/runtime_settings.py)、[模拟适配](../ros_mes_hou/app/ros/mock_client.py)、[页面面板](../ros_mes_front/src/components/Main/UserManage/RosConnectionSettings.vue)；首次默认真实，不自动降级 | 已通过隔离验证，真实地址由现场填写 |
+| GET/PATCH `/api/control/debug-settings`，页面选择连接 | 不新增 ROS 消息，仅配置后端传输 | ROS 节点未改 | 不适用 | 持久化模式/地址/版本及微调发送前检查开关，操作中拒绝切换；真实/模拟联锁分离 | 个人中心调试设置及急停遮罩共用面板，逐项自动保存，提供微调发送前检查开关及图纸 skip/mock/real 选择 | [运行配置](../ros_mes_hou/app/ros/runtime_settings.py)、[模拟适配](../ros_mes_hou/app/ros/mock_client.py)、[页面面板](../ros_mes_front/src/components/Main/UserManage/RosConnectionSettings.vue)；首次默认真实，不自动降级 | 已通过隔离验证，真实地址由现场填写 |
 | `POST /api/module/`，逐台确认机械臂 | `/control/module_cmd`、成功/失败回执，`IntCmd` | `module_confirme_node.py` 有 UID/组号/臂位双确认及可配置状态复核 | 当前固件会话绑定的实际支持待确认 | 构造显式 SEG/arm，逐项等待匹配回执，失败停止后续项；返回 `data.seg` | 微调初次配置使用，调试模式也必须确认 | [模块端点](../ros_mes_hou/app/api/endpoints/module.py)、[网关](../ros_mes_hou/app/ros/rosbridge.py)、[ROS 节点](../../robot_control_backend/scripts/module_confirme_node.py)；模拟握手不证明设备绑定 | P0；保留兼容；现场核对固件版本和绑定状态 |
 | `GET /api/control/session`、`POST /api/control/session/{id}/resume`、`{id}/close`，微调会话登记与续接 | 不新增 ROS 消息；续接**不发布** `/control/module_cmd` | 会话表 `(seg, arm) → uid56` 只在 `module_confirme_node` 内存中，节点重启或机械臂断电即失效，无对外查询入口 | 握手成功后登记，按连接版本、保持时长及新握手抢占作废；续接只读记录并滑动有效期 | 个人中心开关、模块管理页续接卡片、微调页“已续接会话 · 未重新握手”标识 | [会话管理](../ros_mes_hou/app/ros/control_session.py)、[控制端点](../ros_mes_hou/app/api/endpoints/control.py)、[微调页](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)；续接**未经设备复核**，页面不写成绑定已确认 | P1；若 ROS 侧提供只读绑定查询，可把状态从“按记录恢复”升级为“已复核” |
 | `POST /api/control/stop`、`GET /api/control/stop/holds`，局部停（模块停/单轴停） | `/arm/cmd_vel` 直发：`position=[0x08, module_id]`（device_id=0）与 `[0x0C, 1]`（device_id=轴号） | `hardware_node.py` 已实现 `0x08` 模块停与 `0x0C` 单轴停的处理与 SEG 动态换算；`softstop_node.py` 无模块停订阅，故本侧直发同话题 | 固件对 `0x08`/`0x0C` 是否锁存、如何恢复**待确认**；协议只有全局 `0x04` 解除 | 落 `control_stop_holds` 按 scope 拦截下发，命中在途批次停止后续下发并转 `uncertain`；发送失败保留锁 | 微调页「停本模块」与每轴「停」、局部停横幅与清除入口；侧栏长按仍是全局急停 | [局部停管理](../ros_mes_hou/app/ros/stop_holds.py)、[下发通道](../ros_mes_hou/app/ros/rosbridge.py)、[控制端点](../ros_mes_hou/app/api/endpoints/control.py)、[微调页](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)；清除记录**不发指令**，恢复运动需重新下发 | P0；需现场确认固件锁存行为与多模块并行时“只解除某模块”的可行性 |
-| `POST /api/control/finetuning/batches`，三轴统一确认 | `/control/adjust_rotation_cmd`、`adjust_swing_cmd`、`adjust_telescopic_cmd`；既有三轴消息 | 三轴节点有微调转发、基准/软限位处理；本次未改 ROS | 实际运动、单位、状态/到位事件支持待确认 | 持久化幂等及物理目标锁，顺序发送；观测到运行、目标到位及空闲才推进；异常保留待核实 | 主微调页一个确认按钮，输入只改草稿；轮询/刷新恢复不重发，真实实测不取 HTTP 回显 | [批次管理器](../ros_mes_hou/app/ros/finetuning_batch.py)、[控制端点](../ros_mes_hou/app/api/endpoints/control.py)、[微调页](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)；MES 请求号不是设备回显号 | P0；前后端模拟通过，现场需验证反馈、单位、时序及独占条件 |
+| `POST /api/control/finetuning/batches`，三轴统一确认 | `/control/adjust_rotation_cmd`、`adjust_swing_cmd`、`adjust_telescopic_cmd`；既有三轴消息 | 三轴节点有微调转发、基准/软限位处理；本次未改 ROS | 实际运动、单位、状态/到位事件支持待确认 | 持久化幂等及物理目标锁，顺序发送；观测到运行、目标到位及空闲才推进；异常保留待核实 | 主微调页输入本次相对增量，图纸模式主反馈采用静止后固定基准，无图纸模式采用动作起点；批次到位提示使用单次增量 | [批次管理器](../ros_mes_hou/app/ros/finetuning_batch.py)、[控制端点](../ros_mes_hou/app/api/endpoints/control.py)、[微调页](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)；MES 请求号不是设备回显号 | P0；前后端模拟通过，现场需验证反馈、单位、时序及独占条件 |
 | `POST /api/control/finetuning`，兼容单轴增量 | 同上 | 同上 | 待确认 | 保留发送语义，不等待完成；检查轴/参数/臂一致及批次锁 | 主微调页已改用批次接口；旧调用仍兼容 | [消息构造](../ros_mes_hou/app/ros/rosbridge.py)；发送≠接受≠到位 | P0；不把旧接口当作批次完成依据，不自动重发 |
-| `GET /api/drawing/?for_tuning=true`、`POST /api/coordination/send`，图纸选择/路径及三视图 | `/frontend_pointcloud_topic`，`std_msgs/String`；选择列表不发送 ROS | `data_process_node.py` 有文件处理和视图服务；后续点云/逆解为 ROS 内部链路 | 本接口本身不证明后续轴运动；下位机执行待确认 | mock 可返回内置选择项并模拟下发/视图，不写正式图纸表；real 校验正式图纸，skip 拒绝下发及视图；版本变化拒绝旧请求/视图 | 三种图纸处理互斥；空库可用内置模拟图纸，保存 builtin_mock 来源及 null 图纸编号；真实空库仍要求导入 | [图纸端点](../ros_mes_hou/app/api/endpoints/drawing.py)、[协调端点](../ros_mes_hou/app/api/endpoints/coordination.py)、[ROS 图纸节点](../../robot_control_backend/scripts/data_process_node.py)；模拟预览不证明点云处理，真实视图可取不证明运动完成 | P1；真实流程需图纸可见、正确 ROS/视图地址及真实急停 |
+| `GET /api/drawing/?for_tuning=true`、`POST /api/coordination/send`，图纸选择/路径及三视图 | `/frontend_pointcloud_topic`，`std_msgs/String`；选择列表不发送 ROS | `data_process_node.py` 有文件处理和视图服务；后续点云/逆解为 ROS 内部链路 | 本接口本身不证明后续轴运动；下位机执行待确认 | mock 可返回内置选择项并模拟下发/视图，不写正式图纸表；real 校验正式图纸，skip 拒绝下发及视图；版本变化拒绝旧请求/视图 | 三种图纸处理互斥；图纸下发后逐臂连续有效静止 10 秒锁固定基准，重发图纸重新观测全部已确认臂；内置模拟图纸保存来源及 null 图纸编号 | [图纸端点](../ros_mes_hou/app/api/endpoints/drawing.py)、[协调端点](../ros_mes_hou/app/api/endpoints/coordination.py)、[ROS 图纸节点](../../robot_control_backend/scripts/data_process_node.py)；模拟预览不证明点云处理，真实视图可取不证明运动完成 | P1；真实流程需图纸可见、正确 ROS/视图地址及真实急停 |
 | `POST /api/control/emergency_stop`，急停发送 | `/control/softstop` → `/arm/cmd_vel`，`IntCmd` | `softstop_node.py` 有转发，硬件节点有 CAN 下发路径 | 当前固件急停及解除状态待现场确认 | 独立发送路径保留，先持久化联锁并停止批次后续下发 | 侧栏长按急停，删除五秒自动恢复，发送结果不明保留提示 | [急停端点](../ros_mes_hou/app/api/endpoints/control.py)、[侧栏](../ros_mes_front/src/components/Main/AsidePage.vue)、[ROS 转发](../../robot_control_backend/scripts/softstop_node.py)；发送成功不是已停证据 | P0；当前不宣称设备停止确认 |
 | `POST /api/control/emergency_stop/release`，解除发送；GET `/api/control/emergency_stop/status`，MES 联锁查询 | `/control/softstop_release` → `/arm/cmd_vel`，既有 `IntCmd`；查询只读 MES 数据库 | ROS 有独立解除转发 | 待确认 | 记录解除发送状态与联锁版本，不恢复旧批次；模拟解除不清除真实联锁 | 侧栏已实际调用；历史/轮询/刷新仅持续提示，全屏由长按或手动查看打开且可返回页面保留状态；真实发送成功仍待确认，模拟解除成功可关闭 | 同上；恢复提示不发送新的急停，解除急停与轴故障复位不同，状态查询不是设备实测 | P0；软件链路模拟通过，实际解除待现场确认 |
 | `POST /api/control/emergency_stop/manual_release`，人工解除 MES 急停记录 | MES 业务状态更新 | 操作由前后端完成 | 现场处理结果由操作员确认 | 按当前环境、连接版本及急停版本清除记录，保留中断批次核实流程，模拟环境同步清除模拟锁存 | 急停全屏提供“人工解除急停”，清除成功后关闭全屏并恢复状态提示 | [控制端点](../ros_mes_hou/app/api/endpoints/control.py)、[联锁记录](../ros_mes_hou/app/ros/finetuning_batch.py)、[侧栏](../ros_mes_front/src/components/Main/AsidePage.vue)。自动检查及页面验证见改动记录 2026-11-11 条目 | 人工确认清除属于 MES 业务流程，设备状态以现场确认及后续实时检查为准 |
@@ -37,9 +37,9 @@
 
 | 话题/消息 | 用途与编号语义 | ROS 源码实现状态 | 下位机支持 | 后端接入 | 前端使用 | 验证证据/缺口 | 优先级及后续条件 |
 |---|---|---|---|---|---|---|---|
-| `/hardware/rotation_feedback` / `RotationCmd` | 旋转角度，`module_id` 为 CAN SEG | `feedback_node.py` 换算 CAN 位置并透传 SEG | 待确认 | 已转发；本次补有效性标记 | 主微调页已消费；本次补 SEG/臂核验及逐项时效 | [反馈节点](../../robot_control_backend/scripts/feedback_node.py)；需与当前固件单位和现场版本核对 | P0；未归属或无效样本不更新实际值 |
+| `/hardware/rotation_feedback` / `RotationCmd` | 旋转角度，`module_id` 为 CAN SEG | `feedback_node.py` 换算 CAN 位置并透传 SEG | 待确认 | 已转发；本次补有效性标记 | 主微调页按 SEG/臂核验及逐项时效消费，原始反馈按图纸固定基准或动作起点换算相对量 | [反馈节点](../../robot_control_backend/scripts/feedback_node.py)；需与当前固件单位和现场版本核对 | P0；未归属或无效样本不更新实际值 |
 | `/hardware/swing_feedback` / `SwingCmd` | 摆动角度，CAN SEG | 同上 | 待确认 | 同上 | 同上 | 同上；不能按轴号单独跨模块匹配 | P0；同上 |
-| `/hardware/telescope_feedback` / `TelescopicCmd` | 实测长度 mm，CAN SEG | ROS 内部把 CAN 0.01mm 换算为 mm | 待确认 | 原样传 mm；本次补有效性标记 | 主微调页消费，不能再做重复 ×100/÷100 | [伸缩消息](../../robot_control_backend/msg/TelescopicCmd.msg)、反馈节点；固件单位需同版本核实 | P0；保留明确单位与基准依赖 |
+| `/hardware/telescope_feedback` / `TelescopicCmd` | 实测长度 mm，CAN SEG | ROS 内部把 CAN 0.01mm 换算为 mm | 待确认 | 原样传 mm；本次补有效性标记 | 主微调页按 mm 消费并扣除该模式有效基准，显示相对移动量 | [伸缩消息](../../robot_control_backend/msg/TelescopicCmd.msg)、反馈节点；固件单位需同版本核实 | P0；保留明确单位与基准依赖 |
 | `/hardware/sensor_feedback` / `SensorCmd` | 瞬时压力，CAN SEG、臂级编号 | 反馈节点转换及发布 | 待确认 | 已转发 | 主微调页消费；本次改为独立等待/时效状态 | 不能因为轴已反馈就把默认压力 0 显示为实测 | P0；压力实际频率、标定单位待确认 |
 | `/hardware/imu_angles` / `TuoLuoYi` | 姿态/坐标分量，沿硬件链路透传 CAN SEG | `tuo_luo_yi.py` 分模块/臂维护并发布 | 待确认 | 已转发；本次分量独立有效性 | 主微调页消费；本次分量独立时效 | [IMU 节点](../../robot_control_backend/scripts/tuo_luo_yi.py)；缺失/非法分量不能补成零 | P0；现场标定、精度与坐标语义另行验证 |
 | `/hardware/pressure_avg` / `SensorCmd` | 采样窗口均值，`module_id` 来自触发上下文的业务编号 | `imu_average_calculator_node.py` 已发布，但存在异臂样本进入同一窗口的路径 | 待确认 | 已转发 `pressure_average`，不能一律当 SEG | **前端未展示** | [均值节点](../../robot_control_backend/scripts/imu_average_calculator_node.py)；只提示来源问题，本次不修改 ROS 或把界面接通当作均值正确 | P2；ROS 侧先核实采样归属、触发和窗口 |
@@ -59,9 +59,21 @@ CmdAck 同一话题混合不同编号空间，`header` 目前也没有可靠的�
 
 本次归属规则只增加后端 WebSocket 元数据，不改 ROS 消息：正业务号保留为候选；原号在 0～14 时再按显式 `ROS_MODULE_SEG_MAP` 收集 SEG 对应候选。配置无效或 SEG 无映射为 unknown，多候选为 ambiguous，仅无未决解释且唯一时为 resolved；保留原号和 raw。普通遥测、压力均值、混合回执不能共用一个无条件转换规则。
 
-前端逐轴、压力、IMU 分量用浏览器接收的单调时间判断显示新鲜度；默认轴/IMU 5 秒、压力 10 秒，可配置，属于暂定 UI 策略，不是硬件周期或故障判定。缓存恢复为历史值，断线使已有值过期；坏样本不刷新时效、不补零、不终止整个反馈流。真实零值仍应正常显示。
+前端按各轴、压力和 IMU 分量的有效样本接收时间判断过期，默认三轴 60 秒、压力 10 秒、IMU 5 秒。恢复的缓存显示为历史值，反馈连接断开时标记过期。只有有效样本更新读数和接收时间，数值 0 是有效反馈。
+
+微调输入及下发使用本次相对增量，后端以发令前 `start_position` 计算单次动作到位增量 `observed_delta` 与偏差。普通图纸模式主反馈以图纸运动结束后连续有效静止 10 秒锁定的位置为固定基准，`reference_source="drawing_settled"`，后续微调按该固定值计算 `current`。无图纸调试模式沿动作起点口径，来源为 `command_start`。新配置保存 `position_mode="relative"`、`reference_source`、`initial/reference_position`、相对 `current` 与 `raw_current`，旧请求省略来源时默认 `command_start`。历史批次查询继续恢复单次动作相对结果。字段和恢复规则见[接口文档 2.4.3 节](ROS_MES_前后端接口字段文档.md)。
+
+图纸基准由前端按连接版本、SEG、Unit_ID 与图纸 generation 分臂观测，图纸 POST 前开始收样，全部相关 POST 成功后可锁定。先有位置变化或有效 RUN，再由三轴连续有效稳定 10 秒提供静止证据，最大采样间隔 3 秒、窗口位置范围暂按 0.01°/0.01mm。锁定前断链、缺样或坏样重新计时。真实 ROS 图纸消息仅有文件路径，同一会话重发图纸时全部已确认臂重新观测，下发成功后各臂图纸关联及共享默认图纸同步为本次图纸。整次配置操作核验 generation 与连接版本，仅接纳本轮有效模块确认及图纸响应，观测状态仅由当前反馈连接更新。开启既有会话保持后，固定值与观测状态进入本机快照，高频反馈下每约 500ms 保存，`pagehide` 立即保存。已锁定值刷新续接可保留，未锁定状态刷新后重新观察，跨端缺少快照时基准未知。采集在微调页面运行期间进行。现场原始反馈跳值及真机基准效果待核实。
+
+三轴配置快照在 `config_json.devices[]` 写入 `requested_delta`，保存每轴最近一次进入下发流程的指令增量。保存时相对实测值取 `current`，批次到位实测和偏差可查 `progress_json`。 输入框草稿 `adjust` 仅用于页面输入和会话续接。
 
 批次记录持久化于 MES 数据库，以物理 SEG+arm 锁定目标并拒绝重复请求；模拟锁额外带 mock 前缀。查询/刷新不会再次下发。前端批次详情和 ACK 提示按臂保存，切臂不沿用另一臂记录，切回恢复本会话内记录；新会话清除旧臂缓存，旧查询迟到响应不能覆盖新批次。已尝试发送但缺少完成证据时保留 `uncertain`，真实操作需现场核实，模拟操作核对模拟记录后关闭；后端重启均不恢复旧动作。每批保存模式/地址/版本快照，模拟反馈不能驱动真实批次推进。此机制只支持单后端工作进程，不能阻止 ROS 内部或外部控制器并行发令，真机使用前必须明确目标独占。后端接收时刻只用于软件新鲜度，不证明设备时钟同步或端到端时延。
+
+微调发送前检查由 `finetuning_preflight_enabled` 控制，默认 true，旧保存配置缺少字段时补默认值。入口为“个人中心 → 调试设置 → ROS 通信与微调 → 微调下发前检查”，自动保存并持久化，开关变更沿用连接版本及会话失效流程，需重新确认机械臂。批次冻结开关快照。
+
+开关开启时，每轴发送前等待实时有效轴状态与位置，上限 60 秒。首轴的订阅就绪与状态准备共用一个窗口，后续轴重新建立准备窗口。关闭时跳过订阅就绪及发送前状态准备，直接进入当前轴相对增量发送。缺少有效同轴起点的批次起点、预期位置、实测增量和偏差为 null，原始反馈可按有效样本保存。页面当前相对值按所选模式的有效基准计算。
+
+发送后完成确认按运行、有效到位事件和空闲组合推进，等待上限 60 秒。缺少完成证据时进入 `uncertain`，暂停后续轴并保留目标锁。字段及阶段处理见[接口文档 2.4.1 节](ROS_MES_前后端接口字段文档.md)。
 
 ## 5. 本次只登记、不扩展的能力
 
@@ -78,6 +90,8 @@ CmdAck 同一话题混合不同编号空间，`header` 目前也没有可靠的�
 
 ## 6. 验证与外部依赖
 
+- 2026-11-13 图纸固定基准流程完成软件验证，前端微调相关 155/155 项、图纸 12/12 项、全后端 203/203 项通过，类型检查与生产构建通过。新增场景覆盖多臂、HTTP 期间采样、连续微调累计相对值、断链及图纸失败、迟到响应与固定/未固定快照恢复。详细结果见[改动记录](ROS_MES_前后端改动记录.md)。固定基准来自本页观测，真机运动与连续反馈效果待现场确认。
+- 2026-11-13 相对微调改动完成软件验证，前端微调相关 111/111 项、图纸 12/12 项、全后端 183/183 项通过，类型检查和生产构建通过。本机后端重启后 HTTP 200，新配置字段 schema 已加载，前端 5173 开发服务运行。详细新增场景与执行环境见[改动记录 2026-11-13 条目](ROS_MES_前后端改动记录.md)。验证采用内存数据库与测试替身，真机相对运动及原始反馈跳值来源待现场确认。
 - 本轮最终自动检查通过：前端微调/急停/请求/连接配置 68/68 项、图纸 12/12 项、后端 129/129 项，类型检查及生产构建通过，仅有现有资源包体积提示。新增空正式图纸库模拟、三种图纸处理互斥、历史急停不自动全屏、来源与版本校验、切臂/新会话及迟到查询/ACK 回归；详见改动记录 2026-11-07 完成条目。
 - 本轮隔离浏览器完整流程通过：真实登录后空库内置图纸双臂确认、三轴草稿不立即下发、一次确认顺序完成及保存 null 图纸编号/内置来源、不使用图纸保存、模拟急停刷新提示及解除、真实空库仍要求导入、切臂记录隔离及切回恢复。全程正式图纸表为零条，共两个完成的模拟批次；急停/解除 POST 各一次且仅由主动操作产生，真实历史 stop_unknown/generation=8 保留，模拟解除后为 clear。未连接真实 ROS/串口，未写运行库业务记录。
 - 临时隔离测试服务、脚本及 SQLite 已清理；本地前后端 5173/8000 正常保留，新接口字段可读取。代码尚未提交或上传 GitHub；模拟验证不能证明现场 ROS/固件/设备行为。

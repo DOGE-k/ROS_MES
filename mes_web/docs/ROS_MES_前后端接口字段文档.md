@@ -139,7 +139,7 @@
 - 模拟下发：可选正式图纸或后端内置示例。内置示例仅允许当前 `drawing_mode=mock` 且 `drawing_source=builtin_mock/drawing_id=null`；不创建正式图纸记录、不构造真实 ROS 路径，返回明确的模拟预览。
 - `drawing_mode=skip` 时本接口及三视图接口返回 409。模拟示例不得在真实模式使用；真实空库仍要求先导入正式图纸。
 
-正常模式页面顺序为“选模块 → 多选 1~5 台机械臂和一张图纸 → 批量机械臂确认 → 按臂图纸下发 → 微调”。全部确认和图纸下发成功后进入微调页；主页面提供机械臂切换和重新下发图纸入口，已确认机械臂的图纸、三视图和微调状态按臂分别保留于本次页面会话中。切换机械臂不会再次弹出选择框；重新下发只作用于当前机械臂。请求进行中禁用目标切换，避免数据串臂。
+正常模式页面顺序为“选模块 → 多选 1~5 台机械臂和一张图纸 → 批量机械臂确认 → 图纸下发 → 微调”。全部确认和图纸下发成功后进入微调页，主页面提供机械臂切换和重新下发图纸入口，图纸、三视图与微调状态按臂保留。真实 ROS 图纸消息只携带文件路径，实际运动作用范围需结合 ROS 流程和现场设备核验。同一会话重新下发图纸成功后，全部已确认机械臂的图纸关联及共享默认图纸同步为本次图纸，各臂固定基准重新观测。固定基准锁定流程见 2.4.3 节。请求进行中禁用目标切换。
 
 **接口 5：点云视图代理**
 - 路径参数：`view_name` ∈ {`top`, `front`, `side`}（其他值 404）
@@ -189,7 +189,7 @@
 
 **接口 7/8 字段**：
 - POST `/finetuning/`：`module_id`(✔)、`unit_id`(✔)、`device_id/Device_ID`?、`position/new_value`(至少其一)、`parameter_name`?（缺省自动生成 `module_<m>_unit_<u>_position`）、`old_value`?（缺省取最近一次 new_value）→ 返回 `FineTuningResponse[]`（GET 列表：`id, module_id, unit_id, module_address?, module_descript?, parameter_name, old_value?, new_value, creater_id, create_time?, notes?, del_flag`）
-- POST `/finetuning/config`：`module_id`(✔)、`unit_id`(✔)、`sensor_id`(可由 `device_id`/`devices[0]` 兜底)、`device_id?`、`is_debug=false`、`drawing_id=null`（传值时须为正整数）、`drawing_source="database"`、`connection_revision?`（非负版本号）、`x/y/z=0`（可传 null 表示尚无有效值）、`feedback_state={}`（逐字段状态及 `age_ms`）、`devices:[{device_id?, sensor_id?, unit_id?, parameter_name?, label?, initial=0或null, adjust=0, current=0或null}]`、`calibrated=false`、`notes=null`（≤1000 字，写入 `notes` 列）→ 整份 JSON 存 `config_json`，随保存响应 `data.config` 返回。`is_debug=true` 时 `drawing_id` 必须为空；内置示例保存为 `is_debug=false/drawing_source="builtin_mock"/drawing_id=null`，且只允许当前图纸模式为 mock，不能与跳过图纸同时使用。版本不一致返回 409，来源或组合非法返回 422。旧客户端省略新字段仍兼容；新元数据不增加业务表列。
+- POST `/finetuning/config`：`module_id`(✔)、`unit_id`(✔)、`sensor_id`(可由 `device_id`/`devices[0]` 兜底)、`device_id?`、`is_debug=false`、`drawing_id=null`（传值时须为正整数）、`drawing_source="database"`、`connection_revision?`（非负版本号）、`x/y/z=0`（可传 null 表示尚无有效值）、`feedback_state={}`（逐字段状态及 `age_ms`）、`devices:[{device_id?, sensor_id?, unit_id?, parameter_name?, label?, initial=0或null或图纸固定基准, current=0或null, position_mode="raw", requested_delta=null, reference_position=null, raw_current=null, reference_source="command_start"}]`、`calibrated=false`、`notes=null`（≤1000 字，写入 `notes` 列）→ 整份 JSON 存 `config_json`，随保存响应 `data.config` 返回。`is_debug=true` 时 `drawing_id` 必须为空；内置示例保存为 `is_debug=false/drawing_source="builtin_mock"/drawing_id=null`，且只允许当前图纸模式为 mock，不能与跳过图纸同时使用。版本不一致返回 409，来源或组合非法返回 422。旧客户端省略新字段仍兼容；新元数据不增加业务表列。
 - GET `/finetuning/`：query `skip=0, limit=100, module_id?, unit_id?`
 
 ---
@@ -202,10 +202,10 @@
 
 - `POST /control/finetuning/batches`：携带客户端唯一 `request_id`、`module_id`、`unit_id` 和 `adjustments:[{parameter_name, position}]`。批次号只用于 MES 幂等和进度，不添加到 ROS 消息，不声称设备回显它。相同请求号不得重复执行；冲突请求返回 409。
 - `GET /control/finetuning/batches/{id}`：查询每轴及批次进度。刷新页面恢复查询，不自动再次提交。
-- 后端独立订阅反馈，先取得当前模块/机械臂三轴的新鲜位置及有效、空闲、无急停/故障的状态，才允许发送第一轴。等待同轴新运行状态、符合目标位置的到位事件和空闲状态后，才推进下一轴；接受 ACK 本身不推进队列。
+- 后端独立订阅反馈。`finetuning_preflight_enabled=true` 时，每轴发送前等待当前模块/机械臂三轴的新鲜位置及有效、空闲、无急停/故障状态。关闭该设置后，批次跳过反馈订阅就绪等待及发送前状态准备，直接进入当前轴相对增量发送。两种设置均在发送后等待同轴运行、有效到位事件和空闲组合，再推进下一轴。
 - 轴忙/拒绝、限位/故障、失压、断线、急停和超时停止后续下发；无法证明结果时标为 `uncertain` 并保留目标锁，禁止自动重发。状态及幂等记录保存于后端专用批次表，重启后未结束批次变为待核实，不恢复执行。
-- 待核实批次经操作者现场核对后，可调用独立确认接口释放 MES 控制锁；该操作不发送运动、不解除设备故障，后续新批次仍须通过实时空闲检查。历史已发送项目不得作为一整批自动重试。
-- MES 批次在单个后端工作进程中执行；同一设备需由本控制会话独占，不能与 ROS 内部自动流程或其他控制器同时运动。现有反馈无设备请求序号，迟到/混合来源存在协议边界；真机启用前需核实状态、到位事件、单位及独占操作条件。反馈不足时不得继续发送，不用固定延时或读数不变推断完成。
+- 待核实批次经操作者现场核对后，可调用独立确认接口释放 MES 控制锁；该操作不发送运动、不解除设备故障，后续新批次按当前配置执行发送前检查。历史已发送项目不得作为一整批自动重试。
+- MES 批次在单个后端工作进程中执行；同一设备需由本控制会话独占，不能与 ROS 内部自动流程或其他控制器同时运动。现有反馈无设备请求序号，迟到/混合来源存在协议边界；真机启用前需核实状态、到位事件、单位及独占操作条件。发送后反馈不足时按待核实流程暂停后续轴，完成判定使用运行、到位及空闲证据。
 - 默认仅以隔离数据库和模拟 ROS 消息验证，不修改 ROS/固件。伸缩单位按现有共享契约 mm/CAN 0.01mm；到位原始字段与现场固件一致性仍需 ROS 方确认。
 
 下列路径均带 `/api` 前缀、要求登录；查询与恢复操作不发送运动指令。
@@ -229,20 +229,29 @@
 | `module_id/unit_id/seg` | 冻结的业务模块、机械臂及本次物理 SEG |
 | `status/message` | `queued` 等待、`checking` 状态检查、`executing` 执行、`completed` 已观测完成、`blocked` 尚未发送即受阻、`uncertain` 结果待核实、`closed` 人工核实关闭 |
 | `target_locked` | 是否保留控制锁；按物理 SEG+arm 唯一占用，并核验业务目标，业务编号别名不能绕过锁 |
-| `steps[]` | `parameter_name/position/device_id/status`；开始执行后可含 `expected_position`，为基于实测基线计算的预期目标，不能当作实测位置 |
+| `connection.finetuning_preflight_enabled` | 本批次冻结的发送前检查开关，缺省为 true |
+| `steps[]` | `parameter_name/position/device_id/status`，`position` 为本次相对增量，旋转/摆动单位 °、伸缩单位 mm |
+| `steps[].start_position` | 该轴本次发令前的新鲜原始位置，在步骤进入发送阶段时记录。检查关闭且缺少有效同轴位置时为 null |
+| `steps[].observed_delta` | 本次到位实际增量，等于 `observed_angle - start_position`，与 `position` 使用相同单位。起点未知时为 null |
+| `steps[].expected_position/observed_angle` | 起点加本次增量所得的预期位置 / 到位事件换算后的原始位置，保留于批次记录用于兼容与排查。起点未知时 `expected_position` 为 null |
+| `steps[].deviation/position_error/warning` | 实际增量与指令增量之差 / 固件到位误差换算值 / 相对增量提示，单位随该轴类型确定。起点未知时 `deviation` 为 null |
 | `steps[].status` | `pending` 未发送、`sent_unconfirmed` 发送阶段、`completed` 已观测完成、`uncertain` 已尝试发送但结果不明 |
 
-实现默认等待初始状态 10 秒、单轴完成 60 秒、状态与位置新鲜度 3 秒。每轴必须观测到发送后的运行状态、到位事件（`status_bits & 4` 且 `flags & 1`、无超位/故障）和运行后的空闲状态；未观测到这些硬条件时不发下一轴，动作过短漏掉 RUN 也按待核实处理。
+微调分为发送前检查与发送后完成确认两个阶段。发送前检查开关默认开启，每轴状态准备等待上限 60 秒，状态与位置新鲜度 3 秒。开启时，首轴的反馈订阅就绪与有效状态准备共用同一个 60 秒截止时间，后续每轴单独获得状态准备窗口。关闭时跳过该准备阶段，按本次请求发送相对增量。
 
-**2026-11-11 起，到位误差容差不再参与判定**：实测到位角与 `expected_position` 的差值、以及固件 `pos_error`，只作为提示写入 `steps[].deviation / observed_angle / position_error` 与 `steps[].warning`，批次仍按完成推进并解锁。默认提示阈值沿用旋转/摆动 0.2°、伸缩 0.1mm。这样"样本落后一帧、模拟遥测预测位置"导致的期望值偏差不会再把批次卡成 `uncertain` 并锁死下发；代价是**真的没到位也会被记为完成**，是否停机由操作者按提示判断。
+发送后完成确认的等待上限为 60 秒。每轴须观测到发送后的运行状态、有效到位事件（`status_bits & 4` 且 `flags & 1`、无超位/故障）和运行后的空闲状态，之后才推进下一轴。缺少有效完成证据时转为 `uncertain`，暂停后续轴并保留目标锁，动作过短漏掉 RUN 也按待核实处理。
+
+发送前检查关闭且缺少有效同轴起点时，批次 `start_position/expected_position/observed_delta/deviation` 为 null。后续收到的原始位置可记录为 `observed_angle/raw_current`。页面 `current` 按该模式的有效显示基准计算，基准来源见 2.4.3 节。完成判定按运行、到位与空闲组合处理。
+
+2026-11-11 起，到位误差容差作为提示记录，批次依据运行、有效到位事件及空闲组合推进并解锁。2026-11-13 起，提示使用本次实际增量 `observed_delta`、本次指令增量 `position` 及其差值 `deviation`，同时记录固件 `pos_error` 换算值 `position_error`。默认提示阈值为旋转/摆动 0.2°、伸缩 0.1mm。超差时该轴仍可记为完成，操作者需结合实际增量和误差提示确认现场执行结果。
 
 页面每秒查询批次进度。刷新后先恢复后端锁定批次；批次完成/人工关闭后可重新配置会话。提交不明时保留请求号只查询，已完成项清空草稿，人工核实关闭时也清空已尝试发送项；未发送项可供操作者重新审阅。批次详情和 ACK 提示按机械臂保存，切换后不沿用上一臂记录，切回可恢复本次会话内原臂记录；重新配置建立新会话时清除旧臂缓存。旧查询的迟到结果不得覆盖新批次或其他机械臂。后端模拟也保存批次并逐轴观测模拟 RUN/到位/空闲，明确标记模拟来源，不连接设备。
 
-批次响应新增 `simulated/execution_mode/safety_mode/connection`，连接快照含 `mode/safety_mode/url/revision`。内部复用现有 `request_json` 的 `_execution` 元数据保存，不增加批次表列。模拟目标锁使用 `mock:SEG:arm`，真实目标锁保留 `SEG:arm`，防止模拟解除影响真实记录。请求可带 `connection_revision`，与模块确认返回版本不一致时返回 409，要求重新确认目标。
+批次响应新增 `simulated/execution_mode/safety_mode/connection`，连接快照含 `mode/safety_mode/url/revision/finetuning_preflight_enabled`。内部复用现有 `request_json` 的 `_execution` 元数据保存，不增加批次表列。模拟目标锁使用 `mock:SEG:arm`，真实目标锁保留 `SEG:arm`，防止模拟解除影响真实记录。请求可带 `connection_revision`，与模块确认返回版本不一致时返回 409，要求重新确认目标。
 
 ### 2.4.2 基准初始值与校准标记（2026-11-11）
 
-下位机与 ROS 侧都不向上回传轴初始值，MES 不再等待"第一帧反馈当基准"：三轴 `initial` 固定按 **0** 记录，界面显示"基准初始值 0.00"（不再出现 `—`），`initialLocked` 恒为 true。反馈只更新 `current`，不覆盖基准。保存配置时 `devices[].initial` 对三轴一律写 0（此前无反馈时写 null）。
+三轴基准由 `reference_source` 标明。普通图纸模式采用图纸运动结束、连续有效静止 10 秒后锁定的原始位置，保存为 `initial/reference_position`。无图纸调试模式采用每次动作发令前的原始位置，`initial` 记录相对起点 0。`current` 表示相对所选基准的实测值，原始读数保存为 `raw_current`。基准建立及历史配置兼容规则见下节。
 
 下发方式不变：仍是一个「确认下发三轴调整」按钮，三轴按旋转 → 摆动 → 伸缩顺序执行，不拆成逐轴按钮。
 
@@ -250,7 +259,47 @@
 
 备注示例：`校零：机械臂 1，三轴基准初始值 0.00/0.00/0.00（人工下发归位后保存）2026-11-11 20:31`。只给 `calibrated=true` 而不给 `notes` 时，后端补一条默认校零文案，避免漏标。
 
-归位仍靠人工下发完成：后端拒绝 `position=0`，回零须下发 `0 − 当前实测值` 的增量（单次 |增量| ≤ 360，过大需分段）。本轮不新增表列、不新增查询接口，校准状态不跨页面刷新保留。
+归位由操作者依据现场零点下发相对增量。后端要求 `position` 为非零值，单次输入范围为 -360～360。人工归位所需增量需结合所选基准、现场零点和原始位置确定。校准状态仅作用于当前页面的下一次保存。
+
+### 2.4.3 相对微调、图纸基准与实测增量（2026-11-13）
+
+每次输入 `position` 都表示从该次下发时的当前位置继续移动指定增量。例如旋转轴原始位置为 12°，连续两次下发 +10° 后原始位置依次为 22°、32°。若图纸固定基准为 12°，页面相对该基准的实测值依次为 +10°、+20°，两个批次各自的实际动作增量均为 +10°。负增量按方向带符号计算，伸缩轴使用 mm。
+
+普通图纸模式使用 `reference_source="drawing_settled"`。前端按连接版本、CAN SEG、机械臂 `Unit_ID` 和本轮图纸 generation 为全部已确认臂分别观测。观测在图纸 POST 前启动以保存 HTTP 等待期间的有效样本，所有相关 POST 成功后方可锁定基准。每臂先观测到有效 RUN 或位置变化，再以三轴完整、连续、有效且稳定的 10 秒窗口确认静止，锁定窗口结束时各轴当前有效原始位置。该轮后续微调持续以此固定值计算页面 `current = raw_current - reference_position`。[微调页面](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)
+
+静止观测的最大有效采样间隔为 3 秒，位置稳定容差暂按各轴 0.01°/0.01mm。窗口内逐轴最大值与最小值之差须处于容差内，连续缓慢漂移会重新开始窗口。锁定前断链、缺样或无效样本重新计时，缺失读数保持未知。页面三轴反馈默认 60 秒过期和静止采样最大 3 秒间隔分别用于显示时效与静止证据连续性。
+
+真实 ROS 图纸消息只携带文件路径，因此同一会话重新下发图纸时，为全部已确认臂开启新一轮观测。下发成功后，共享默认图纸和已有各臂配置中的图纸关联同步为本次图纸，使各臂新基准与本轮图纸对应。开启既有“微调会话保持”后，固定基准和观测状态进入本机会话快照，已锁定值在刷新续接后保留，未锁定状态刷新后重新观察连续 10 秒。快照在持续高频反馈下每约 500ms 保存一次，`pagehide` 时立即保存。跨端缺少本机快照时基准为未知，静止观测在微调页面的反馈连接运行期间进行。
+
+整次配置操作通过 generation 与连接版本核验响应归属，页面仅接纳本轮有效的模块确认及图纸响应。连接变更使原操作失效，后续配置使用新的操作标识。图纸基准观测仅由当前反馈连接的消息及连接事件更新。
+
+无图纸调试模式使用 `reference_source="command_start"`，页面实测量使用有效原始反馈减本轴最近一次指令起点。新请求重建参与轴的起点，其余轴保留最近一次起点。未建立起点时显示未知，首次建立后等待下一条有效同轴遥测再计算相对值。该模式的旧配置缺省来源为 `command_start`。
+
+后端在每个轴准备发送时记录 `start_position`。到位事件换算后的原始位置记为 `observed_angle`，本次实际增量为 `observed_delta = observed_angle - start_position`，偏差为 `deviation = observed_delta - position`。页面到位结果与超差提示均采用本次实际增量、指令增量和对应的 °/mm 单位。[批次管理器](../ros_mes_hou/app/ros/finetuning_batch.py)
+
+发送前检查关闭时，缺少有效同轴起点的批次 `start_position/expected_position/observed_delta/deviation` 保持 null。指令增量继续记录在 `position/requested_delta`，原始位置按实际收到的有效反馈保存。页面显示与配置保存的 `current` 依据有效的 `drawing_settled` 固定基准或 `command_start` 起点计算，缺少相应基准时为 null。
+
+历史批次快照在查询响应中可由已有的 `expected_position - position` 恢复 `start_position`，由 `observed_angle - start_position` 恢复 `observed_delta`，并生成相对增量提示。缺少这些有效字段时，相对实测量保持未知。[批次管理器](../ros_mes_hou/app/ros/finetuning_batch.py)
+
+恢复本机旧版已完成批次缓存时，页面通过只读查询取得相对结果。查询期间移除缓存中的旧位置提示，已有未提交草稿继续保留。
+
+基准用于页面显示及配置保存，微调发送继续沿用当前 `finetuning_preflight_enabled` 和既有联锁流程。切臂保留各轴有效参考点和反馈状态，开启会话保持后的续接通过本机快照恢复这些数据，快照合并当前机械臂最新读数、IMU 与接收标记。
+
+新页面保存三轴配置时写入以下字段，配置整体进入已有 `config_json`。
+
+| 字段 | 新页面保存语义 |
+|---|---|
+| `position_mode` | `relative` |
+| `initial` | 图纸模式为已锁定的原始固定基准，无图纸调试模式为相对起点 0，图纸基准未知时为 null |
+| `requested_delta` | 该轴最近一次进入下发流程的指令增量，取批次中已开始处理的轴步骤 `position`，尚无记录时为 null |
+| `current` | 原始反馈减所选模式的基准，无有效原始反馈或可用基准时为 null |
+| `raw_current` | 最近有效原始反馈，无有效样本时为 null |
+| `reference_position` | 图纸模式为该轴已锁定的原始固定基准，无图纸调试模式为最近一次指令的原始起点，尚未建立时为 null |
+| `reference_source` | 图纸模式为 `drawing_settled`，无图纸调试模式为 `command_start`，旧请求省略时默认 `command_start` |
+
+图纸模式配置中的 `current` 表示相对固定基准的累计偏移，`requested_delta` 表示最近一次指令。单次动作到位偏差取 `progress_json.deviation = observed_delta - position`。无图纸调试模式在 `current/requested_delta` 都有效时可计算本次保存时差值。输入框草稿 `adjust` 用于页面输入和会话续接，保存配置时旧客户端传入的 `adjust` 会被忽略。旧客户端省略 `position_mode` 时默认按 `raw` 保存 `current`，省略 `requested_delta` 时保存为 null。压力项继续使用原始压力读数，IMU 各字段按既有反馈语义记录。[配置模型](../ros_mes_hou/app/schemas/finetuning.py)
+
+相对换算依赖原始反馈和对应基准的准确性。现场原始反馈 5/0 跳变的来源待核实，当前相对显示、图纸静止基准和到位提示的验证范围为前后端软件路径。
 
 ### 2.5 硬件控制与状态接口
 
@@ -315,6 +364,7 @@ GET 返回 `{"code":200,"message":"...","data":{...}}`；PATCH 请求为 `{"expe
 |---|---|
 | `revision` | 后端配置版本，更新成功递增；前端用 `expected_revision` 防止覆盖其他窗口 |
 | `ros_mode` | `real/mock`，控制模块确认、微调及反馈来源；首次无保存配置时为 real |
+| `finetuning_preflight_enabled` | 布尔值，默认 true，旧保存配置缺少此字段时补 true。控制微调发送前的订阅就绪及实时轴状态/位置准备检查，进入批次连接快照 |
 | `drawing_mode` | `skip` 不使用图纸、`mock` 模拟下发、`real` 真实下发；首次为 real |
 | `emergency_mode` | 急停与解除共同使用的 `real/mock`，首次为 real；任一真实运动/图纸下发要求此项 real |
 | `ros_url` | ROS WebSocket 地址，首次继承 `ROSBRIDGE_URL` |
@@ -325,6 +375,8 @@ GET 返回 `{"code":200,"message":"...","data":{...}}`；PATCH 请求为 `{"expe
 地址允许 ws/wss（ROS）或 http/https（三视图），拒绝嵌入账号密码、查询串、片段及非法端口。配置是当前后端服务共用的，不仅属于某个浏览器窗口；仍限定单 worker。模拟位置在进程内维护，重启不恢复旧模拟动作，持久化批次继续按待核实处理。
 
 模块确认按当前配置确认所有实际使用的真实入口；图纸和微调使用不同真实 ROS 地址时，两处都要确认成功。修改连接后，微调页旧确认和反馈缓存失效，需要重新确认机械臂。图纸请求也可带 `connection_revision`，返回的三视图 URL 带版本，配置变化后旧版本视图返回 409，防止读到其他环境的图片。图纸模拟返回明确的模拟预览 SVG，不请求真实点云服务。
+
+“微调下发前检查”开关位于“个人中心 → 调试设置 → ROS 通信与微调”，使用 `finetuning_preflight_enabled`。切换后自动保存到后端持久化配置，刷新及后端重启后重新读取。开关变更沿用配置版本校验与会话失效流程，需要重新确认机械臂。发送前检查与发送后完成确认的处理见 2.4.1 节。
 
 ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚本，返回带 `simulated` 的模拟结果；ROS 测试通道也不发布真实消息。模拟遥测和批次均带来源标记，当前模拟覆盖轴状态/位置、到位及压力，未生成的 IMU 分量仍显示等待，不冒充真实测量。
 
@@ -340,7 +392,7 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 
 不使用图纸不改变通信模式。通信来源由上方 ROS 连接配置决定，业务 API 和配置保存统一经过后端；历史 `VITE_DEBUG_NO_ROS` 编译开关不再截走请求。调试功能的变更及既有验证记录统一见[改动记录](ROS_MES_前后端改动记录.md)。
 
-保存配置的 `feedback_state` 记录每个实测字段的 `status` 和 `age_ms`。无有效样本的 `initial/current` 以及 IMU x/y/z 使用 null；历史或过期值可以保留，但必须连同其状态保存，不能当作刚收到的实测数据。新元数据进入已有 `config_json`，不改表结构；旧客户端省略字段仍兼容。
+保存配置的 `feedback_state` 记录每个实测字段的 `status` 和 `age_ms`。无有效样本的原始读数和 IMU x/y/z 使用 null，三轴 `reference_position` 按 `reference_source` 保存图纸固定基准或动作起点，`initial` 分别保存图纸固定基准或无图纸调试模式的相对起点 0。缺少有效原始读数或对应基准的 `current` 为 null。历史或过期值连同其状态保存，基准及相对字段含义见 2.4.3 节。新元数据进入已有 `config_json`，不改表结构；旧客户端省略字段仍兼容。
 
 ### 2.8 微调会话保持与续接（2026-11-11）
 
@@ -356,7 +408,7 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 
 **边界（不要扩大解释）**：续接只读 MES 记录，**不发送模块确认握手**，也不自动重发运动或图纸。ROS 侧 `module_confirme_node` 的 `(seg, arm) → uid56` 会话表仅在节点内存中，节点重启或机械臂断电即失效，且当前没有对外的“查询当前绑定”话题（状态复核只在握手流程内部按 token 使用）。因此续接属于“按 MES 记录恢复”，**未经设备复核**，页面用“已续接会话 · 未重新握手”标注，不写成绑定已确认。
 
-前端行为：开启后进入微调页先尝试续接（同一模块才允许），成功后跳过初始化弹窗、用后端返回的 `seg` 恢复反馈归属，并在有在途批次时恢复轮询；本机 `sessionStorage` 保存各臂输入值、点云与回执快照，跨端或快照丢失时按绑定重建最小状态，真实模式需重新下发图纸。“模块管理”页顶部显示进行中的会话卡片（模块坐标、机械臂、剩余时间）与“继续微调/结束会话”，**不自动跳转**，以免阻断换模块；直接从卡片进入时带 `session` 参数，失败会提示具体失效原因。
+前端行为：开启后进入微调页先尝试续接（同一模块才允许），成功后跳过初始化弹窗、用后端返回的 `seg` 恢复反馈归属，并在有在途批次时恢复轮询；本机 `sessionStorage` 保存各臂输入值、点云、回执及图纸基准观测快照。已锁定图纸基准在本机刷新续接后保留，未锁定的静止窗口重新观察 10 秒。跨端或快照丢失时按绑定重建最小状态，图纸基准为未知，真实模式需重新下发图纸。“模块管理”页顶部显示进行中的会话卡片（模块坐标、机械臂、剩余时间）与“继续微调/结束会话”，**不自动跳转**，以免阻断换模块；直接从卡片进入时带 `session` 参数，失败会提示具体失效原因。
 
 ### 2.9 局部停（分级急停，2026-11-11）
 
@@ -424,7 +476,7 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 
 **逐项状态**：每个轴、压力和每个 IMU 分量分别记录浏览器单调时钟 `performance.now()` 的有效样本接收时间。尚无样本显示等待；新有效样本显示实时；恢复缓存显示历史直到新样本；超时或连接断开显示过期。旧数值可以保留用于比较，但不能冒充实时，真正的零值仍是有效数值。
 
-暂定 UI 新鲜度阈值：轴和 IMU 各 5 秒、压力 10 秒。可用 `VITE_ROS_AXIS_STALE_MS`、`VITE_ROS_PRESSURE_STALE_MS`、`VITE_ROS_IMU_STALE_MS` 配置。这只是显示策略，不是设备周期承诺、故障诊断或自动停止条件；现场发布频率仍需核实。
+前端默认过期时间为三轴 60 秒、压力 10 秒、IMU 5 秒。可以通过 `VITE_ROS_AXIS_STALE_MS`、`VITE_ROS_PRESSURE_STALE_MS`、`VITE_ROS_IMU_STALE_MS` 分别配置。页面按有效样本的接收时间更新状态标签。
 
 **CmdAck 元数据**：保持 `ack_msg/result/detail/raw`，增加 `module_candidates`（业务模块候选数组）、`module_resolution=resolved|ambiguous|unknown`、`business_module_id`（仅可靠唯一归属时有值）。原 `module_id` 不改写。
 

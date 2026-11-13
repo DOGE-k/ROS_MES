@@ -78,6 +78,61 @@ class RuntimeSettingsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(value, reloaded.snapshot())
         self.assertEqual('real', value['emergency_mode'])
 
+    async def test_preflight_defaults_on_when_older_saved_settings_omit_the_field(self):
+        self.assertIs(self.settings.snapshot()['finetuning_preflight_enabled'], True)
+        with self.sessions() as db:
+            db.add(models.RosDebugSettings(id=1, revision=7, config_json='{}'))
+            db.commit()
+        reloaded = RuntimeSettings(self.sessions)
+        reloaded.load()
+        self.assertEqual(7, reloaded.snapshot()['revision'])
+        self.assertIs(reloaded.snapshot()['finetuning_preflight_enabled'], True)
+
+    async def test_preflight_setting_persists_false_and_accepts_only_boolean_values(self):
+        saved = self.update(finetuning_preflight_enabled=False)
+        reloaded = RuntimeSettings(self.sessions)
+        reloaded.load()
+        self.assertEqual(saved, reloaded.snapshot())
+        self.assertIs(saved['finetuning_preflight_enabled'], False)
+        for invalid in (0, 1, 'false', 'true', None):
+            with self.subTest(value=invalid):
+                with self.assertRaises(HTTPException) as caught:
+                    self.update(finetuning_preflight_enabled=invalid)
+                self.assertEqual(422, caught.exception.status_code)
+                self.assertEqual(saved, self.settings.snapshot())
+        self.assertIs(self.update(finetuning_preflight_enabled=True)['finetuning_preflight_enabled'], True)
+
+    async def test_dispatcher_and_batch_keep_the_preflight_configuration_snapshot(self):
+        self.mock()
+        configured = self.update(finetuning_preflight_enabled=False)
+        dispatcher = get_ros_dispatcher()
+        self.assertIs(dispatcher.client.finetuning_preflight_enabled, False)
+        with patch('app.ros.rosbridge.websockets.connect', side_effect=AssertionError('mock opened a socket')):
+            job = await control.create_finetuning_batch(
+                self.request(connection_revision=configured['revision']), self.user,
+            )
+            batch_id = job['data']['id']
+            dispatcher.client.finetuning_preflight_enabled = True
+            await self.manager.tasks[batch_id]
+        result = self.manager.get(batch_id)
+        self.assertEqual('completed', result['status'])
+        self.assertIs(result['finetuning_preflight_enabled'], False)
+        self.assertIs(result['connection']['finetuning_preflight_enabled'], False)
+        with self.sessions() as db:
+            stored = json.loads(db.get(models.FineTuningBatch, batch_id).request_json)
+            self.assertIs(stored['_execution']['finetuning_preflight_enabled'], False)
+
+    async def test_preflight_switch_obeys_existing_operation_and_revision_guards(self):
+        with self.settings.operation(0):
+            with self.assertRaises(HTTPException) as caught:
+                self.update(finetuning_preflight_enabled=False)
+        self.assertEqual(409, caught.exception.status_code)
+        saved = self.update(finetuning_preflight_enabled=False)
+        with self.assertRaises(HTTPException) as caught:
+            self.settings.update(SettingsChange(expected_revision=0, changes={'finetuning_preflight_enabled': True}))
+        self.assertEqual(409, caught.exception.status_code)
+        self.assertEqual(saved, self.settings.snapshot())
+
     async def test_real_commands_cannot_use_mock_emergency(self):
         with self.assertRaises(HTTPException) as caught:
             self.update(emergency_mode='mock')

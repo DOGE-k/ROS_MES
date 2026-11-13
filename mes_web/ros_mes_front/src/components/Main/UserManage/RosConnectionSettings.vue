@@ -13,6 +13,16 @@
           <el-form-item label="ROS 连接地址">
             <el-input v-model="draft.ros_url" :disabled="config.ros_mode === 'mock'" placeholder="ws://主机地址:9010" @change="changeAddress('ros_url')" />
           </el-form-item>
+          <el-form-item label="微调下发前检查">
+            <el-switch
+              :model-value="config.finetuning_preflight_enabled"
+              :disabled="applying"
+              active-text="开启"
+              inactive-text="关闭"
+              @update:model-value="changePreflightCheck"
+            />
+          </el-form-item>
+          <p class="settings-hint">开启时等待实时轴状态和有效位置。关闭后可发送当前轴，系统继续等待运行、到位和空闲反馈。缺少回传时约 1 分钟转为待核实。切换此设置后需重新确认机械臂。</p>
         </section>
         <section>
           <el-form-item label="图纸处理方式">
@@ -58,8 +68,10 @@ const draft = reactive({ ros_url: '', drawing_ros_url: '', emergency_ros_url: ''
 const loading = ref(true), applying = ref(false), notice = ref('');
 const emit = defineEmits<{ changed: [config: ConnectionSettings] }>();
 const accept = (value: ConnectionSettings) => {
-  config.value = value;
+  const accepted = { ...value, finetuning_preflight_enabled: value.finetuning_preflight_enabled !== false };
+  config.value = accepted;
   for (const key of Object.keys(draft) as (keyof typeof draft)[]) draft[key] = value[key];
+  return accepted;
 };
 const load = async () => {
   try { accept((await getConnectionSettings()).data); }
@@ -71,10 +83,10 @@ const apply = async (changes: Partial<ConnectionSettings>) => {
   applying.value = true;
   try {
     const value = (await changeConnectionSettings(config.value.revision, changes)).data;
-    accept(value);
+    const accepted = accept(value);
     notice.value = '设置已应用；新操作使用当前配置，未自动下发任何任务。';
-    window.dispatchEvent(new CustomEvent('ros-connection-changed', { detail: value }));
-    emit('changed', value);
+    window.dispatchEvent(new CustomEvent('ros-connection-changed', { detail: accepted }));
+    emit('changed', accepted);
   } catch (error: any) {
     notice.value = error.response?.data?.detail || '应用失败，继续使用原配置';
     ElMessage.error(notice.value);
@@ -91,6 +103,10 @@ const changeMode = (key: 'ros_mode' | 'drawing_mode' | 'emergency_mode', value: 
 };
 const changeAddress = (key: keyof typeof draft) => {
   if (config.value && draft[key].trim() !== config.value[key]) return apply({ [key]: draft[key].trim() });
+};
+const changePreflightCheck = (value: unknown) => {
+  if (!config.value || typeof value !== 'boolean' || config.value.finetuning_preflight_enabled === value) return;
+  return apply({ finetuning_preflight_enabled: value });
 };
 onMounted(load);
 </script>
