@@ -141,10 +141,18 @@ class ModuleSessionConfirmer:
                 "seg_ok": False,
                 "arm_ok": False,
                 "status_token": 0,
+                # 等待宣告期间的状态探测 Token：模块已绑定时不会再广播宣告，
+                # 用状态查询确认可避免每次都空等 wait_announce_s
+                "probe_token": 0,
             }
+            self.status_token_seq = (self.status_token_seq + 1) & 0xFFFF
+            self.current["probe_token"] = self.status_token_seq
+            probe_token = self.status_token_seq
             self.state = WAIT_ANNOUNCE
         rospy.loginfo("🔌 开始确认 SEG%d 臂%d（占用全局AXIS %d~%d），请给该臂上电，等待 UID 宣告（%.1fs）",
                       seg, arm, (arm - 1) * 3 + 1, (arm - 1) * 3 + 3, self.wait_announce_s)
+        # 同时探测：已绑定模块（绑定仅存 RAM，只有断电重启才重新宣告）直接走状态复核
+        self._send_status_query(probe_token)
 
     # ================= 宣告处理 =================
     def cb_announce(self, msg):
@@ -225,7 +233,25 @@ class ModuleSessionConfirmer:
     def cb_status(self, msg):
         """状态应答：核对 Token、SEG/ARM/AxisBase、电机存在/就绪掩码与模块状态位"""
         with self.lock:
-            if self.state != WAIT_STATUS or self.current is None:
+            if self.current is None:
+                return
+            cur = self.current
+            # 快速通道：等待宣告期间若状态应答表明该臂已绑定且就绪，直接判定握手成功
+            if self.state == WAIT_ANNOUNCE:
+                if int(msg.module_id) != cur["seg"] or int(msg.token) != cur["probe_token"]:
+                    return
+                if int(msg.seg) != cur["seg"] or int(msg.arm) != cur["arm"] \
+                        or int(msg.axis_base) != (cur["arm"] - 1) * 3 + 1:
+                    return
+                if int(msg.exist_mask) != MOTOR_MASK_OK or int(msg.ready_mask) != MOTOR_MASK_OK:
+                    return
+                if (int(msg.module_state) & 0x03) != 0x03:
+                    return
+                rospy.loginfo("⚡ SEG%d 臂%d 已绑定且电机就绪（状态应答 Token=0x%04X），跳过 UID 宣告等待",
+                              cur["seg"], cur["arm"], cur["probe_token"])
+                self._handshake_done_locked()
+                return
+            if self.state != WAIT_STATUS:
                 return
             cur = self.current
             if int(msg.module_id) != cur["seg"] or int(msg.token) != cur["status_token"]:
@@ -334,9 +360,10 @@ class ModuleSessionConfirmer:
         seg, arm, req_mid, uid56 = cur["seg"], cur["arm"], cur["req_module_id"], cur["uid56"]
         self.current = None
         self.state = IDLE
+        uid_desc = "UID56=%X" % uid56 if uid56 is not None else "状态复核确认（无 UID 宣告）"
         self._publish_result(self.pub_success, req_mid, self.RESULT_SUCCESS,
-                             "SEG%d 臂%d（AXIS %d~%d）握手成功 UID56=%X"
-                             % (seg, arm, (arm - 1) * 3 + 1, (arm - 1) * 3 + 3, uid56))
+                             "SEG%d 臂%d（AXIS %d~%d）握手成功 %s"
+                             % (seg, arm, (arm - 1) * 3 + 1, (arm - 1) * 3 + 3, uid_desc))
         # 通知 hardware_node：该业务模块的运动帧改用 SEG 寻址
         self._publish_seg_bind(req_mid, seg)
 

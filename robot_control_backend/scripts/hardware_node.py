@@ -62,6 +62,16 @@ class CANBusBridge:
     SUB_MODULE_STOP = 0x08
     SUB_AXIS_STOP = 0x0C
 
+    # 命令应答 Result 码（0x0480xx54 的 data[1]）→ 中文含义
+    ACK_RESULT_TEXT = {
+        0: "接受",
+        1: "轴忙（等当前电机停止）",
+        2: "未绑定/无基准",
+        3: "参数越界",
+        4: "超位故障锁存",
+        5: "急停锁存",
+    }
+
     # ===== 会话式模块确认（领号段，独立协议，不走 V2 位域分派）=====
     UID_FRAME_BASE = 0x15BC0000        # 领号段基址（掩码匹配 0x15BC00xx）
     UID_FRAME_MASK = 0x1FFFFF00
@@ -714,8 +724,10 @@ class CANBusBridge:
                                     {"ack_msg": ack_msg, "result": result, "detail": detail},
                                     "命令应答")
                 if result != 0:
-                    rospy.logwarn("📝 轴%d 命令应答 result=%d(0=接受1忙2基准3越界4故障5急停锁存)",
-                                  axis, result)
+                    rospy.logwarn("📝 轴%d 命令应答 result=%d %s（ack_msg=%d detail=%d）",
+                                  axis, result,
+                                  self.ACK_RESULT_TEXT.get(result, "未知结果码"),
+                                  ack_msg, detail)
             return
 
         # ---------------- GRP=3 事件通知 ----------------
@@ -725,11 +737,14 @@ class CANBusBridge:
                 pos_err = struct.unpack_from('>h', data, 4)[0] if len(data) >= 6 else 0
                 sb = data[6] if len(data) >= 7 else 0
                 fl = data[7] if len(data) >= 8 else 0
+                # 零点人工调零，下位机不回传基准（flags bit0 恒 0）：按“基准有效”上报，
+                # 否则上层会因基准无效永远判不到到位
+                fl_effective = fl | 0x01
                 self.pub_arrive.publish(ArriveNotification(
                     header=self._header(), module_id=module_id, device_id=device_id,
-                    angle=angle, pos_error=pos_err, status_bits=sb, flags=fl))
-                rospy.loginfo("🎯 轴%d 到位 angle=%d(0.01) pos_err=%d status=0x%02X flags=0x%02X",
-                              axis, angle, pos_err, sb, fl)
+                    angle=angle, pos_error=pos_err, status_bits=sb, flags=fl_effective))
+                rospy.loginfo("🎯 轴%d 到位 angle=%d(0.01) pos_err=%d status=0x%02X flags=0x%02X(原始0x%02X)",
+                              axis, angle, pos_err, sb, fl_effective, fl)
                 self._archive_event(module_id, device_id, self.EVT_ARRIVE,
                                     {"angle": angle, "pos_error": pos_err,
                                      "status_bits": sb, "flags": fl},
