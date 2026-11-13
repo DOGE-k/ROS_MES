@@ -15,6 +15,7 @@ from app.db import models
 from app.db.database import SessionLocal
 from app.ros.base import RosbridgeError
 from app.ros.rosbridge import build_fine_tuning_publish_payload, resolve_arm_from_unit_id, resolve_module_seg
+from app.ros.stop_holds import BLOCK_MESSAGE, axes_for, stop_holds
 
 ACTIVE = {"queued", "checking", "executing"}
 ORDER = ("rotation", "swing", "telescopic")
@@ -80,6 +81,34 @@ class BatchManager:
             db.commit()
         return self.safety(mode)
 
+    def hold_target(self, module_id, *, device_id=None, axes=None, mode="real",
+                    message="已执行局部停，停止后续下发；设备实际状态待确认"):
+        """局部停命中当前环境的活动批次：只停止后续下发并转待核实，不重发任何指令。
+
+        `axes` 为命中范围（臂停传该臂的 3 个轴号）；`device_id` 保留给单轴调用方。
+        """
+        wanted = None
+        if axes is not None:
+            wanted = {int(item) for item in axes}
+        elif device_id is not None:
+            wanted = {int(device_id)}
+        with self.sessions() as db:
+            for batch in db.query(models.FineTuningBatch).filter(models.FineTuningBatch.status.in_(ACTIVE)):
+                item = snapshot(batch)
+                if item["safety_mode"] != mode or int(batch.module_id) != int(module_id):
+                    continue
+                if wanted is not None:
+                    try:
+                        hit = axes_for(item["unit_id"], [step["parameter_name"] for step in item["steps"]])
+                    except (ValueError, RosbridgeError):
+                        hit = set()
+                    if not (wanted & hit):
+                        continue
+                batch.cancel_requested = True
+                batch.status = "uncertain"
+                batch.message = message
+            db.commit()
+
     def clear_safety(self, expected_generation, mode="real"):
         """人工确认清除当前版本的 MES 急停记录，保留批次核实流程。"""
         with self.sessions() as db:
@@ -98,10 +127,13 @@ class BatchManager:
             raise HTTPException(409, "急停记录已更新，请查看最新状态后重新确认")
         return state
 
-    def assert_available(self, db, module_id, unit_id, *, mode="real", safety_mode=None):
+    def assert_available(self, db, module_id, unit_id, *, mode="real", safety_mode=None, axes=None):
         safety = db.get(models.ControlSafety, 2 if (safety_mode or mode) == "mock" else 1)
         if safety and safety.state.startswith("stop"):
             raise HTTPException(409, "急停联锁尚未解除，禁止运动下发")
+        # 局部停只锁本模块/本轴；axes 未知时按整模块拦截，宁可多拦也不放过
+        if stop_holds.blocked(db, module_id, axes=axes, mode=mode) is not None:
+            raise HTTPException(409, BLOCK_MESSAGE)
         mode_filter = models.FineTuningBatch.target_key.like("mock:%") if mode == "mock" else ~models.FineTuningBatch.target_key.like("mock:%")
         if db.query(models.FineTuningBatch).filter(mode_filter,
             models.FineTuningBatch.module_id == module_id, models.FineTuningBatch.unit_id == unit_id,
@@ -155,7 +187,12 @@ class BatchManager:
                 if json.dumps(old_request, sort_keys=True) != canonical:
                     raise HTTPException(409, "请求编号已用于另一组调整，禁止复用")
                 return snapshot(old)
-            self.assert_available(db, request.module_id, request.unit_id, mode=mode, safety_mode=safety_mode)
+            try:
+                axes = axes_for(request.unit_id, [item.parameter_name for item in request.adjustments])
+            except (ValueError, RosbridgeError):
+                axes = None  # 轴号换算失败时按整模块拦截
+            self.assert_available(db, request.module_id, request.unit_id, mode=mode,
+                                  safety_mode=safety_mode, axes=axes)
             unit = db.query(models.Unit).filter_by(Module_ID=request.module_id, Unit_ID=request.unit_id, del_flag=False).first()
             if unit is None:
                 raise HTTPException(422, "机械臂未登记在该模块中")
@@ -356,13 +393,30 @@ class BatchManager:
                     elif kind == "arrive_notification" and ran_at is not None and at >= ran_at:
                         bits, flags, angle, error = (item.get(key) for key in ("status_bits", "flags", "angle", "pos_error"))
                         tolerance = 0.1 if step["parameter_name"] == "telescopic" else 0.2
+                        # 硬条件：收到到位事件、基准有效、无超位/故障、带角度与误差字段
                         arrived = (isinstance(bits, int) and isinstance(flags, int) and bool(bits & 4) and bool(flags & 1)
-                            and not bits & ((1 << 5) | (1 << 7)) and number(angle) and number(error)
-                            and abs(angle / 100.0 - expected) <= tolerance and abs(error / 100.0) <= tolerance)
+                            and not bits & ((1 << 5) | (1 << 7)) and number(angle) and number(error))
+                        if arrived:
+                            # 容差只做提示：现场确认过"误差过大也要能继续下发"，因此不参与判定、不锁批次
+                            deviation = round(angle / 100.0 - expected, 3)
+                            error_value = round(error / 100.0, 3)
+                            step["observed_angle"] = round(angle / 100.0, 3)
+                            step["deviation"] = deviation
+                            step["position_error"] = error_value
+                            if abs(deviation) > tolerance or abs(error_value) > tolerance:
+                                step["warning"] = (
+                                    f"到位角 {angle / 100.0:.2f} 与期望 {expected:.2f} 相差 {deviation:+.2f}"
+                                    f"（容差 {tolerance}），仅提示，不阻止后续轴"
+                                )
                 step["status"] = "completed"
-                self._save(batch_id, "executing", f"轴 {axis} 已观测到运行、目标到位及空闲", steps)
+                warning_note = f"；{step['warning']}" if step.get("warning") else ""
+                self._save(batch_id, "executing", f"轴 {axis} 已观测到运行、目标到位及空闲{warning_note}", steps)
             self._check(batch_id, generation)
-            self._save(batch_id, "completed", "本批次各轴已观测到运行、目标到位和空闲反馈", steps, unlock=True)
+            deviations = [step for step in steps if step.get("warning")]
+            message = "本批次各轴已观测到运行、目标到位和空闲反馈"
+            if deviations:
+                message += f"；{len(deviations)} 个轴到位误差超出容差，已记录提示但未阻止下发"
+            self._save(batch_id, "completed", message, steps, unlock=True)
         except (Exception, asyncio.CancelledError) as exc:
             for step in steps:
                 if step["status"] == "sent_unconfirmed":

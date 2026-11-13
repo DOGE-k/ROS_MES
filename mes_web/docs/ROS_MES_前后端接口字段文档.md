@@ -109,6 +109,7 @@
 - ROS 下行及回执细节引用[共享三轴契约](../../docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md)，本节只定义业务请求和 HTTP 结果。
 - 业务接口不使用 `station`、`seg` 或 ROS `arm` 字段。后端按 `unit_ids` 逐个下发；同一时间只确认一台未绑定机械臂。`ROS_MODULE_SEG_MAP` 缺少目标模块映射，或 `unit_id` 无法映射为 1~5 的 ROS `arm` 时，直接返回 422。
 - 确认结果来自模块握手回执，不能与普通微调的“仅发送”结果混用；响应中的 `data.seg` 是本次确认采用的组号，前端可用于核验已知硬件反馈的归属。
+- 握手成功后在同一响应内登记微调会话：`data.session_id` 与 `data.session`（字段见 2.8）。登记失败只返回 `session_id=null` 与 `session_error`，已完成的握手不因写库失败被判为失败。
 - x/y 缺失、`unit_ids` 为空、模块 SEG 映射缺失或映射出的 `arm` 不在 1~5 → 422
 
 ---
@@ -188,7 +189,7 @@
 
 **接口 7/8 字段**：
 - POST `/finetuning/`：`module_id`(✔)、`unit_id`(✔)、`device_id/Device_ID`?、`position/new_value`(至少其一)、`parameter_name`?（缺省自动生成 `module_<m>_unit_<u>_position`）、`old_value`?（缺省取最近一次 new_value）→ 返回 `FineTuningResponse[]`（GET 列表：`id, module_id, unit_id, module_address?, module_descript?, parameter_name, old_value?, new_value, creater_id, create_time?, notes?, del_flag`）
-- POST `/finetuning/config`：`module_id`(✔)、`unit_id`(✔)、`sensor_id`(可由 `device_id`/`devices[0]` 兜底)、`device_id?`、`is_debug=false`、`drawing_id=null`（传值时须为正整数）、`drawing_source="database"`、`connection_revision?`（非负版本号）、`x/y/z=0`（可传 null 表示尚无有效值）、`feedback_state={}`（逐字段状态及 `age_ms`）、`devices:[{device_id?, sensor_id?, unit_id?, parameter_name?, label?, initial=0或null, adjust=0, current=0或null}]` → 整份 JSON 存 `config_json`，随保存响应 `data.config` 返回。`is_debug=true` 时 `drawing_id` 必须为空；内置示例保存为 `is_debug=false/drawing_source="builtin_mock"/drawing_id=null`，且只允许当前图纸模式为 mock，不能与跳过图纸同时使用。版本不一致返回 409，来源或组合非法返回 422。旧客户端省略新字段仍兼容；新元数据不增加业务表列。
+- POST `/finetuning/config`：`module_id`(✔)、`unit_id`(✔)、`sensor_id`(可由 `device_id`/`devices[0]` 兜底)、`device_id?`、`is_debug=false`、`drawing_id=null`（传值时须为正整数）、`drawing_source="database"`、`connection_revision?`（非负版本号）、`x/y/z=0`（可传 null 表示尚无有效值）、`feedback_state={}`（逐字段状态及 `age_ms`）、`devices:[{device_id?, sensor_id?, unit_id?, parameter_name?, label?, initial=0或null, adjust=0, current=0或null}]`、`calibrated=false`、`notes=null`（≤1000 字，写入 `notes` 列）→ 整份 JSON 存 `config_json`，随保存响应 `data.config` 返回。`is_debug=true` 时 `drawing_id` 必须为空；内置示例保存为 `is_debug=false/drawing_source="builtin_mock"/drawing_id=null`，且只允许当前图纸模式为 mock，不能与跳过图纸同时使用。版本不一致返回 409，来源或组合非法返回 422。旧客户端省略新字段仍兼容；新元数据不增加业务表列。
 - GET `/finetuning/`：query `skip=0, limit=100, module_id?, unit_id?`
 
 ---
@@ -231,11 +232,25 @@
 | `steps[]` | `parameter_name/position/device_id/status`；开始执行后可含 `expected_position`，为基于实测基线计算的预期目标，不能当作实测位置 |
 | `steps[].status` | `pending` 未发送、`sent_unconfirmed` 发送阶段、`completed` 已观测完成、`uncertain` 已尝试发送但结果不明 |
 
-实现默认等待初始状态 10 秒、单轴完成 60 秒、状态与位置新鲜度 3 秒。每轴必须观测到发送后的运行状态、符合目标及误差条件的到位事件和运行后的空闲状态；默认比较容差为旋转/摆动 0.2°、伸缩 0.1mm，仅为 MES 软件判定阈值，需现场验证，不能代替设备精度验收。未观测到完整条件时不发下一轴，即使动作过短而漏掉 RUN 也按待核实处理。
+实现默认等待初始状态 10 秒、单轴完成 60 秒、状态与位置新鲜度 3 秒。每轴必须观测到发送后的运行状态、到位事件（`status_bits & 4` 且 `flags & 1`、无超位/故障）和运行后的空闲状态；未观测到这些硬条件时不发下一轴，动作过短漏掉 RUN 也按待核实处理。
+
+**2026-11-11 起，到位误差容差不再参与判定**：实测到位角与 `expected_position` 的差值、以及固件 `pos_error`，只作为提示写入 `steps[].deviation / observed_angle / position_error` 与 `steps[].warning`，批次仍按完成推进并解锁。默认提示阈值沿用旋转/摆动 0.2°、伸缩 0.1mm。这样"样本落后一帧、模拟遥测预测位置"导致的期望值偏差不会再把批次卡成 `uncertain` 并锁死下发；代价是**真的没到位也会被记为完成**，是否停机由操作者按提示判断。
 
 页面每秒查询批次进度。刷新后先恢复后端锁定批次；批次完成/人工关闭后可重新配置会话。提交不明时保留请求号只查询，已完成项清空草稿，人工核实关闭时也清空已尝试发送项；未发送项可供操作者重新审阅。批次详情和 ACK 提示按机械臂保存，切换后不沿用上一臂记录，切回可恢复本次会话内原臂记录；重新配置建立新会话时清除旧臂缓存。旧查询的迟到结果不得覆盖新批次或其他机械臂。后端模拟也保存批次并逐轴观测模拟 RUN/到位/空闲，明确标记模拟来源，不连接设备。
 
 批次响应新增 `simulated/execution_mode/safety_mode/connection`，连接快照含 `mode/safety_mode/url/revision`。内部复用现有 `request_json` 的 `_execution` 元数据保存，不增加批次表列。模拟目标锁使用 `mock:SEG:arm`，真实目标锁保留 `SEG:arm`，防止模拟解除影响真实记录。请求可带 `connection_revision`，与模块确认返回版本不一致时返回 409，要求重新确认目标。
+
+### 2.4.2 基准初始值与校准标记（2026-11-11）
+
+下位机与 ROS 侧都不向上回传轴初始值，MES 不再等待"第一帧反馈当基准"：三轴 `initial` 固定按 **0** 记录，界面显示"基准初始值 0.00"（不再出现 `—`），`initialLocked` 恒为 true。反馈只更新 `current`，不覆盖基准。保存配置时 `devices[].initial` 对三轴一律写 0（此前无反馈时写 null）。
+
+下发方式不变：仍是一个「确认下发三轴调整」按钮，三轴按旋转 → 摆动 → 伸缩顺序执行，不拆成逐轴按钮。
+
+「校准」是**保存时的标记开关，不产生任何运动指令**：点亮后再点「保存当前配置」，请求带 `calibrated=true` 与校零备注，后端把备注写进 `fine_tuning_config.notes`（该列此前一直为空），`calibrated` 落在 `config_json`。用途是让人翻数据库时能区分"人工归位后的校零值"和"微调值"。保存成功后开关自动熄灭，避免下一组微调值被误标；切换机械臂或重新配置时也会清零。普通保存 `calibrated=false`、`notes=null`。
+
+备注示例：`校零：机械臂 1，三轴基准初始值 0.00/0.00/0.00（人工下发归位后保存）2026-11-11 20:31`。只给 `calibrated=true` 而不给 `notes` 时，后端补一条默认校零文案，避免漏标。
+
+归位仍靠人工下发完成：后端拒绝 `position=0`，回零须下发 `0 − 当前实测值` 的增量（单次 |增量| ≤ 360，过大需分段）。本轮不新增表列、不新增查询接口，校准状态不跨页面刷新保留。
 
 ### 2.5 硬件控制与状态接口
 
@@ -247,6 +262,12 @@
 | 13 | `/control/emergency_stop/release` | POST | 是 | 适配层解除发布 | 发送急停解除 |
 | 13a | `/control/emergency_stop/status` | GET | 是 | MES 持久化联锁记录 | 刷新恢复操作提示，不代表设备实测 |
 | 13b | `/control/emergency_stop/manual_release` | POST | 是 | MES 现场确认记录 | 人工解除当前环境的 MES 急停状态 |
+| 13c | `/control/session` | GET | 是 | MES 会话记录表 | 查询最近一条微调会话及有效性 |
+| 13d | `/control/session/{id}/resume` | POST | 是 | MES 会话记录表 | 校验续接并滑动有效期，不发模块确认 |
+| 13e | `/control/session/{id}/close` | POST | 是 | MES 会话记录表 | 结束会话记录，不下发任何指令 |
+| 13f | `/control/stop` | POST | 是 | `/arm/cmd_vel` 直发系统指令 | 局部停：模块停或单轴停，不影响其他模块 |
+| 13g | `/control/stop/holds` | GET | 是 | MES 局部停记录 | 查询当前环境生效中的局部停，不代表设备实测 |
+| 13h | `/control/stop/clear`、`/control/stop/{id}/clear` | POST | 是 | MES 局部停记录 | 清除记录，只恢复下发能力，不发指令 |
 
 **接口 10：串口连接测试**
 - 响应：`{"code":200, "message":"串口测试完成", "data":{"success":true, "connected":true, "message":"串口连接正常", "bytes_received":128}}`
@@ -320,6 +341,55 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 不使用图纸不改变通信模式。通信来源由上方 ROS 连接配置决定，业务 API 和配置保存统一经过后端；历史 `VITE_DEBUG_NO_ROS` 编译开关不再截走请求。调试功能的变更及既有验证记录统一见[改动记录](ROS_MES_前后端改动记录.md)。
 
 保存配置的 `feedback_state` 记录每个实测字段的 `status` 和 `age_ms`。无有效样本的 `initial/current` 以及 IMU x/y/z 使用 null；历史或过期值可以保留，但必须连同其状态保存，不能当作刚收到的实测数据。新元数据进入已有 `config_json`，不改表结构；旧客户端省略字段仍兼容。
+
+### 2.8 微调会话保持与续接（2026-11-11）
+
+微调页每次模块握手都会在 `control_sessions` 表登记一条会话：`id / module_id / device_id / x / y / seg / unit_ids(JSON) / connection_revision / creator_id / created_at / last_active_at / invalidated_at / invalid_reason`。握手接口 `POST /module/` 成功响应新增 `session_id` 与 `session`；登记失败不影响已完成的物理握手，但响应带 `session_error`（无 `session_id`），前端提示“本次不可续接”。
+
+会话有效期不落库，由前端“个人中心 → 调试设置 → 微调会话保持”偏好按请求参数 `ttl_seconds` 传入（15/30/60 分钟或不传表示不限）；有效期从 `last_active_at` 起算，续接成功即滑动。开关存浏览器本地偏好，不进入 `connection.revision`，避免一开开关就作废现有会话。
+
+- `GET /control/session?ttl_seconds=1800`：返回 `data:{session, latest, reason, connection_revision}`。`session` 只在可续接时非空；`latest` 是最近一条记录（可能是已失效的）；`reason` 取 `closed / superseded / connection_changed / expired / missing`。过期或版本不符时同时把记录落成失效终态，避免反复判定。
+- `POST /control/session/{id}/resume`，请求体 `{"ttl_seconds":1800}`：返回 `data:{valid, reason, session, connection_revision}`。无效返回 HTTP 200 + `valid=false`（前端据 `reason` 提示并重新握手），不抛 4xx，避免全局错误提示掩盖真实原因。
+- `POST /control/session/{id}/close`：结束记录，返回会话快照；只清除 MES 续接依据，不解绑设备、不下发指令。
+
+失效口径（任一成立即不可续接）：记录已结束；同组号或机械臂有交集的新握手把旧记录标记为 `superseded`；连接配置变更后 `runtime_settings.update` 批量作废（`connection_changed`）；超过偏好时长（`expired`）。急停不使会话失效，但下发仍受既有联锁与批次检查约束。
+
+**边界（不要扩大解释）**：续接只读 MES 记录，**不发送模块确认握手**，也不自动重发运动或图纸。ROS 侧 `module_confirme_node` 的 `(seg, arm) → uid56` 会话表仅在节点内存中，节点重启或机械臂断电即失效，且当前没有对外的“查询当前绑定”话题（状态复核只在握手流程内部按 token 使用）。因此续接属于“按 MES 记录恢复”，**未经设备复核**，页面用“已续接会话 · 未重新握手”标注，不写成绑定已确认。
+
+前端行为：开启后进入微调页先尝试续接（同一模块才允许），成功后跳过初始化弹窗、用后端返回的 `seg` 恢复反馈归属，并在有在途批次时恢复轮询；本机 `sessionStorage` 保存各臂输入值、点云与回执快照，跨端或快照丢失时按绑定重建最小状态，真实模式需重新下发图纸。“模块管理”页顶部显示进行中的会话卡片（模块坐标、机械臂、剩余时间）与“继续微调/结束会话”，**不自动跳转**，以免阻断换模块；直接从卡片进入时带 `session` 参数，失败会提示具体失效原因。
+
+### 2.9 局部停（分级急停，2026-11-11）
+
+协议里早已定义三级急停，本轮把“模块停 / 单轴停”接到 MES（全局急停链路不变）：
+
+| 档位 | 下发内容 | hardware_node 的转换 | 停谁 |
+|---|---|---|---|
+| 全局急停 | `/control/softstop` `[0x01]` | CAN `0x00000000` 广播 | 全部（既有链路） |
+| 模块停 | `/arm/cmd_vel` `device_id=0, position=[0x08, module_id]` | `seg=_seg_for(module_id)` → CAN `0x08 \| (seg&0xF)<<18` | 该模块一组电机 |
+| 臂停 | `/arm/cmd_vel` 对该臂 3 个轴号各发一帧 `position=[0x0C, 1]` | 逐轴清增量队列并停 | 一台机械臂的 3 根轴（臂号 1~5） |
+| 单轴停 | `/arm/cmd_vel` `device_id=轴号, position=[0x0C, 1]` | 先清该轴增量队列，再发单轴停止帧 | 指定一根轴（1~15） |
+
+**为什么不复用 `/control/softstop`**：`softstop_node` 只订阅 `/control/softstop` 与 `/control/softstop_release`，且 `stop_callback` 固定发布 `[0x01]`，把局部停发给它会升级成整机全停。因此后端直发 `/arm/cmd_vel`，`hardware_node` 本来就在该话题上处理 `device_id=0` 的 `0x08` 子命令与轴级 `0x0C`，等价于少一跳转发，未修改 ROS 代码。话题可用 `ROS_TOPIC_ARM_CMD` 覆盖。
+
+`position=[0x0C, 1]` 的第二个元素必须为 1：`hardware_node` 用它区分“单轴停”与普通相对增量（12），否则会被当成位移量下发。
+
+**记录与锁定**：新增 `control_stop_holds`（`id/mode/scope/module_id/device_id/state/message/created_at/cleared_at/cleared_reason`）。`mode` 取当前执行环境（`ros_mode`），模拟与真实分开；记录与全局急停的 `control_safety` 相互独立，局部停不会锁死其他模块。下发拦截规则：
+
+- 模块停：该 `module_id` 的所有微调下发被拒（409）；
+- 臂停：`device_id` 记录臂号，命中该臂 3 个轴号（臂 2 → 4/5/6）的调整被拒，同模块其他臂仍可下发；轴号无法判定时按整模块拦截；
+- 单轴停：命中该轴（`(arm-1)*3 + 轴序`）的调整被拒，同模块其他轴仍可下发；轴号无法判定时按整模块拦截，宁可多拦；
+- 命中在途批次：停止后续下发并转 `uncertain`，沿用“已现场核实，关闭待确认批次”的关闭流程，不重发任何指令。臂停只命中该臂自己的批次（按 `unit_id` 换算出 3 个轴号后取交集）。
+
+**接口**：
+- `POST /control/stop`，请求 `{"scope":"module","module_id":17,"connection_revision":3}`、`{"scope":"arm","module_id":17,"device_id":2,"connection_revision":3}`（`device_id` 传臂号 1~5）或 `{"scope":"axis","module_id":17,"device_id":5,"connection_revision":3}`；返回 `data:{...记录, simulated, connection_revision}`。先落记录再发送：发送失败（502 或 `state=unknown`）时锁保留，避免操作员误以为已停住继续下发。scope 非法、臂号不在 1~5、轴号不在 1~15、模块缺少 `ROS_MODULE_SEG_MAP` 映射 → 422；连接版本不符 → 409。
+- `GET /control/stop/holds` → `data:{mode, holds[], connection_revision}`，侧栏入口每 8 秒刷新一次（微调页进入时也读一次）；返回的 `connection_revision` 随下一次停指令一起提交。
+- `POST /control/stop/clear?module_id=17` 或 `POST /control/stop/{id}/clear`：清除 MES 记录。
+
+**解除与恢复（重要边界）**：协议只有全局 `[0x04]` 解除，没有“只解除某个模块/轴”的指令。因此清除局部停记录**只恢复 MES 的下发能力，不发送解除或运动指令**；设备侧是否锁存、如何恢复取决于固件（待现场确认）。恢复运动需操作员确认现场后清除记录并重新下发，界面明确写出这一点，不自动重发。
+
+前端位置（2026-11-11 调整后）：**侧栏底部急停区**新增「停模块 / 停轴」入口，与长按两秒的全局急停上下并排，任何页面都能用；点开弹窗选模块 → 整模块 / 整个机械臂（选臂）→ 二次确认后调 `POST /control/stop`。侧栏弹窗只提供模块与臂两级（用户口径：现场要停就停一整台臂，不再提供轴级选择）；单轴停只在微调页姿态卡片内保留。弹窗打开时默认预选当前微调会话的模块（读 `GET /control/session`，无会话则手动选）；同时列出生效中的局部停记录并可逐条清除。有生效记录时侧栏按钮显示数量角标。微调页保留姿态卡片内的「单轴停 · 停旋转/停摆动/停伸缩」和局部停红色横幅 + 「清除局部停记录」，工具栏原「停本模块」已移除，模块停统一走侧栏。受限期间「确认下发三轴调整」保持禁用。侧栏长按两秒仍是全局急停，两者不互相替代。
+
+弹窗未使用自定义 `z-index`：之前给 `el-dialog` 设 `100002` 会把 Element Plus 下拉面板（默认 2000 段）盖在弹窗下面，表现为“模块/机械臂选不了”；改回由组件库分配层级后正常。
 
 ## 3. WebSocket 接口
 
@@ -515,7 +585,7 @@ SQLite（`ros_database.db`，项目根），当前模型 20 张表，模型在 `
 | 级别 | 接口 |
 |---|---|
 | 免认证 | `POST /login`、`POST /register`、`GET /dashboard/stats`、`/finetuning/**`、`POST /module/`、`POST /control/finetuning`、WS `/control/feedback/ws`、`/coordination/**`、`/ros/**`、`/model/**`、`/device/**`、`/unit/**`、`/sensors/**`、`GET /api/uploads/**` |
-| 登录即可 | `/user/me`、`GET /user/`、`POST /user/password`、`POST /user/avatar`、`PUT /user/profile/me`、`/drawing/**`、`/work/**`、`/workflow/**`、`/task/**`、`/control/finetuning/batches/**`（含集合创建）、`GET/PATCH /control/debug-settings`、`GET /control/serial_test`、`GET /control/hardware/realtime`、`POST /control/emergency_stop`、`POST /control/emergency_stop/release`、`GET /control/emergency_stop/status` |
+| 登录即可 | `/user/me`、`GET /user/`、`POST /user/password`、`POST /user/avatar`、`PUT /user/profile/me`、`/drawing/**`、`/work/**`、`/workflow/**`、`/task/**`、`/control/finetuning/batches/**`（含集合创建）、`GET/PATCH /control/debug-settings`、`GET /control/serial_test`、`GET /control/hardware/realtime`、`POST /control/emergency_stop`、`POST /control/emergency_stop/release`、`GET /control/emergency_stop/status`、`GET /control/session`、`POST /control/session/*/resume`、`POST /control/session/*/close`、`POST /control/stop`、`GET /control/stop/holds`、`POST /control/stop/clear` |
 | 管理员（`Type_ID==1`） | `POST /user/`、`PUT /user/{id}`、`DELETE /user/{id}`、`lock`、`unlock`、`role`、`POST /user/import`、`GET /user/export` |
 
 认证机制：OAuth2 Bearer Token（`tokenUrl=/api/login`）+ JWT（HS256，payload `{sub, exp}`），bcrypt 密码哈希；WS 用 query `token` 校验。

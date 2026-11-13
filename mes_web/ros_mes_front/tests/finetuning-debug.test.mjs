@@ -31,10 +31,12 @@ const { descriptor } = parse(read('../src/components/Main/ModulePage/FineTuningP
 const bindings = `Object.assign(module.exports, {
   isReady, busy, loading, initConfig, draftInitConfig, initDialogVisible,
   armList, armProfiles, armIdList, selectedArmRowId, imuFeedback, pointCloudViews,
-  confirmInitConfig, handleArmSwitch, handleSaveConfig, confirmAdjustments,
+  confirmInitConfig, handleArmSwitch, handleSaveConfig, confirmAdjustments, calibrateMode,
   batchState, pollBatch, interruptBatch, acknowledgeBatch, openConfiguration, connectionChanged, resetControlState,
   applyFeedback, openDrawingDialog, togglePointCloudViews,
   confirmedSeg, feedbackMarks, feedbackClock, feedbackConnected, fieldStatus, displayFeedback, ackEvents,
+  endSession, activeSession, resumedFromSession, tryResumeSession, persistSnapshot, drawingList, confirmedUnitIds,
+  stopAxis, clearLocalStops, hasLocalStop, moduleHolds, localStopText, stopHolds, loadStopHolds, axisStopOptions,
 });
 Object.defineProperty(module.exports, 'isDebugMode', { get: () => isDebugMode.value });`;
 
@@ -42,6 +44,20 @@ function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
+}
+
+// 内存版 Storage：lib.dom 的实现不参与测试，行为需与浏览器一致（含 key/index/length）
+function memoryStorage(seed = {}) {
+  const map = new Map(Object.entries(seed).map(([key, value]) => [key, String(value)]));
+  return {
+    getItem: key => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: key => { map.delete(key); },
+    key: index => Array.from(map.keys())[index] ?? null,
+    clear: () => map.clear(),
+    get length() { return map.size; },
+    dump: () => Object.fromEntries(map),
+  };
 }
 
 function batch(overrides = {}) {
@@ -57,9 +73,9 @@ function setup(t, options = {}) {
   pinia.setActivePinia(container);
   const settings = debugModule.useDebugSettingsStore(container);
   if (options.debug !== undefined) settings.skipDrawingBinding = options.debug;
-  const calls = { drawings: 0, confirms: [], coordinates: [], saves: [], adjusts: [], events: [], sockets: [], polls: 0, interrupts: 0, acknowledgements: 0 };
+  const calls = { drawings: 0, confirms: [], coordinates: [], saves: [], adjusts: [], events: [], sockets: [], polls: 0, interrupts: 0, acknowledgements: 0, sessions: 0, resumes: 0, closes: 0, stops: [], holdReads: 0, holdClears: [] };
   let latestBatch;
-  const warnings = [], errors = [], navigations = [], mounted = [], unmounted = [];
+  const warnings = [], errors = [], messages = [], navigations = [], mounted = [], unmounted = [];
   let now = 1000;
   const timers = new Map();
   const units = [{ id: 1, Unit_ID: 32 }, { id: 2, Unit_ID: 64 }];
@@ -108,12 +124,29 @@ function setup(t, options = {}) {
     close() { this.onclose?.(); }
     receive(data) { this.onmessage({ data: JSON.stringify(data) }); }
   }
+  // localStorage 存会话保持偏好，sessionStorage 存各臂界面快照
+  const storage = () => {
+    const map = new Map();
+    return {
+      getItem: key => (map.has(key) ? map.get(key) : null),
+      setItem: (key, value) => { map.set(key, String(value)); },
+      removeItem: key => { map.delete(key); },
+      key: index => Array.from(map.keys())[index] ?? null,
+      clear: () => map.clear(),
+      get length() { return map.size; },
+    };
+  };
+  const localStore = options.localStorage || storage();
+  const snapshotStore = options.sessionStorage || storage();
+  // 会话保持偏好从 localStorage 读取，因此 store 必须在本例的 Storage 上下文中求值
+  const sessionModule = evaluate(read('../src/stores/fineTuningSession.ts'), { vue, pinia },
+    { localStorage: localStore, sessionStorage: snapshotStore });
   const scope = vue.effectScope();
   t.after(() => { unmounted.forEach(callback => callback()); scope.stop(); });
   const page = scope.run(() => evaluate(descriptor.scriptSetup.content, {
     vue: { ...vue, onMounted(callback) { mounted.push(callback); }, onBeforeUnmount(callback) { unmounted.push(callback); } },
-    'vue-router': { useRoute: () => ({ query: { module_id: 17, device_id: 17, x: 1, y: 1 } }), useRouter: () => ({ push: target => navigations.push(target) }) },
-    'element-plus': { ElMessageBox: { confirm: async () => { if (options.cancelAcknowledge) throw new Error('cancel'); } }, ElMessage: { success() {}, warning: text => warnings.push(text), error: text => errors.push(text) } },
+    'vue-router': { useRoute: () => ({ query: options.query || { module_id: 17, device_id: 17, x: 1, y: 1 } }), useRouter: () => ({ push: target => navigations.push(target) }) },
+    'element-plus': { ElMessageBox: { confirm: async () => { if (options.cancelAcknowledge) throw new Error('cancel'); } }, ElMessage: { success: text => messages.push(['success', text]), info: text => messages.push(['info', text]), warning: text => warnings.push(text), error: text => errors.push(text) } },
     '@element-plus/icons-vue': { ArrowLeft: {} },
     '@/api/rosApi': { ...api, async getFineTuningDrawingOptions() {
       const result = await api.getDrawingListApi();
@@ -121,6 +154,37 @@ function setup(t, options = {}) {
     } },
     '@/api/connectionSettings': { async getConnectionSettings() { return { data: { revision: 0, drawing_mode: settings.skipDrawingBinding ? 'skip' : options.drawingMode || 'real' } }; } },
     '@/api/noRosDebug': { noRosDebug: Boolean(options.noRosDebug) },
+    '@/api/session': {
+      SESSION_REASON_LABELS: { closed: '已结束', superseded: '已被新的握手取代', connection_changed: '连接设置已变更', expired: '已超过保持时长', missing: '没有可续接的记录' },
+      async getControlSession() {
+        calls.sessions++;
+        return { data: options.sessionState ? options.sessionState() : { session: null, latest: null, reason: null } };
+      },
+      async resumeControlSession(id) {
+        calls.resumes++;
+        return { data: options.resume ? options.resume(id) : { valid: false, reason: 'missing', session: null } };
+      },
+      async closeControlSession(id) { calls.closes++; return { data: { id } }; },
+    },
+    '@/api/localStop': {
+      async requestLocalStop(payload) {
+        calls.stops.push(payload);
+        if (options.stop) return options.stop(payload);
+        return { code: 200, message: '局部停指令已发送；设备是否停止待确认', data: {
+          id: 1, mode: 'real', scope: payload.scope, module_id: payload.module_id,
+          device_id: payload.device_id ?? null, state: 'sent', message: null,
+          created_at: null, cleared_at: null, cleared_reason: null, active: true, simulated: false } };
+      },
+      async getLocalStopHolds() {
+        calls.holdReads++;
+        return { data: { mode: 'real', holds: options.holds ? options.holds() : [] } };
+      },
+      async clearLocalStopHolds(moduleId) {
+        calls.holdClears.push(moduleId);
+        return { data: { module_id: moduleId, cleared: 1 } };
+      },
+    },
+    '@/stores/fineTuningSession': sessionModule,
     '@/api/deviceEncoding': encoding,
     '@/api/feedbackState': feedbackState,
     '@/stores/debugSettings': debugModule,
@@ -129,9 +193,12 @@ function setup(t, options = {}) {
     performance: { now: () => now },
     setInterval(callback) { const id = timers.size + 1; timers.set(id, callback); return id; },
     clearInterval(id) { timers.delete(id); },
+    setTimeout() { return 0; }, clearTimeout() {},
+    localStorage: localStore, sessionStorage: snapshotStore,
     WebSocket: FeedbackSocket, console: { warn() {}, error() {}, log() {} },
   }, bindings));
-  return { page, calls, settings, warnings, errors, navigations, timers,
+  return { page, calls, settings, warnings, errors, messages, navigations, timers, storages: { local: localStore, session: snapshotStore },
+    sessionSettings: () => sessionModule.useFineTuningSessionStore(container),
     advance(milliseconds) { now += milliseconds; timers.forEach(callback => callback()); },
     elapseWithoutTimers(milliseconds) { now += milliseconds; },
     mount: () => mounted[0]() };
@@ -208,6 +275,42 @@ test('lost submission response retains request identity and queries instead of r
   assert.equal(h.page.batchState.value.request_id, submitted.request_id);
   assert.equal(h.calls.adjusts.length, 1);
   assert.equal(h.calls.polls, 1);
+});
+
+test('manual refresh confirms the returned status instead of silently re-rendering', async t => {
+  const h = setup(t, { debug: true, poll: async () => {
+    const payload = h.calls.adjusts[0];
+    return batch({ id: 'test-batch', request_id: payload.request_id, status: 'completed', target_locked: false,
+      steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed' })) });
+  } });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+  h.messages.length = 0;
+
+  await h.page.pollBatch(false);
+
+  assert.equal(h.calls.polls, 1);
+  assert.ok(h.messages.some(([level, text]) => level === 'success' && String(text).includes('本批次各轴已完成')));
+});
+
+test('out-of-tolerance arrival warns the operator but keeps dispatch available', async t => {
+  assert.match(descriptor.template.content, /step\.warning/);
+  const warning = '到位角 3.60 与期望 3.15 相差 +0.45（容差 0.2），仅提示，不阻止后续轴';
+  const h = setup(t, { debug: true, adjust: async payload => ({ code: 200, data: {
+    id: 'test-batch', request_id: payload.request_id, module_id: 17, unit_id: 32, seg: 0,
+    status: 'completed', target_locked: false,
+    message: '本批次各轴已观测到运行、目标到位和空闲反馈；1 个轴到位误差超出容差，已记录提示但未阻止下发',
+    steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed', deviation: 0.45, warning })),
+  } }) });
+  await enter(h);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+
+  // 批次不再因此锁住，可以继续下发
+  assert.equal(h.page.busy.value, false);
+  assert.equal(h.page.batchState.value.status, 'completed');
+  assert.ok(h.warnings.some(text => String(text).includes('到位误差超出容差')));
 });
 
 test('a restored completed batch can load drawings and begin a new configuration session', async t => {
@@ -400,7 +503,8 @@ test('command echoes cannot overwrite actual feedback and motion requests preven
     seg: 0, status: 'completed', target_locked: false, steps: [{ device_id: 1, parameter_name: 'rotation', position: 2, status: 'completed' }] } });
   await first;
   assert.equal(h.page.armList.device[0].current, 12);
-  assert.equal(h.page.armList.device[0].initial, 12);
+  // 基准初始值固定为 0：实测值只更新 current，不能覆盖基准
+  assert.equal(h.page.armList.device[0].initial, 0);
   h.calls.sockets[0].receive({ module_id: 0, data_type: 'rotation_axis_encoder', device_id: 1, position: 14 });
   assert.equal(h.page.armList.device[0].current, 14);
 });
@@ -521,7 +625,8 @@ test('unknown measurements save as null and historical measurements retain their
   await enter(h, [1, 2]);
   await h.page.handleSaveConfig();
   const first = h.calls.saves[0];
-  assert.equal(first.devices[0].initial, null);
+  // 下位机不回传初始值，基准固定 0，即使没有反馈也写 0 而不是 null
+  assert.equal(first.devices[0].initial, 0);
   assert.equal(first.devices[0].current, null);
   assert.equal(first.devices[3].current, null);
   assert.equal(first.x, null);
@@ -534,6 +639,32 @@ test('unknown measurements save as null and historical measurements retain their
   assert.equal(second.devices[0].initial, 0);
   assert.equal(second.devices[0].current, 0);
   assert.equal(second.feedback_state.rotation.status, 'history');
+});
+
+test('calibration mode marks the saved snapshot as a zeroing value in the database remark', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  // 基准初始值固定 0：反馈只更新实测值
+  h.page.applyFeedback({ module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: 12 });
+  assert.equal(h.page.armList.device[0].current, 12);
+  assert.equal(h.page.armList.device[0].initial, 0);
+
+  await h.page.handleSaveConfig();
+  assert.equal(h.calls.saves[0].calibrated, false);
+  assert.equal(h.calls.saves[0].notes, null);
+  assert.equal(h.calls.saves[0].devices[0].initial, 0);
+
+  h.page.calibrateMode.value = true;
+  await h.page.handleSaveConfig();
+  assert.equal(h.calls.saves[1].calibrated, true);
+  assert.match(h.calls.saves[1].notes, /^校零：机械臂 1/);
+  assert.match(h.calls.saves[1].notes, /人工下发归位后保存/);
+  // 保存成功后自动熄灭，避免下一组微调值被误标
+  assert.equal(h.page.calibrateMode.value, false);
+
+  await h.page.handleSaveConfig();
+  assert.equal(h.calls.saves[2].calibrated, false);
+  assert.equal(h.calls.saves[2].notes, null);
 });
 
 test('saving refreshes the age/status clock even if the browser has throttled timers', async t => {
@@ -834,4 +965,226 @@ test('0.01-degree angular increments reach batch submission without truncation',
     { parameter_name: 'rotation', position: 0.01 },
     { parameter_name: 'swing', position: -0.01 },
   ]);
+});
+
+// ========== 会话保持与续接 ==========
+const SESSION_SETTINGS = { 'mes.finetuning.session.settings': JSON.stringify({ enabled: true, ttlMinutes: 30 }) };
+const heldSession = overrides => ({
+  id: 'session-1', module_id: 17, device_id: 17, x: 1, y: 1, seg: 3,
+  unit_ids: [32, 64], connection_revision: 0, ...overrides,
+});
+const snapshotOf = (rowId = 1) => ({
+  selectedArmRowId: rowId,
+  armProfiles: {
+    [rowId]: {
+      unitRowId: rowId, unitId: 32, drawingId: 0, drawingSource: 'database', drawingSimulated: false, configured: true,
+      device: [
+        { deviceId: 1, initial: 10, adjust: 1.5, current: 12, initialLocked: true, label: '底座旋转调整值' },
+        { deviceId: 2, initial: 2, adjust: 0, current: 2, initialLocked: true, label: '摆动调整值' },
+        { deviceId: 3, initial: 3, adjust: 0, current: 3, initialLocked: true, label: '伸缩杆调整值' },
+        { deviceId: 21, initial: 0, current: 0.4 },
+      ],
+      imu: { swingAngle: 1, rotationAngle: 2, x: 0, y: 0, z: 0 },
+      pressureSensorId: 49, feedbackMarks: {}, pointCloudViews: [], showPointCloudViews: false, batch: null, ackEvents: [],
+    },
+  },
+});
+
+test('valid held session resumes without sending module confirm', async t => {
+  const session = heldSession();
+  const h = setup(t, {
+    debug: true,
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+  });
+
+  await h.mount();
+
+  assert.equal(h.calls.confirms.length, 0);
+  assert.equal(h.calls.resumes, 1);
+  assert.equal(h.page.initDialogVisible.value, false);
+  assert.equal(h.page.confirmedSeg.value, 3);
+  assert.deepEqual(Array.from(h.page.confirmedUnitIds.value), [32, 64]);
+  assert.equal(h.page.resumedFromSession.value, true);
+  assert.equal(h.page.activeSession.value.id, 'session-1');
+  assert.equal(h.page.armIdList.value.length, 2);
+});
+
+test('resume restores per-arm snapshot values and stays locked out of a new handshake', async t => {
+  const session = heldSession();
+  const snapshotStore = memoryStorage({ 'mes.finetuning.session.snapshot.session-1': JSON.stringify(snapshotOf(1)) });
+  const h = setup(t, {
+    debug: true,
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: snapshotStore,
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+  });
+
+  await h.mount();
+
+  assert.equal(h.calls.confirms.length, 0);
+  assert.equal(h.page.selectedArmRowId.value, 1);
+  assert.equal(h.page.armList.device[0].adjust, 1.5);
+  assert.equal(h.page.armList.device[0].initial, 10);
+  assert.equal(h.page.armProfiles['1'].configured, true);
+});
+
+test('resume is refused when the requested module differs from the held session', async t => {
+  const session = heldSession({ module_id: 18 });
+  const h = setup(t, {
+    debug: true,
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+  });
+
+  await h.mount();
+
+  // 记录仍会滑动有效期，但绝不套用到另一个模块上
+  assert.equal(h.page.initDialogVisible.value, true);
+  assert.equal(h.page.resumedFromSession.value, false);
+  assert.equal(h.page.activeSession.value, null);
+});
+
+test('explicit session link with expired record warns and falls back to handshake', async t => {
+  const h = setup(t, {
+    debug: true,
+    query: { module_id: 17, device_id: 17, x: 1, y: 1, session: 'session-1' },
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionState: () => ({ session: null, latest: heldSession(), reason: 'expired' }),
+    resume: () => ({ valid: false, reason: 'expired', session: null }),
+  });
+
+  await h.mount();
+
+  assert.equal(h.calls.confirms.length, 0);
+  assert.equal(h.page.initDialogVisible.value, true);
+  assert.ok(h.warnings.some(text => String(text).includes('已超过保持时长')));
+});
+
+test('session API is untouched when session hold is off', async t => {
+  const h = setup(t, { debug: true });
+
+  await h.mount();
+
+  assert.equal(h.calls.sessions, 0);
+  assert.equal(h.calls.resumes, 0);
+  assert.equal(h.page.initDialogVisible.value, true);
+});
+
+test('handshake registers session and persists a local snapshot for the next visit', async t => {
+  const session = heldSession({ seg: 0 });
+  const snapshotStore = memoryStorage();
+  const h = setup(t, {
+    debug: true,
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: snapshotStore,
+    confirm: payload => ({
+      code: 200,
+      data: {
+        seg: 0,
+        connection_revision: 0,
+        session: { ...session, unit_ids: payload.unit_ids },
+        confirmations: payload.unit_ids.map(unit_id => ({ unit_id, confirmed: true })),
+      },
+    }),
+  });
+
+  await enter(h);
+  assert.equal(h.page.activeSession.value.id, 'session-1');
+
+  h.page.persistSnapshot();
+  const saved = JSON.parse(snapshotStore.getItem('mes.finetuning.session.snapshot.session-1'));
+  assert.equal(saved.confirmedSeg, 0);
+  assert.ok(saved.armProfiles[String(h.page.initConfig.unitRowId)].configured);
+});
+
+test('ending the session closes the record and drops the local snapshot', async t => {
+  const session = heldSession();
+  const snapshotStore = memoryStorage({ 'mes.finetuning.session.snapshot.session-1': JSON.stringify(snapshotOf(1)) });
+  const h = setup(t, {
+    debug: true,
+    localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: snapshotStore,
+    sessionState: () => ({ session, latest: session, reason: null }),
+    resume: () => ({ valid: true, reason: null, session }),
+  });
+
+  await h.mount();
+  await h.page.endSession();
+
+  assert.equal(h.calls.closes, 1);
+  assert.equal(h.page.activeSession.value, null);
+  assert.equal(h.page.resumedFromSession.value, false);
+  assert.equal(snapshotStore.getItem('mes.finetuning.session.snapshot.session-1'), null);
+});
+
+// ========== 局部停（分级急停） ==========
+test('local stop state stays visible on the fine-tuning page', () => {
+  // 模块停已统一到侧栏底部急停区，本页只保留与轴上下文相关的单轴停和状态提示
+  assert.match(descriptor.template.content, /@click="stopAxis\(item\.index\)"/);
+  assert.match(descriptor.template.content, /局部停生效中/);
+  assert.equal(/停本模块/.test(descriptor.template.content), false);
+});
+
+test('axis stop posts the axis number derived from unit and parameter', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+
+  await h.page.stopAxis(1);
+
+  assert.equal(h.calls.stops.length, 1);
+  assert.equal(h.calls.stops[0].scope, 'axis');
+  assert.equal(h.calls.stops[0].device_id, 2);
+  assert.equal(h.calls.stops[0].module_id, 17);
+});
+
+test('held module blocks submissions until the record is cleared', async t => {
+  const held = { id: 7, mode: 'real', scope: 'module', module_id: 17, device_id: null, state: 'sent',
+    message: null, created_at: null, cleared_at: null, cleared_reason: null, active: true };
+  const h = setup(t, { debug: true, holds: () => [held] });
+  await enter(h);
+  await h.page.loadStopHolds();
+
+  assert.equal(h.page.hasLocalStop.value, true);
+  h.page.armList.device[0].adjust = 2;
+  await h.page.confirmAdjustments();
+
+  assert.equal(h.calls.adjusts.length, 0);
+  assert.ok(h.warnings.some(text => String(text).includes('局部停')));
+});
+
+test('clearing local stop records unlocks the module', async t => {
+  const held = { id: 8, mode: 'real', scope: 'axis', module_id: 17, device_id: 2, state: 'sent',
+    message: null, created_at: null, cleared_at: null, cleared_reason: null, active: true };
+  let holds = [held];
+  const h = setup(t, { debug: true, holds: () => holds });
+  await enter(h);
+  await h.page.loadStopHolds();
+  assert.equal(h.page.hasLocalStop.value, true);
+
+  holds = [];
+  await h.page.clearLocalStops();
+  await h.page.loadStopHolds();
+
+  assert.deepEqual(h.calls.holdClears, [17]);
+  assert.equal(h.page.hasLocalStop.value, false);
+  h.page.armList.device[0].adjust = 1;
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 1);
+});
+
+test('holds of another module never block the current one', async t => {
+  const other = { id: 9, mode: 'real', scope: 'module', module_id: 18, device_id: null, state: 'sent',
+    message: null, created_at: null, cleared_at: null, cleared_reason: null, active: true };
+  const h = setup(t, { debug: true, holds: () => [other] });
+  await enter(h);
+  await h.page.loadStopHolds();
+
+  assert.equal(h.page.hasLocalStop.value, false);
+  h.page.armList.device[0].adjust = 1;
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 1);
 });

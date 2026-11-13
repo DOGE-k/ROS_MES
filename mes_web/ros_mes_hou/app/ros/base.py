@@ -58,6 +58,11 @@ class RosDispatcher(ABC):
     async def release_emergency_stop(self) -> bool:
         """急停解除（/control/softstop_release，softstop_node 转发 /arm/cmd_vel [0x04]）。"""
 
+    async def trigger_local_stop(self, *, scope: str, module_id: int,
+                                 device_id: int | None = None) -> bool:
+        """局部停（模块停 / 单轴停）；不支持的适配器默认拒绝，不静默降级为全局急停。"""
+        raise RosDispatchError("当前 ROS 适配层不支持局部停")
+
     # ---- 原生节点通道（ROS1 专属，默认不可用） ----
     def start_native_node(self) -> None:
         """启动后台通道（rospy 线程 / rosbridge 状态订阅）；无后台通道的适配器默认不启动。"""

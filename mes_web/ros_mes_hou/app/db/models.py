@@ -77,12 +77,58 @@ class ControlSafety(Base):
     generation = Column(Integer, nullable=False, default=0)
 
 
+class ControlStopHold(Base):
+    """局部停记录：只锁住本次的模块/轴，不清除全局联锁。
+
+    与 control_safety（全局急停）分开存放，避免局部停把所有模块一起锁死。
+    清除表示操作员确认过现场、恢复 MES 下发能力；不代表设备侧锁存已解除。
+    """
+
+    __tablename__ = "control_stop_holds"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    mode = Column(String(10), nullable=False, default="real")
+    scope = Column(String(10), nullable=False)
+    module_id = Column(Integer, nullable=False, index=True)
+    device_id = Column(Integer, nullable=True)
+    state = Column(String(30), nullable=False, default="requested")
+    message = Column(Text, nullable=True)
+    creator_id = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    cleared_at = Column(DateTime(timezone=True), nullable=True)
+    cleared_reason = Column(String(40), nullable=True)
+
+
 class RosDebugSettings(Base):
     __tablename__ = "ros_debug_settings"
 
     id = Column(Integer, primary_key=True)
     revision = Column(Integer, nullable=False, default=0)
     config_json = Column(Text, nullable=False)
+
+
+class ControlSession(Base):
+    """一次成功的模块握手登记为可续接会话。
+
+    只记录 MES 侧的会话事实（模块、组号、机械臂、连接版本），不代表设备仍保持绑定；
+    续接读取本表，不发送任何模块确认指令，也不自动重发运动。
+    """
+
+    __tablename__ = "control_sessions"
+
+    id = Column(String(36), primary_key=True)
+    module_id = Column(Integer, nullable=False, index=True)
+    device_id = Column(Integer, nullable=True)
+    x = Column(Integer, nullable=True)
+    y = Column(Integer, nullable=True)
+    seg = Column(Integer, nullable=False)
+    unit_ids_json = Column(Text, nullable=False)
+    connection_revision = Column(Integer, nullable=True)
+    creator_id = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_active_at = Column(DateTime(timezone=True), server_default=func.now())
+    invalidated_at = Column(DateTime(timezone=True), nullable=True)
+    invalid_reason = Column(String(60), nullable=True)
 
 
 class FineTuningConfig(Base):

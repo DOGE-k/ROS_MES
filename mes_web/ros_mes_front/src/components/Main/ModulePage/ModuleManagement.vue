@@ -7,6 +7,25 @@
       </div>
     </div>
     <div class="outer-table">
+      <!-- 会话保持开启时提示可续接；不自动跳转，避免阻断换模块 -->
+      <el-card v-if="heldSession" shadow="never" class="session-banner">
+        <div class="session-banner-body">
+          <div class="session-banner-text">
+            <span class="step-kicker">SESSION HELD</span>
+            <strong>
+              进行中的微调会话 · 模块 {{ heldSession.module_id
+              }}<span v-if="heldSession.x && heldSession.y"> ({{ heldSession.x }},{{ heldSession.y }})</span>
+            </strong>
+            <span class="session-banner-meta">
+              机械臂 {{ heldUnitText }} · {{ heldRemainingText }} · 续接不再握手，按 MES 记录恢复
+            </span>
+          </div>
+          <div class="session-banner-actions">
+            <el-button type="primary" :loading="sessionBusy" @click="handleResumeSession">继续微调</el-button>
+            <el-button :disabled="sessionBusy" @click="handleCloseSession">结束会话</el-button>
+          </div>
+        </div>
+      </el-card>
       <div class="module-command-card">
         <div class="command-card-topline">
           <span class="step-kicker">STEP 01 · MODULE</span>
@@ -80,14 +99,89 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { useRouter } from "vue-router";
 import { getDeviceListApi } from "@/api/rosApi";
+import { closeControlSession, getControlSession, type ControlSession } from "@/api/session";
 import { useDebugSettingsStore } from '@/stores/debugSettings';
+import { useFineTuningSessionStore } from '@/stores/fineTuningSession';
 
 
 const router = useRouter();
 const debugSettings = useDebugSettingsStore();
+const sessionStore = useFineTuningSessionStore();
+
+// 进行中的微调会话：只做提示与入口，不自动跳转。
+const heldSession = ref<ControlSession | null>(null);
+const sessionBusy = ref(false);
+const heldUnitText = computed(() =>
+  (heldSession.value?.unit_ids ?? []).map((item) => String(item)).join("、") || "—"
+);
+const heldRemainingText = computed(() => {
+  const expiresAt = heldSession.value?.expires_at;
+  if (!expiresAt) return "不限时";
+  const left = new Date(expiresAt).getTime() - Date.now();
+  if (!Number.isFinite(left) || left <= 0) return "即将失效";
+  const minutes = Math.ceil(left / 60000);
+  return minutes >= 60 ? `剩余约 ${Math.round(minutes / 60)} 小时` : `剩余约 ${minutes} 分钟`;
+});
+
+const loadHeldSession = async () => {
+  if (!sessionStore.enabled) {
+    heldSession.value = null;
+    return;
+  }
+  try {
+    heldSession.value = (await getControlSession(sessionStore.ttlSeconds)).data.session;
+  } catch {
+    heldSession.value = null;
+  }
+};
+
+const handleResumeSession = async () => {
+  const session = heldSession.value;
+  if (!session || sessionBusy.value) return;
+  sessionBusy.value = true;
+  try {
+    await router.push({
+      name: "FineTuningPage",
+      query: {
+        module_id: session.module_id,
+        ...(session.device_id !== null ? { device_id: session.device_id } : {}),
+        ...(session.x !== null ? { x: session.x } : {}),
+        ...(session.y !== null ? { y: session.y } : {}),
+        session: session.id,
+      },
+    });
+  } finally {
+    sessionBusy.value = false;
+  }
+};
+
+const handleCloseSession = async () => {
+  const session = heldSession.value;
+  if (!session || sessionBusy.value) return;
+  try {
+    await ElMessageBox.confirm(
+      "结束会话只清除 MES 的续接记录，不会解绑设备、不会发送任何指令。之后进入微调页需要重新握手。",
+      "结束微调会话",
+      { type: "warning", confirmButtonText: "结束会话", cancelButtonText: "取消" },
+    );
+  } catch {
+    return;
+  }
+  sessionBusy.value = true;
+  try {
+    await closeControlSession(session.id);
+    sessionStore.clearSnapshot(session.id);
+    ElMessage.success("已结束会话记录");
+    await loadHeldSession();
+  } catch {
+    /* 请求失败已由拦截器提示，保留原状态 */
+  } finally {
+    sessionBusy.value = false;
+  }
+};
 
 // 矩阵数据 (8x8)
 const matrixSize = 8;
@@ -218,6 +312,7 @@ const handleLockAndJump = async () => {
 };
 
 onMounted(async () => {
+  void loadHeldSession();
   try {
     deviceList.value = unwrapList(await getDeviceListApi());
   } catch (err) {
@@ -402,9 +497,49 @@ onMounted(async () => {
 }
 
 .module-command-card,
-.matrix-section {
+.matrix-section,
+.session-banner {
   width: min(100%, 1040px);
   margin: 0 auto;
+}
+
+.session-banner {
+  margin-bottom: 18px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  border-left: 4px solid var(--mes-primary);
+  border-radius: 14px;
+  background: #f5f9ff;
+}
+
+.session-banner-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.session-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.session-banner-text strong {
+  color: var(--mes-text-title);
+  font-size: 16px;
+}
+
+.session-banner-meta {
+  color: var(--mes-text-sub);
+  font-size: 12px;
+}
+
+.session-banner-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .module-command-card {

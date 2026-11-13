@@ -111,6 +111,10 @@ class FineTuningConfigCreate(BaseModel):
     z: Optional[float] = 0
     feedback_state: Dict[str, Any] = Field(default_factory=dict)
     devices: List[FineTuningConfigDevice] = Field(default_factory=list)
+    # 校准标记：保存时点亮「校准」则为 True，表示这条快照是人工下发归位后的校零值
+    calibrated: bool = False
+    # 备注：写入 fine_tuning_config.notes，用来区分校零值与微调值
+    notes: Optional[str] = Field(default=None, max_length=1000)
 
     @model_validator(mode="after")
     def normalize_sensor_id(self):

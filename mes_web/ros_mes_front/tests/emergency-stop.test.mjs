@@ -26,6 +26,7 @@ function setup(t, options = {}) {
       if (name === '@/stores/layoutSetting') return { useLayoutSettingStore: () => ({}) };
       if (name === '@/stores/user') return { useUserStore: () => ({ isAdmin: () => true }) };
       if (name === 'element-plus') return { ElMessage: Object.fromEntries(['info', 'warning', 'error'].map(key => [key, text => messages.push(text)])) };
+      if (name === './LocalStopPanel.vue') return { name: 'LocalStopPanel' };
       if (name === '@/api/rosApi') return {
         async getEmergencyStopState() {
           if (options.status) return options.status();

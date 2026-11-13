@@ -1,6 +1,8 @@
 # app/api/endpoints/control.py
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from app.api.deps import get_current_user
 from app.crud import finetuning as finetuning_crud
 from app.db import models
@@ -8,8 +10,11 @@ from app.db.database import get_db
 from app.schemas import finetuning as finetuning_schemas
 from app.ros import get_ros_dispatcher
 from app.ros.base import RosDispatchError, RosbridgeError
-from app.ros.rosbridge import build_fine_tuning_publish_payload, resolve_arm_from_unit_id
+from app.ros.control_session import session_manager
+from app.ros.rosbridge import build_fine_tuning_publish_payload, resolve_arm_from_unit_id, resolve_module_seg
 from app.ros.finetuning_batch import batch_manager
+from app.ros.stop_holds import BLOCK_MESSAGE, axis_numbers_for_arm, stop_holds, validate_target
+from app.schemas.local_stop import LocalStopRequest
 from app.ros.runtime_settings import runtime_settings, SettingsChange
 from app.schemas.hardware import HardwareFeedback, EmergencyStopResponse, ManualEmergencyRelease
 from sqlalchemy.orm import Session
@@ -27,6 +32,156 @@ def update_debug_settings(record: SettingsChange, current_user: models.User = De
     result = runtime_settings.update(record)
     get_ros_dispatcher().start_native_node()
     return {"code": 200, "message": "连接设置已应用，未自动下发任务", "data": result}
+
+
+@router.get("/session")
+def get_control_session(
+    ttl_seconds: Optional[int] = Query(None, ge=0),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """最近一条微调会话记录及有效性。
+
+    有效期由前端偏好传入，不在服务端落库；返回的 session 为空表示需要重新握手。
+    """
+    dispatcher = get_ros_dispatcher()
+    data = session_manager.state(db, ttl_seconds=ttl_seconds, current_revision=dispatcher.revision)
+    return {"code": 200, "message": "会话记录，续接未经设备复核", "data": {
+        **data, "connection_revision": dispatcher.revision}}
+
+
+@router.post("/session/{session_id}/resume")
+def resume_control_session(
+    session_id: str,
+    ttl_seconds: Optional[int] = Body(None, embed=True, ge=0),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """校验并滑动会话有效期；只读记录，不发送模块确认或运动指令。"""
+    dispatcher = get_ros_dispatcher()
+    result = session_manager.resume(
+        db, session_id, ttl_seconds=ttl_seconds, current_revision=dispatcher.revision)
+    return {
+        "code": 200,
+        "message": "会话有效，可续接（未重新握手）" if result["valid"] else f"会话不可续接：{result['reason']}",
+        "data": {**result, "connection_revision": dispatcher.revision},
+    }
+
+
+@router.post("/session/{session_id}/close")
+def close_control_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """结束会话记录：只清除 MES 续接依据，不解绑设备、不发送任何指令。"""
+    record = session_manager.close(db, session_id)
+    if record is None:
+        raise HTTPException(404, "会话记录不存在")
+    return {"code": 200, "message": "已结束会话记录；未向设备发送指令", "data": record}
+
+
+@router.post("/stop")
+async def request_local_stop(
+    record: LocalStopRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """局部停：只停目标模块或目标轴，其他模块继续可用；不清除全局急停联锁。
+
+    发送成功只代表指令已进入 rosbridge，设备是否停止仍需反馈/现场确认。
+    """
+    dispatcher = get_ros_dispatcher()
+    if record.connection_revision is not None and record.connection_revision != dispatcher.revision:
+        raise HTTPException(409, "连接配置已更改，请重新读取设置后操作")
+    client = getattr(dispatcher, "client", None)
+    hold_mode = getattr(client, "execution_mode", "real")
+    simulated = dispatcher.emergency_mode == "mock"
+    try:
+        validate_target(scope=record.scope, module_id=record.module_id, device_id=record.device_id)
+        resolve_module_seg(record.module_id)
+    except RosbridgeError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    # 先记锁再发送：发送失败时锁定保留，避免操作员以为已经停住却继续下发
+    hold = stop_holds.create(db, mode=hold_mode, scope=record.scope, module_id=record.module_id,
+                             device_id=record.device_id, state="requested")
+    if record.scope == "module":
+        scope_label = f"模块 {record.module_id}"
+        hold_axes = None
+    elif record.scope == "arm":
+        scope_label = f"模块 {record.module_id} 臂 {record.device_id}"
+        hold_axes = axis_numbers_for_arm(record.device_id)
+    else:
+        scope_label = f"模块 {record.module_id} 轴 {record.device_id}"
+        hold_axes = {int(record.device_id)}
+    batch_manager.hold_target(record.module_id, axes=hold_axes, mode=hold_mode)
+    try:
+        with runtime_settings.operation(dispatcher.revision):
+            sent = await dispatcher.trigger_local_stop(
+                scope=record.scope, module_id=record.module_id, device_id=record.device_id)
+    except Exception as exc:
+        stop_holds.update_state(db, hold["id"], "unknown", f"局部停发送异常：{exc}")
+        raise HTTPException(502, "局部停指令发送失败，MES 已锁定该目标；请现场确认设备状态") from exc
+
+    if simulated:
+        message = f"{scope_label} 模拟局部停已记录，未连接真实设备"
+    elif sent:
+        message = f"{scope_label} 局部停指令已发送；设备是否停止待确认"
+    else:
+        message = f"{scope_label} 局部停指令发送失败，MES 已锁定该目标"
+    updated = stop_holds.update_state(db, hold["id"], "sent" if sent else "unknown", message) or hold
+    print(f"操作员 {current_user.Username} 执行局部停：{scope_label}（{'模拟' if simulated else '真实'}）")
+    return {"code": 200, "message": message, "data": {
+        **updated, "simulated": simulated, "connection_revision": dispatcher.revision}}
+
+
+@router.get("/stop/holds")
+def list_local_stop_holds(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """当前环境的局部停记录；只读，不代表设备实测状态。"""
+    dispatcher = get_ros_dispatcher()
+    client = getattr(dispatcher, "client", None)
+    mode = getattr(client, "execution_mode", "real")
+    return {"code": 200, "message": "MES 局部停记录，未向设备发送查询", "data": {
+        "mode": mode,
+        "holds": stop_holds.active(db, mode),
+        "connection_revision": dispatcher.revision,
+    }}
+
+
+@router.post("/stop/clear")
+def clear_local_stop_holds(
+    module_id: int = Query(..., ge=1),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """清除该模块的 MES 局部停记录：只恢复下发能力，不发送解除或运动指令。"""
+    dispatcher = get_ros_dispatcher()
+    client = getattr(dispatcher, "client", None)
+    mode = getattr(client, "execution_mode", "real")
+    cleared = stop_holds.clear_module(db, module_id, mode=mode)
+    print(f"操作员 {current_user.Username} 清除模块 {module_id} 的局部停记录 {cleared} 条")
+    return {"code": 200, "message": "已清除 MES 局部停记录；未发送解除或运动指令", "data": {
+        "module_id": module_id, "cleared": cleared, "connection_revision": dispatcher.revision}}
+
+
+@router.post("/stop/{hold_id}/clear")
+def clear_local_stop_hold(
+    hold_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """清除单条局部停记录；同 `/stop/clear`，不发指令。"""
+    dispatcher = get_ros_dispatcher()
+    client = getattr(dispatcher, "client", None)
+    mode = getattr(client, "execution_mode", "real")
+    result = stop_holds.clear(db, hold_id, mode=mode)
+    if result is None:
+        raise HTTPException(404, "局部停记录不存在")
+    return {"code": 200, "message": "已清除 MES 局部停记录；未发送解除或运动指令", "data": result}
 
 
 @router.post("/finetuning", response_model=finetuning_schemas.FineTuningApiResponse)
@@ -47,7 +202,8 @@ def send_fine_tuning(
         raise HTTPException(422, str(exc)) from exc
     client = getattr(dispatcher, "client", None)
     batch_manager.assert_available(db, business_module_id, record.unit_id,
-        mode=getattr(client, "execution_mode", "real"), safety_mode=getattr(client, "safety_mode", "real"))
+        mode=getattr(client, "execution_mode", "real"), safety_mode=getattr(client, "safety_mode", "real"),
+        axes={expected_axis})
     position = float(record.position if record.position is not None else record.new_value)
     # 先做参数校验再落库，非法轴号/模块号不应产生脏记录
     try:
