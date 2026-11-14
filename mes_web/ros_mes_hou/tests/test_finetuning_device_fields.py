@@ -3,6 +3,7 @@ from sqlalchemy.orm import sessionmaker
 import unittest
 
 from app.crud.finetuning import create_fine_tuning_record
+from app.db import models
 from app.db.database import Base
 from app.schemas.finetuning import FineTuningCreate
 
@@ -25,7 +26,10 @@ class FineTuningDeviceFieldTest(unittest.TestCase):
             self.assertEqual(record.module_id, 18)
             self.assertEqual(record.unit_id, 32)
             self.assertEqual(record.parameter_name, "module_18_unit_32_position")
-            self.assertEqual(record.new_value, 12.5)
+            # 新语义：old_value 初始值 / requested_delta 微调量 / new_value 应到值
+            self.assertIsNone(record.old_value)
+            self.assertEqual(record.requested_delta, 12.5)
+            self.assertIsNone(record.new_value)
         finally:
             db.close()
 
@@ -36,25 +40,28 @@ class FineTuningDeviceFieldTest(unittest.TestCase):
 
         db = SessionLocal()
         try:
-            create_fine_tuning_record(
-                db=db,
-                record=FineTuningCreate(module_id=18, unit_id=32, device_id=1, parameter_name="rotation", position=10),
+            # 起点只认同一 (module, unit, parameter) 的最近一次到位实测位置
+            db.add(models.FineTuning(
+                module_id=18, unit_id=32, parameter_name="rotation",
+                old_value=9.0, requested_delta=10.0, new_value=19.0, observed_position=10.0,
                 creater_id=1,
-            )
-            create_fine_tuning_record(
-                db=db,
-                record=FineTuningCreate(module_id=18, unit_id=32, device_id=1, parameter_name="swing", position=20),
+            ))
+            db.add(models.FineTuning(
+                module_id=18, unit_id=32, parameter_name="swing",
+                old_value=40.0, requested_delta=20.0, new_value=60.0, observed_position=55.0,
                 creater_id=1,
-            )
+            ))
+            db.commit()
             record = create_fine_tuning_record(
                 db=db,
                 record=FineTuningCreate(module_id=18, unit_id=32, device_id=1, parameter_name="rotation", position=15),
                 creater_id=1,
             )
 
-            # old_value 只取同一 (module, unit, parameter) 的最近一次 new_value
+            # 旋转轴取自己的实测 10，不串用摆动轴的 55
             self.assertEqual(record.old_value, 10)
-            self.assertEqual(record.new_value, 15)
+            self.assertEqual(record.requested_delta, 15)
+            self.assertEqual(record.new_value, 25)
         finally:
             db.close()
 

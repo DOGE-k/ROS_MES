@@ -33,8 +33,23 @@ class FineTuning(Base):
     module_address = Column(Integer, nullable=True)
     module_descript = Column(Text, nullable=True)
     parameter_name = Column(String(100), nullable=False)
+    # 初始值：本次发令前的实测位置；下发前检查关闭或缺少起点反馈时为空
     old_value = Column(Float)
-    new_value = Column(Float, nullable=False)
+    # 应到值 = old_value + requested_delta；缺少初始值时为为空
+    new_value = Column(Float)
+    # 微调量：本次请求的增量（页面输入值），与批次 progress_json 的 position 同义
+    requested_delta = Column(Float)
+    # 到位实测：绝对位置与相对初始值的增量，来自到位事件 angle/100
+    observed_position = Column(Float)
+    observed_delta = Column(Float)
+    # 偏差 = observed_delta - requested_delta
+    deviation = Column(Float)
+    # 固件自报误差：到位事件 pos_error/100，设备自述，不参与 MES 判定
+    position_error = Column(Float)
+    # 运动结论：moved 已动（默认）/ no_motion 人工标记未动 / unknown 无法判定
+    outcome = Column(String(20), nullable=True)
+    outcome_by = Column(Integer, ForeignKey("Users.User_ID"), nullable=True)
+    outcome_at = Column(DateTime(timezone=True), nullable=True)
     creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
     create_time = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     notes = Column(Text, nullable=True)

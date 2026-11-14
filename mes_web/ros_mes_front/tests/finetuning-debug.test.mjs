@@ -35,8 +35,9 @@ const bindings = `Object.assign(module.exports, {
   confirmInitConfig, handleArmSwitch, handleSaveConfig, confirmAdjustments, calibrateMode,
   batchState, pollBatch, interruptBatch, acknowledgeBatch, openConfiguration, connectionChanged, resetControlState,
   applyFeedback, openDrawingDialog, togglePointCloudViews,
-  confirmedSeg, feedbackMarks, feedbackClock, feedbackConnected, fieldStatus, displayFeedback, ackEvents,
+  confirmedSeg, feedbackMarks, feedbackClock, feedbackConnected, fieldStatus, displayFeedback, ackEvents, deviceEvents,
   relativeAxisValue, displayAxisFeedback, axisFeedbackLabel, finetuningPreflightEnabled,
+  displayAxisInitial, displayAxisTarget, displayAxisCurrent, stepChain, canMarkOutcome, markOutcome, batchDetailLines, outcomeLabels, outcomeLabelOf, outcomeBusy,
   drawingBaselines, activeDrawingBaseline, drawingBaselineLabel, displayDrawingReference,
   endSession, activeSession, resumedFromSession, tryResumeSession, persistSnapshot, drawingList, confirmedUnitIds,
   stopAxis, clearLocalStops, hasLocalStop, moduleHolds, localStopText, stopHolds, loadStopHolds, axisStopOptions,
@@ -118,6 +119,14 @@ function setup(t, options = {}) {
     async getFineTuningBatchByRequest(id) { calls.polls++; return { data: options.byRequest ? await options.byRequest(id) : latestBatch }; },
     async interruptFineTuningBatch() { calls.interrupts++; return { data: { ...latestBatch, ...options.batch, status: 'uncertain', target_locked: true, message: 'stopped' } }; },
     async acknowledgeFineTuningBatch() { calls.acknowledgements++; return { data: { ...latestBatch, ...options.batch, status: 'closed', target_locked: false, message: 'closed' } }; },
+    async markFineTuningAxisOutcome(id, parameterName, noMotion) {
+      calls.outcomes = calls.outcomes || [];
+      calls.outcomes.push({ id, parameterName, noMotion });
+      if (options.outcome) return options.outcome(id, parameterName, noMotion);
+      return { code: 200, message: 'ok', data: { ...latestBatch, ...options.batch, status: 'completed', target_locked: false,
+        steps: (latestBatch?.steps || []).map(step => step.parameter_name === parameterName
+          ? { ...step, outcome: noMotion ? 'no_motion' : 'moved' } : step) } };
+    },
     async saveFineTuningConfig(payload) {
       calls.saves.push(payload);
       if (options.save) return options.save(payload);
@@ -486,7 +495,8 @@ test('a sent batch without an initial position shows an unknown relative measure
   assert.equal(saved.reference_position, null);
   assert.equal(saved.raw_current, 14);
   assert.equal(saved.requested_delta, 2);
-  assert.match(descriptor.template.content, /step\.observed_delta != null/);
+  // 结果行改为五段式链式展示，缺少起点时各段显示为 —
+  assert.match(descriptor.template.content, /stepChain\(step\)/);
   await h.page.handleArmSwitch(2);
   await h.page.handleArmSwitch(1);
   assert.equal(h.page.axisFeedbackLabel(0), '缺少起点反馈');
@@ -532,8 +542,8 @@ test('relative motion uses each nonzero start while consecutive commands keep th
   assert.equal(h.page.displayAxisFeedback(0), '-3.00');
   assert.deepEqual(h.calls.adjusts.map(item => item.adjustments[0].position), [10, 10, -3]);
   assert.equal(h.page.armList.device[0].current, 29);
-  assert.match(descriptor.template.content, /本次实际转动/);
-  assert.match(descriptor.template.content, /到位实际增量/);
+  assert.match(descriptor.template.content, /当前实测/);
+  assert.match(descriptor.template.content, /应到: \{\{ displayAxisTarget/);
 });
 
 test('configuration keeps each axis command and measurement after the inputs clear', async t => {
@@ -788,11 +798,11 @@ test('manual refresh confirms the returned status instead of silently re-renderi
 
 test('out-of-tolerance arrival warns the operator but keeps dispatch available', async t => {
   assert.match(descriptor.template.content, /step\.warning/);
-  const warning = '到位角 3.60 与期望 3.15 相差 +0.45（容差 0.2），仅提示，不阻止后续轴';
+  const warning = '初始 3.15° → 微调 +2.00° → 应到 5.15° → 到位实测 5.60° → 偏差 +0.45°（仅提示，不阻止后续轴；固件自报误差 +0.45°，容差 ±0.2°）';
   const h = setup(t, { debug: true, adjust: async payload => ({ code: 200, data: {
     id: 'test-batch', request_id: payload.request_id, module_id: 17, unit_id: 32, seg: 0,
     status: 'completed', target_locked: false,
-    message: '本批次各轴已观测到运行、目标到位和空闲反馈；1 个轴到位误差超出容差，已记录提示但未阻止下发',
+    message: '本批次各轴已到位；1 个轴偏差超出容差',
     steps: payload.adjustments.map(item => ({ ...item, device_id: 1, status: 'completed', deviation: 0.45, warning })),
   } }) });
   await enter(h);
@@ -802,7 +812,7 @@ test('out-of-tolerance arrival warns the operator but keeps dispatch available',
   // 批次不再因此锁住，可以继续下发
   assert.equal(h.page.busy.value, false);
   assert.equal(h.page.batchState.value.status, 'completed');
-  assert.ok(h.warnings.some(text => String(text).includes('到位误差超出容差')));
+  assert.ok(h.warnings.some(text => String(text).includes('偏差超出容差')));
 });
 
 test('a restored completed batch can load drawings and begin a new configuration session', async t => {
@@ -1060,6 +1070,26 @@ test('foreign modules, wrong arm/type and missing module cannot update actual va
   assert.equal(h.page.displayFeedback('rotation', 0), '0.00');
 });
 
+
+test('arrival and stop events surface device evidence and update the measured value', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  h.page.applyFeedback({ module_id: 0, module_id_space: 'seg', device_id: 1, data_type: 'arrive_notification',
+    angle: 250, pos_error: 0, status_bits: 5, flags: 3 });
+  assert.equal(h.page.armList.device[0].current, 2.5);
+  assert.equal(h.page.deviceEvents.value.length, 1);
+  assert.match(h.page.deviceEvents.value[0].text, /到位实测 2\.50°/);
+  assert.equal(h.page.deviceEvents.value[0].type, 'info');
+  assert.equal(h.page.fieldStatus('rotation'), 'current');
+  h.page.applyFeedback({ module_id: 0, module_id_space: 'seg', device_id: 1, data_type: 'stop_notification',
+    stop_reason: 1, output_level: 0 });
+  assert.equal(h.page.deviceEvents.value.length, 2);
+  assert.match(h.page.deviceEvents.value[0].text, /停止事件：原因 到位/);
+  h.page.applyFeedback({ module_id: 0, module_id_space: 'seg', device_id: 1, data_type: 'arrive_notification',
+    angle: 0, pos_error: 5, status_bits: 32, flags: 0 });
+  assert.equal(h.page.deviceEvents.value[0].type, 'warning');
+  assert.equal(h.page.armList.device[0].current, 0);
+});
 test('missing, invalid and nonfinite samples do not overwrite or refresh actual zero', async t => {
   const h = setup(t, { debug: true });
   await enter(h);
@@ -1841,4 +1871,116 @@ test('holds of another module never block the current one', async t => {
   h.page.armList.device[0].adjust = 1;
   await h.page.confirmAdjustments();
   assert.equal(h.calls.adjusts.length, 1);
+});
+
+test('one axis result reads initial, request, target, arrival and deviation exactly once', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  const chain = h.page.stepChain({
+    parameter_name: 'rotation', device_id: 1, position: 5, status: 'completed',
+    start_position: 9.05, expected_position: 14.05, observed_angle: 13.6, deviation: -0.45,
+  });
+  assert.equal(chain, '初始 9.05° → 微调 +5.00° → 应到 14.05° → 到位实测 13.60° → 偏差 -0.45°');
+  assert.equal(chain.split('9.05').length - 1, 1);
+  assert.equal(chain.split('14.05').length - 1, 1);
+  // 没有起点时只显示未知，不编造数值
+  const unknown = h.page.stepChain({ parameter_name: 'telescopic', device_id: 3, position: 2, status: 'completed' });
+  assert.equal(unknown, '初始 — → 微调 +2.00mm → 应到 — → 到位实测 — → 偏差 —');
+  assert.match(descriptor.template.content, /stepChain\(step\)/);
+});
+
+test('the target shown beside the input is the initial value plus the pending request', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  assert.equal(h.page.displayAxisInitial(0), '0.00');
+  assert.equal(h.page.displayAxisTarget(0), '0.00°');
+  h.page.armList.device[0].adjust = 10;
+  assert.equal(h.page.displayAxisTarget(0), '10.00°');
+  assert.equal(h.page.displayAxisTarget(2), '0.00mm');
+  assert.match(descriptor.template.content, /初始值: \{\{ displayAxisInitial/);
+  assert.match(descriptor.template.content, /应到: \{\{ displayAxisTarget/);
+});
+
+test('a finished axis can be marked as not moved and the mark can be withdrawn', async t => {
+  const completed = payload => relativeBatch(payload, { rotation: 9.05 });
+  const h = setup(t, {
+    debug: true,
+    adjust: async payload => ({ code: 200, data: { ...completed(payload), steps: completed(payload).steps
+      .map(step => ({ ...step, position_error: -0.45, outcome: 'moved' })) } }),
+    outcome: (id, parameterName, noMotion) => ({ code: 200, data: { ...completed({ request_id: id, adjustments: h.page.batchState.value.steps }),
+      id, status: 'completed', target_locked: false,
+      steps: h.page.batchState.value.steps.map(step => step.parameter_name === parameterName
+        ? { ...step, outcome: noMotion ? 'no_motion' : 'moved' } : step) } }),
+  });
+  await enter(h);
+  h.page.armList.device[0].adjust = 5;
+  await h.page.confirmAdjustments();
+
+  const step = h.page.batchState.value.steps.find(item => item.parameter_name === 'rotation');
+  assert.equal(h.page.canMarkOutcome(step), true);
+  await h.page.markOutcome(step, true);
+  assert.equal(h.calls.outcomes.length, 1);
+  assert.equal(h.calls.outcomes[0].parameterName, 'rotation');
+  assert.equal(h.calls.outcomes[0].noMotion, true);
+  assert.equal(h.calls.outcomes[0].id, h.page.batchState.value.id);
+  assert.equal(h.page.batchState.value.steps.find(item => item.parameter_name === 'rotation').outcome, 'no_motion');
+  assert.ok(h.messages.some(([level, text]) => level === 'success' && String(text).includes('该轴本次未动')));
+  // 撤销回到“已动”，同样不发送运动指令
+  assert.equal(h.calls.adjusts.length, 1);
+  await h.page.markOutcome(h.page.batchState.value.steps.find(item => item.parameter_name === 'rotation'), false);
+  assert.equal(h.calls.outcomes.length, 2);
+  assert.equal(h.page.batchState.value.steps.find(item => item.parameter_name === 'rotation').outcome, 'moved');
+});
+
+test('the not-moved button stays hidden while the batch is still in flight', async t => {
+  const h = setup(t, { debug: true, adjust: async payload => ({ code: 200, data: {
+    ...relativeBatch(payload, { rotation: 9.05 }), status: 'executing', target_locked: true,
+  } }) });
+  await enter(h);
+  h.page.armList.device[0].adjust = 5;
+  await h.page.confirmAdjustments();
+  const step = h.page.batchState.value.steps.find(item => item.parameter_name === 'rotation');
+  assert.equal(h.page.canMarkOutcome(step), false);
+  await h.page.markOutcome(step, true);
+  assert.equal(h.calls.outcomes || 0, 0);
+});
+
+test('an axis without a recorded outcome is never shown as moved', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  const step = (extra) => ({ parameter_name: 'rotation', device_id: 1, position: 1, status: 'completed', ...extra });
+  assert.equal(h.page.outcomeLabelOf(step({})), '已动');
+  assert.equal(h.page.outcomeLabelOf(step({ outcome: 'moved' })), '已动');
+  assert.equal(h.page.outcomeLabelOf(step({ outcome: 'no_motion' })), '未动（人工）');
+  assert.equal(h.page.outcomeLabelOf(step({ outcome: 'unknown' })), '待核实');
+  // 旧批次没有 outcome 时按状态兜底：非 completed 一律待核实，不能默认已动
+  assert.equal(h.page.outcomeLabelOf({ ...step({}), status: 'uncertain' }), '待核实');
+  assert.equal(h.page.outcomeLabelOf({ ...step({}), status: 'blocked' }), '待核实');
+});
+
+test('drawing mode shows the locked baseline once and never a drawing requirement value', async t => {
+  const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload,
+    { rotation: h.page.armList.device[0].current }) }) });
+  await enter(h);
+  drawingArmFeedback(h, 1, [37.25, 4, 8]);
+  drawingArmFeedback(h, 1, [47.25, 6, 9]);
+  drawingStillness(h, [[1, [47.25, 6, 9]]], 10);
+
+  assert.equal(h.page.displayAxisInitial(0), '47.25');
+  assert.equal(h.page.displayAxisCurrent(0), '47.25');
+  h.page.armList.device[0].adjust = 10;
+  assert.equal(h.page.displayAxisTarget(0), '57.25°');
+
+  drawingArmFeedback(h, 1, [57.3, 6, 9]);
+  assert.equal(h.page.displayAxisCurrent(0), '57.30');
+  // 起点跟着实际位置走：下发完微调归零，应到必须是实际位置，不能跳回图纸固定基准
+  assert.equal(h.page.displayAxisInitial(0), '57.30');
+  h.page.armList.device[0].adjust = 0;
+  assert.equal(h.page.displayAxisTarget(0), '57.30°');
+  h.page.armList.device[0].adjust = -0.3;
+  assert.equal(h.page.displayAxisTarget(0), '57.00°');
+  // 基准仍然只是图纸下发那一组的参照，不再当作微调起点
+  assert.equal(h.page.displayDrawingReference(0), '47.25');
+  // C 方案：图纸下发只显示实际到位，不显示拿不到的图纸要求值
+  assert.equal(/图纸要求值/.test(descriptor.template.content), false);
 });

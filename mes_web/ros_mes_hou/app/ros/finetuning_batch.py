@@ -4,9 +4,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import math
 import time
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -18,6 +20,8 @@ from app.ros.rosbridge import build_fine_tuning_publish_payload, resolve_arm_fro
 from app.ros.stop_holds import BLOCK_MESSAGE, axes_for, stop_holds
 
 ACTIVE = {"queued", "checking", "executing"}
+# 批次已终结、允许人工标记运动结论的状态
+TERMINAL = {"completed", "uncertain", "blocked", "closed"}
 ORDER = ("rotation", "swing", "telescopic")
 ENCODERS = ("rotation_axis_encoder", "swing_axis_encoder", "telescope_axis_encoder")
 
@@ -30,23 +34,52 @@ def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def axis_unit(parameter_name):
+    return "mm" if parameter_name == "telescopic" else "°"
+
+
+def format_axis_value(value, unit):
+    return f"{value:.2f}{unit}" if number(value) else "—"
+
+logger = logging.getLogger(__name__)
+# 控制台中文标注：与 ROS 节点日志同一风格（表情 + 中文 + 关键值），测试时不用翻数据库就能看懂
+AXIS_LABELS = {"rotation": "旋转", "swing": "摆动", "telescopic": "伸缩"}
+STATUS_LABELS = {"queued": "📋 已登记", "checking": "⏳ 发送前检查", "executing": "🔄 执行中",
+                 "completed": "✅ 完成", "uncertain": "⚠️ 待核实", "blocked": "🚫 受阻", "closed": "🧾 已关闭"}
+
+
+def axis_label(parameter_name):
+    return AXIS_LABELS.get(parameter_name, parameter_name)
+
+
+def signed_axis_value(value, parameter_name):
+    """带符号的微调量/偏差显示，缺值时不编造。"""
+    return "—" if not number(value) else f"{value:+.2f}{axis_unit(parameter_name)}"
+
+
 def relative_motion_warning(step):
-    observed_delta, requested_delta = step.get("observed_delta"), step.get("position")
-    unit = "mm" if step["parameter_name"] == "telescopic" else "°"
-    motion = "移动" if step["parameter_name"] == "telescopic" else "转动"
+    """按固定顺序说明一次相对运动的五个值，每个数只出现一次。
+
+    初始值 → 微调量 → 应到 → 到位实测 → 偏差；缺少起点或到位反馈的项显示为 —。
+    """
+    unit = axis_unit(step["parameter_name"])
     tolerance = 0.1 if step["parameter_name"] == "telescopic" else 0.2
+    start, requested = step.get("start_position"), step.get("position")
+    expected = step.get("expected_position")
+    if not number(expected) and number(start) and number(requested):
+        expected = start + requested
+    observed_delta = step.get("observed_delta")
+    deviation = observed_delta - requested if number(observed_delta) and number(requested) else None
     error_value = step.get("position_error")
     firmware_error = f"{error_value:+.2f}{unit}" if number(error_value) else "待核实"
-    if not number(observed_delta) or not number(requested_delta) or not number(observed_delta - requested_delta):
-        return (
-            "本次相对运动结果待核实，缺少有效起点或到位反馈，"
-            f"固件误差 {firmware_error}（容差 {tolerance}{unit}），仅提示，不阻止后续轴"
-        )
-    return (
-        f"本次实际{motion} {observed_delta:.2f}{unit}，指令增量 {requested_delta:.2f}{unit}，"
-        f"相差 {observed_delta - requested_delta:+.2f}{unit}，固件误差 {firmware_error}"
-        f"（容差 {tolerance}{unit}），仅提示，不阻止后续轴"
-    )
+    parts = [
+        f"初始 {format_axis_value(start, unit)}",
+        f"微调 {requested:+.2f}{unit}" if number(requested) else "微调 —",
+        f"应到 {format_axis_value(expected, unit)}",
+        f"到位实测 {format_axis_value(step.get('observed_angle'), unit)}",
+        f"偏差 {deviation:+.2f}{unit}" if number(deviation) else "偏差 —",
+    ]
+    return " → ".join(parts) + f"（仅提示，不阻止后续轴；固件自报误差 {firmware_error}，容差 ±{tolerance}{unit}）"
 
 
 def snapshot(row):
@@ -78,11 +111,15 @@ def snapshot(row):
 
 
 class BatchManager:
-    def __init__(self, sessions=SessionLocal, *, state_timeout=60.0, motion_timeout=60.0, freshness=3.0):
+    def __init__(self, sessions=SessionLocal, *, state_timeout=60.0, motion_timeout=60.0, freshness=3.0,
+                 status_grace=5.0):
         self.sessions = sessions
         self.state_timeout = state_timeout
         self.motion_timeout = motion_timeout
         self.freshness = freshness
+        # 轴状态帧缺失时的快速失败窗口：现场固件可能根本不上报 /hardware/axis_status，
+        # 与其等满 state_timeout 再报"超时"，不如短时间内给出可执行的诊断信息。
+        self.status_grace = status_grace
         self.tasks = {}
 
     def recover(self):
@@ -264,12 +301,18 @@ class BatchManager:
                         return snapshot(old)
                 raise HTTPException(409, "机械臂已被另一批次占用")
             result = snapshot(row)
+        detail = "；".join(f"轴{item['device_id']} {axis_label(item['parameter_name'])} {signed_axis_value(item['position'], item['parameter_name'])}"
+                           for item in steps)
+        logger.info("📋 批次 %s 登记 | 模块%s 臂%s | %s | 模式 %s | 请求编号 %s",
+                    row.id[:8], request.module_id, arm, detail, mode, request.request_id)
         task = asyncio.create_task(self._execute(result["id"], client))
         self.tasks[result["id"]] = task
         task.add_done_callback(lambda _: self.tasks.pop(result["id"], None))
         return result
 
     def _save(self, batch_id, status, message, steps, *, unlock=False):
+        # 每个状态变化都打一行中文标注，测试时控制台就是完整时间线
+        logger.info("%s 批次 %s | %s", STATUS_LABELS.get(status, status), batch_id[:8], message)
         with self.sessions() as db:
             row = db.get(models.FineTuningBatch, batch_id)
             row.progress_json = json.dumps(steps, ensure_ascii=False)
@@ -279,6 +322,72 @@ class BatchManager:
             if unlock:
                 row.target_key = None
             db.commit()
+
+    def _record_outcome(self, batch_id, steps):
+        """把每轴的运动结论与实测值回填到 fine_tuning 记录。
+
+        只有收到完整到位证据的轴写 moved；超时、中断、未发送的轴写 unknown，
+        留待操作者现场判断后用「标记未动」改成 no_motion。
+        """
+        rows = [step for step in steps if step.get("record_id") is not None]
+        if not rows:
+            return
+        with self.sessions() as db:
+            for step in rows:
+                record = db.get(models.FineTuning, step["record_id"])
+                if record is None:
+                    continue
+                record.observed_position = step.get("observed_angle")
+                record.observed_delta = step.get("observed_delta")
+                record.deviation = step.get("deviation")
+                record.position_error = step.get("position_error")
+                record.outcome = "moved" if step.get("status") == "completed" else "unknown"
+                step["outcome"] = record.outcome
+                logger.info("📝 批次 %s 轴 %s（%s）结论 %s%s", batch_id[:8], step["device_id"],
+                            axis_label(step["parameter_name"]),
+                            {"moved": "已动（收到到位证据）", "unknown": "待核实（无到位证据，可人工标记未动）"}[record.outcome],
+                            "" if record.outcome == "moved" else "，等操作员现场判断")
+            # 结论要一起落进批次快照：只写 fine_tuning 的话，查询接口拿到的 steps 里没有 outcome，
+            # 前端只能猜默认“已动”，会把“待核实”的轴显示成已动。
+            batch = db.get(models.FineTuningBatch, batch_id)
+            if batch is not None:
+                batch.progress_json = json.dumps(steps, ensure_ascii=False)
+            db.commit()
+
+    def set_outcome(self, batch_id, parameter_name, no_motion, operator_id):
+        """人工标记某轴本次是否运动。只改数据库记录，不发送任何运动指令。"""
+        if parameter_name not in ORDER:
+            raise HTTPException(422, "parameter_name 必须是 rotation、swing、telescopic 之一")
+        with self.sessions() as db:
+            row = db.get(models.FineTuningBatch, batch_id)
+            if row is None:
+                raise HTTPException(404, "批次不存在")
+            if row.status not in TERMINAL:
+                raise HTTPException(409, "批次尚未结束，请等执行结束后再标记")
+            outcome = "no_motion" if no_motion else "moved"
+            # notes 形如 "batch=<uuid>; mode=real"，逐条精确比对，避免 LIKE 把 _ 当通配符
+            candidates = db.query(models.FineTuning).filter(
+                models.FineTuning.parameter_name == parameter_name,
+            ).all()
+            records = [item for item in candidates
+                       if (item.notes or "").split(";")[0].strip() == f"batch={batch_id}"]
+            if not records:
+                raise HTTPException(404, "该批次没有这条轴的微调记录")
+            marked_at = datetime.now(timezone.utc)
+            logger.info("🖊️ 批次 %s 轴（%s）人工判定 %s | 操作员 id=%s | 只改数据库，未发送运动指令",
+                        batch_id[:8], axis_label(parameter_name),
+                        "本次未动" if no_motion else "撤销未动，恢复已动", operator_id)
+            for record in records:
+                record.outcome = outcome
+                record.outcome_by = operator_id
+                record.outcome_at = marked_at
+            steps = json.loads(row.progress_json)
+            for step in steps:
+                if step.get("parameter_name") == parameter_name:
+                    step["outcome"] = outcome
+            row.progress_json = json.dumps(steps, ensure_ascii=False)
+            db.commit()
+            return snapshot(row)
 
     def interrupt(self, batch_id):
         with self.sessions() as db:
@@ -306,7 +415,11 @@ class BatchManager:
         with self.sessions() as db:
             row = db.get(models.FineTuningBatch, batch_id)
             safety = db.get(models.ControlSafety, 2 if snapshot(row)["safety_mode"] == "mock" else 1)
-            if row.cancel_requested or (safety and safety.generation != generation):
+            # 两种原因要分开说：操作者主动停和急停/联锁真的变了是两回事，
+            # 混成一句话会让人去找一个根本没发生的急停。
+            if row.cancel_requested:
+                raise Halt("操作者已停止后续下发；已发送动作的结果仍需核实")
+            if safety and safety.generation != generation:
                 raise Halt("控制联锁或急停状态已变化，结果待核实")
 
     async def _execute(self, batch_id, client):
@@ -319,6 +432,9 @@ class BatchManager:
         queue, ready = asyncio.Queue(maxsize=512), asyncio.Event()
         attempted = False
         samples, states = {}, {}
+        # 诊断用：本批次实际收到了哪些反馈帧；只在消息里说明，不参与任何放行判定。
+        seen = {}
+        axis_status_topic = client.profile.topics.get("feedback_axis_status", "/hardware/axis_status")
 
         async def pump():
             try:
@@ -334,6 +450,7 @@ class BatchManager:
             if item.get("data_type") == "error":
                 raise Halt("反馈断开，执行结果待核实")
             did, kind = item.get("device_id"), item.get("data_type")
+            seen[kind] = seen.get(kind, 0) + 1
             if kind == "cmd_ack":
                 if did in axes and item.get("result") not in (None, 0):
                     candidates = item.get("module_candidates", [])
@@ -369,16 +486,50 @@ class BatchManager:
             at, state = states[did]
             return time.monotonic() - at <= self.freshness and state["axis_state"] in (0, 2) and not state["status_bits"] & ((1 << 1) | (1 << 6))
 
-        async def next_event(deadline):
+        def diagnose():
+            """把"到底缺什么帧"写进提示，避免只报一句超时。"""
+            labels = {
+                "axis_status": "轴状态", "arrive_notification": "到位事件", "stop_notification": "停止事件",
+                "cmd_ack": "命令回执", "axis_fault": "故障事件", "limit_event": "限位事件",
+                "rotation_axis_encoder": "位置", "swing_axis_encoder": "位置", "telescope_axis_encoder": "位置",
+                "pressure_sensor": "压力", "imu_pose": "陀螺仪",
+            }
+            counts = {}
+            for kind, value in seen.items():
+                name = labels.get(kind, str(kind))
+                counts[name] = counts.get(name, 0) + value
+            received = "、".join(f"{name} {value} 帧" for name, value in sorted(counts.items())) or "无任何反馈帧"
+            parts = [f"本批次已收到：{received}"]
+            if seen.get("axis_status", 0) == 0:
+                parts.append(f"未收到任何轴状态帧（{axis_status_topic}）")
+            stale_state = [str(did) for did in axes if did not in states or time.monotonic() - states[did][0] > self.freshness]
+            stale_sample = [str(did) for did in axes if did not in samples or time.monotonic() - samples[did][0] > self.freshness]
+            if stale_state:
+                parts.append(f"缺少 {self.freshness:g} 秒内轴状态的轴：{','.join(stale_state)}")
+            if stale_sample:
+                parts.append(f"缺少 {self.freshness:g} 秒内位置反馈的轴：{','.join(stale_sample)}")
+            return "；".join(parts)
+
+        async def next_event(deadline, on_tick=None):
             while True:
                 self._check(batch_id, generation)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise Halt("等待有效状态或运动完成超时；未自动重发")
+                    raise Halt(f"等待有效状态或运动完成超时；未自动重发（{diagnose()}）")
                 try:
                     return await asyncio.wait_for(queue.get(), min(0.2, remaining))
                 except asyncio.TimeoutError:
+                    if on_tick is not None:
+                        on_tick()
                     continue
+
+        def guard_status_frames():
+            """下发前若迟迟收不到任何轴状态帧，直接说明原因，不让操作者干等满等待上限。"""
+            if seen.get("axis_status", 0) == 0 and time.monotonic() - preflight_started >= self.status_grace:
+                raise Halt(
+                    f"{self.status_grace:g} 秒内未收到任何轴状态帧（{axis_status_topic}），无法确认轴是否空闲，"
+                    "未发送运动指令。请确认固件是否周期上报轴状态帧；"
+                    f"如现场已确认固件不上报，可在个人中心关闭“发送前检查”后重试。（{diagnose()}）")
 
         reader = asyncio.create_task(pump())
         try:
@@ -392,10 +543,11 @@ class BatchManager:
             else:
                 self._save(batch_id, "checking", "已跳过下发前状态和位置检查，准备发送相对增量", steps)
                 await asyncio.sleep(0)
+            preflight_started = time.monotonic()
             for step in steps:
                 # 每一轴下发前重新获得当前臂的有效空闲及位置；不能凭 HTTP 成功推进。
                 while preflight_enabled and not all(idle(did) and did in samples and time.monotonic() - samples[did][0] <= self.freshness for did in axes):
-                    at, item = await next_event(state_deadline)
+                    at, item = await next_event(state_deadline, guard_status_frames)
                     consume(at, item)
                 # 清空已收到的旧事件，避免前一动作的到位事件在发送后被消费。
                 while not queue.empty():
@@ -415,16 +567,35 @@ class BatchManager:
                 self._save(batch_id, "executing", f"轴 {axis}：发送并等待运行、到位及空闲反馈", steps)
                 payload = build_fine_tuning_publish_payload(step["parameter_name"], step["position"], job["module_id"], axis, profile=client.profile)
                 with self.sessions() as db:
-                    db.add(models.FineTuning(module_id=job["module_id"], unit_id=job["unit_id"],
-                        parameter_name=step["parameter_name"], old_value=start_position, new_value=step["position"],
-                        creater_id=job_creator(self.sessions, batch_id), notes=f"batch={batch_id}; mode={job['execution_mode']}; 增量发送记录，不证明设备执行"))
+                    record = models.FineTuning(
+                        module_id=job["module_id"], unit_id=job["unit_id"],
+                        parameter_name=step["parameter_name"],
+                        # 初始值：本次发令前实测位置；缺少起点反馈时为空
+                        old_value=start_position,
+                        # 微调量：本次请求的增量
+                        requested_delta=step["position"],
+                        # 应到值：初始值 + 微调量；缺少初始值时为为空
+                        new_value=expected,
+                        creater_id=job_creator(self.sessions, batch_id),
+                        notes=f"batch={batch_id}; mode={job['execution_mode']}",
+                    )
+                    db.add(record)
                     db.commit()
+                    # 记住本条记录，批次结束时按 id 回填实测值与运动结论
+                    step["record_id"] = record.id
                 attempted = True
                 sent_at = time.monotonic()
+                unit = axis_unit(step["parameter_name"])
+                logger.info("📤 轴 %s（%s）发送 %s | 起点 %s → 应到 %s | 记录 id=%s",
+                            axis, axis_label(step["parameter_name"]),
+                            signed_axis_value(step["position"], step["parameter_name"]),
+                            format_axis_value(start_position, unit), format_axis_value(expected, unit),
+                            step.get("record_id"))
                 await client.publish("fine_tuning", payload)
                 deadline = time.monotonic() + self.motion_timeout
-                ran_at, arrived, idle_after_run = None, False, False
-                while not (ran_at is not None and arrived and idle_after_run):
+                # 两条证据路径：优先"运行→到位→空闲"三件套；固件不发轴状态帧时退化为"到位+正常停止"设备事件。
+                ran_at, arrived, idle_after_run, stopped = None, False, False, False
+                while not (arrived and ((ran_at is not None and idle_after_run) or stopped)):
                     at, item = await next_event(deadline)
                     if not consume(at, item) or at < sent_at:
                         continue
@@ -439,7 +610,10 @@ class BatchManager:
                             idle_after_run = False
                         elif ran_at is not None and at >= ran_at and idle(axis):
                             idle_after_run = True
-                    elif kind == "arrive_notification" and ran_at is not None and at >= ran_at:
+                    elif kind == "stop_notification" and at >= sent_at:
+                        # consume() 已拦截 stop_reason != 1；到这里即为正常到位的停止事件。
+                        stopped = True
+                    elif kind == "arrive_notification" and at >= sent_at:
                         bits, flags, angle, error = (item.get(key) for key in ("status_bits", "flags", "angle", "pos_error"))
                         tolerance = 0.1 if step["parameter_name"] == "telescopic" else 0.2
                         # 硬条件：收到到位事件、基准有效、无超位/故障、带角度与误差字段
@@ -451,27 +625,43 @@ class BatchManager:
                             deviation = round(observed_delta - step["position"], 3) if observed_delta is not None else None
                             error_value = round(error / 100.0, 3)
                             step["observed_angle"] = round(angle / 100.0, 3)
+                            logger.info("🎯 轴 %s（%s）到位实测 %s | 偏差 %s | 固件自报误差 %s%s",
+                                        axis, axis_label(step["parameter_name"]),
+                                        format_axis_value(step["observed_angle"], unit),
+                                        "—" if deviation is None else f"{deviation:+.2f}{unit}",
+                                        "—" if error_value is None else f"{error_value:+.2f}{unit}",
+                                        "，超出容差" if (deviation is not None and abs(deviation) > tolerance) or abs(error_value) > tolerance else "")
                             step["observed_delta"] = round(observed_delta, 3) if observed_delta is not None else None
                             step["deviation"] = deviation
                             step["position_error"] = error_value
                             if (deviation is not None and abs(deviation) > tolerance) or abs(error_value) > tolerance:
                                 step["warning"] = relative_motion_warning(step)
                 step["status"] = "completed"
+                step["run_observed"] = ran_at is not None
+                step["idle_observed"] = idle_after_run
+                step["stop_observed"] = stopped
+                step["completion_evidence"] = "run_arrive_idle" if (ran_at is not None and idle_after_run) else "arrive_stop"
                 warning_note = f"；{step['warning']}" if step.get("warning") else ""
-                self._save(batch_id, "executing", f"轴 {axis} 已观测到运行、目标到位及空闲{warning_note}", steps)
+                evidence_note = ("已观测到运行、目标到位及空闲" if step["completion_evidence"] == "run_arrive_idle"
+                                 else "已收到目标到位和正常停止事件（未观测到运行/空闲轴状态帧，按设备事件判定）")
+                self._save(batch_id, "executing", f"轴 {axis} {evidence_note}{warning_note}", steps)
                 state_deadline = time.monotonic() + self.state_timeout
             self._check(batch_id, generation)
             deviations = [step for step in steps if step.get("warning")]
-            message = "本批次各轴已观测到运行、目标到位和空闲反馈"
+            message = "本批次各轴已到位"
             if deviations:
-                message += f"；{len(deviations)} 个轴到位误差超出容差，已记录提示但未阻止下发"
+                message += f"；{len(deviations)} 个轴偏差超出容差"
             self._save(batch_id, "completed", message, steps, unlock=True)
+            self._record_outcome(batch_id, steps)
         except (Exception, asyncio.CancelledError) as exc:
             for step in steps:
                 if step["status"] == "sent_unconfirmed":
                     step["status"] = "uncertain"
             status = "uncertain" if attempted or self.get(batch_id)["status"] == "uncertain" else "blocked"
+            logger.warning("⚠️ 批次 %s 未正常完成：%s", batch_id[:8], str(exc) or "执行中断，结果待核实")
             self._save(batch_id, status, str(exc) or "执行中断，结果待核实", steps, unlock=status == "blocked")
+            # 中断/受阻的轴没有到位证据，结论留待现场判断
+            self._record_outcome(batch_id, steps)
         finally:
             reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):

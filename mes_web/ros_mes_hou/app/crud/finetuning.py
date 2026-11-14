@@ -46,7 +46,12 @@ def get_latest_position(
         .order_by(models.FineTuning.create_time.desc(), models.FineTuning.id.desc())
         .first()
     )
-    return latest.new_value if latest else None
+    if latest is None:
+        return None
+    # new_value 现在是「应到值」而非实测值，优先取到位实测位置，其次退回应到值
+    if latest.observed_position is not None:
+        return latest.observed_position
+    return latest.new_value
 
 
 def create_fine_tuning_record(
@@ -56,9 +61,13 @@ def create_fine_tuning_record(
 ):
     module_id = int(record.module_id)
     unit_id = int(record.unit_id)
-    new_value = record.position if record.position is not None else record.new_value
+    # 与批次路径统一语义：old_value 是初始值，requested_delta 是本次请求增量，
+    # new_value 是应到值。单轴接口只被 ROS 测试页使用，仍按增量解释 position。
+    requested_delta = record.position if record.position is not None else record.new_value
     parameter_name = record.parameter_name or f"module_{module_id}_unit_{unit_id}_position"
     previous = get_latest_position(db, module_id, unit_id, parameter_name)
+    start = record.old_value if record.old_value is not None else previous
+    expected = start + requested_delta if start is not None and requested_delta is not None else None
 
     db_record = models.FineTuning(
         module_id=module_id,
@@ -66,8 +75,9 @@ def create_fine_tuning_record(
         module_address=module_id,
         module_descript=None,
         parameter_name=parameter_name,
-        old_value=record.old_value if record.old_value is not None else previous,
-        new_value=float(new_value),
+        old_value=start,
+        requested_delta=float(requested_delta) if requested_delta is not None else None,
+        new_value=float(expected) if expected is not None else None,
         creater_id=creater_id,
     )
 

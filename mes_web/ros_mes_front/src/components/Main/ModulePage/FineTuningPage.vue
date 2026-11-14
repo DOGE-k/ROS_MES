@@ -117,12 +117,9 @@
                 />
               </div>
 
-              <span class="real-time-tag"
-                >{{ isDebugMode ? '本次相对起点' : '图纸固定基准' }}: {{ isDebugMode ? '0.00' : displayDrawingReference(0) }}</span
-              >
-              <span class="real-time-tag"
-                >{{ isDebugMode ? '本次实际转动' : '相对基准变化量' }}: {{ displayAxisFeedback(0) }}° · {{ axisFeedbackLabel(0) }}</span
-              >
+              <span class="real-time-tag">初始值: {{ displayAxisInitial(0) }}</span>
+              <span class="real-time-tag">当前实测: {{ displayAxisCurrent(0) }}° · {{ axisFeedbackLabel(0) }}</span>
+              <span class="real-time-tag">应到: {{ displayAxisTarget(0) }}</span>
             </div>
           </div>
         </div>
@@ -144,12 +141,9 @@
                 />
               </div>
 
-              <span class="real-time-tag"
-                >{{ isDebugMode ? '本次相对起点' : '图纸固定基准' }}: {{ isDebugMode ? '0.00' : displayDrawingReference(1) }}</span
-              >
-              <span class="real-time-tag"
-                >{{ isDebugMode ? '本次实际转动' : '相对基准变化量' }}: {{ displayAxisFeedback(1) }}° · {{ axisFeedbackLabel(1) }}</span
-              >
+              <span class="real-time-tag">初始值: {{ displayAxisInitial(1) }}</span>
+              <span class="real-time-tag">当前实测: {{ displayAxisCurrent(1) }}° · {{ axisFeedbackLabel(1) }}</span>
+              <span class="real-time-tag">应到: {{ displayAxisTarget(1) }}</span>
             </div>
           </div>
         </div>
@@ -169,12 +163,9 @@
                 />
               </div>
 
-              <span class="real-time-tag"
-                >{{ isDebugMode ? '本次相对起点' : '图纸固定基准' }}: {{ isDebugMode ? '0.00' : displayDrawingReference(2) }}</span
-              >
-              <span class="real-time-tag"
-                >{{ isDebugMode ? '本次实际移动' : '相对基准变化量' }}: {{ displayAxisFeedback(2) }}mm · {{ axisFeedbackLabel(2) }}</span
-              >
+              <span class="real-time-tag">初始值: {{ displayAxisInitial(2) }}</span>
+              <span class="real-time-tag">当前实测: {{ displayAxisCurrent(2) }}mm · {{ axisFeedbackLabel(2) }}</span>
+              <span class="real-time-tag">应到: {{ displayAxisTarget(2) }}</span>
             </div>
           </div>
         </div>
@@ -204,11 +195,23 @@
             :type="batchState.status === 'completed' ? (hasStepWarnings ? 'warning' : 'success') : 'warning'"
             :closable="false"
           />
-          <p v-for="step in batchState.steps" :key="step.parameter_name">
-            {{ axisLabels[step.parameter_name] }}：本次增量 {{ step.position }}{{ step.parameter_name === 'telescopic' ? 'mm' : '°' }} · {{ stepLabels[step.status] || step.status }}
-            <span v-if="step.observed_delta != null"> · 到位实际增量 {{ step.observed_delta }}{{ step.parameter_name === 'telescopic' ? 'mm' : '°' }}</span>
-            <span v-if="step.warning" class="step-warning">{{ step.warning }}</span>
-          </p>
+          <div v-for="step in batchState.steps" :key="step.parameter_name" class="step-line">
+            <span class="step-axis">{{ axisLabels[step.parameter_name] }}</span>
+            <span class="step-chain">{{ stepChain(step) }}</span>
+            <span v-if="step.warning" class="step-warning" :title="step.warning">⚠</span>
+            <span v-if="step.status !== 'completed'" class="step-state">{{ stepLabels[step.status] || step.status }}</span>
+            <template v-if="canMarkOutcome(step)">
+              <span class="step-outcome" :class="{ unmoved: step.outcome === 'no_motion' }">{{ outcomeLabelOf(step) }}</span>
+              <el-button size="small" :disabled="outcomeBusy" @click="markOutcome(step, step.outcome !== 'no_motion')">
+                {{ step.outcome === 'no_motion' ? '撤销' : '标记未动' }}
+              </el-button>
+            </template>
+          </div>
+          <el-collapse v-if="batchDetailLines.length" class="step-details">
+            <el-collapse-item title="固件自报误差与判定依据" name="detail">
+              <p v-for="line in batchDetailLines" :key="line">{{ line }}</p>
+            </el-collapse-item>
+          </el-collapse>
           <el-button @click="pollBatch(false)">刷新执行状态</el-button>
           <el-button v-if="batchState.id && ['queued', 'checking', 'executing'].includes(batchState.status)" type="warning" @click="interruptBatch">停止后续下发</el-button>
           <el-button v-if="batchState.id && batchState.status === 'uncertain'" type="warning" @click="acknowledgeBatch">{{ batchState.simulated ? '已核实模拟记录，关闭批次' : '已现场核实，关闭待确认批次' }}</el-button>
@@ -262,6 +265,15 @@
         <el-alert :title="ackEvents[0].text" :type="ackEvents[0].type" :closable="false" show-icon />
         <el-collapse>
           <el-collapse-item v-for="event in ackEvents" :key="event.id" :title="event.text" :name="event.id">
+            <pre class="ack-raw">{{ event.raw }}</pre>
+          </el-collapse-item>
+        </el-collapse>
+      </el-card>
+      <el-card v-if="deviceEvents.length" class="ack-card" shadow="never">
+        <template #header>到位 / 停止事件 · 来自设备，不改变批次判定</template>
+        <el-alert :title="deviceEvents[0].text" :type="deviceEvents[0].type" :closable="false" show-icon />
+        <el-collapse>
+          <el-collapse-item v-for="event in deviceEvents" :key="event.id" :title="event.text" :name="event.id">
             <pre class="ack-raw">{{ event.raw }}</pre>
           </el-collapse-item>
         </el-collapse>
@@ -336,6 +348,7 @@ import {
   sendCoordination,
   submitFineTuningBatch, getFineTuningBatch, getFineTuningBatchByRequest,
   getActiveFineTuningBatch, interruptFineTuningBatch, acknowledgeFineTuningBatch,
+  markFineTuningAxisOutcome,
   type FineTuningBatch,
   saveFineTuningConfig,
 } from "@/api/rosApi";
@@ -437,6 +450,9 @@ const timeouts = feedbackTimeouts(import.meta.env);
 let feedbackTimer: ReturnType<typeof setInterval> | undefined;
 const ackEvents = ref<Array<{ id: number; text: string; type: 'info' | 'warning'; raw: string }>>([]);
 let ackSequence = 0;
+// 设备到位/停止事件：来自 ArriveNotification / StopNotification，仅作展示与实测值补全，不参与批次判定
+const deviceEvents = ref<Array<{ id: number; text: string; type: 'info' | 'warning'; raw: string }>>([]);
+let deviceSequence = 0;
 const fieldStatus = (field: FeedbackField) => feedbackStatus(
   feedbackMarks[field], feedbackClock.value,
   field === 'pressure' ? timeouts.pressure : adjustmentKeys.includes(field as AxisParameterName) ? timeouts.axis : timeouts.imu,
@@ -535,7 +551,7 @@ const displayDrawingReference = (index: number) => {
 const drawingBaselineLabel = computed(() => {
   const baseline = activeDrawingBaseline.value;
   if (!baseline) return '等待图纸下发后采集固定基准';
-  if (baseline.status === 'locked') return '图纸固定基准已锁定，后续微调沿用这组基准';
+  if (baseline.status === 'locked') return '图纸固定基准已锁定，微调以实际位置为起点';
   if (baseline.status === 'failed') return '图纸下发结果待核实，固定基准尚未锁定';
   if (!baseline.confirmed) return '图纸下发中，正在观察机械臂运动';
   if (!baseline.motionObserved) return '等待图纸运动反馈';
@@ -544,6 +560,89 @@ const drawingBaselineLabel = computed(() => {
   return `正在等待机械臂静止满 10 秒，还需 ${remaining} 秒`;
 });
 const hasPendingAdjustments = computed(() => armList.device.slice(0, 3).some(item => Number(item.adjust) !== 0));
+
+// ===== 微调值展示：初始值 → 微调量 → 应到 → 到位实测 → 偏差，每个数只出现一次 =====
+const axisUnitOf = (index: number) => (index === 2 ? 'mm' : '°');
+const stepUnit = (parameterName: string) => (parameterName === 'telescopic' ? 'mm' : '°');
+const stepNumber = (value: number | null | undefined) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+const formatStepValue = (value: number | null, unit: string) => (value === null ? '—' : value.toFixed(2) + unit);
+const formatStepSigned = (value: number | null, unit: string) => (value === null ? '—' : (value >= 0 ? '+' : '') + value.toFixed(2) + unit);
+// 图纸模式下真正可用的位置：ROS 返回的实际值。基准未锁定时不下结论。
+const drawingAxisActual = (index: number): number | null => {
+  if (activeDrawingBaseline.value?.status !== 'locked') return null;
+  return finiteFeedbackNumber(armList.device[index].current);
+};
+// 初始值：调试模式从 0 开始（相对增量）；图纸模式以 ROS 返回的实际值为起点。
+// 微调是“从当前位置再转 N”，起点只能是实际位置——拿图纸固定基准当起点，下发后微调归零会让应到跳回基准值。
+const displayAxisInitial = (index: number) => {
+  if (isDebugMode.value) return '0.00';
+  const actual = drawingAxisActual(index);
+  return actual === null ? '—' : actual.toFixed(2);
+};
+// 当前实测：调试模式显示相对本次起点的实测变化量，图纸模式显示绝对实际位置，与“初始值”“应到”同一坐标
+const displayAxisCurrent = (index: number) => {
+  if (isDebugMode.value) return displayAxisFeedback(index);
+  const actual = drawingAxisActual(index);
+  return actual === null ? '—' : actual.toFixed(2);
+};
+// 应到 = 初始值（实际位置）+ 输入框里的微调量，随输入实时变化
+const displayAxisTarget = (index: number) => {
+  const initial = isDebugMode.value ? 0 : drawingAxisActual(index);
+  if (initial === null) return '—';
+  const adjust = finiteFeedbackNumber(armList.device[index].adjust);
+  return (initial + (adjust ?? 0)).toFixed(2) + axisUnitOf(index);
+};
+const stepChain = (step: FineTuningBatch['steps'][number]) => {
+  const unit = stepUnit(step.parameter_name);
+  const start = stepNumber(step.start_position);
+  const requested = stepNumber(step.position);
+  const expected = stepNumber(step.expected_position) ?? (start !== null && requested !== null ? start + requested : null);
+  const observed = stepNumber(step.observed_angle);
+  const deviation = stepNumber(step.deviation) ?? (observed !== null && start !== null && requested !== null ? observed - start - requested : null);
+  return ['初始 ' + formatStepValue(start, unit), '微调 ' + formatStepSigned(requested, unit),
+    '应到 ' + formatStepValue(expected, unit), '到位实测 ' + formatStepValue(observed, unit),
+    '偏差 ' + formatStepSigned(deviation, unit)].join(' → ');
+};
+// 运动结论：默认已动，只在确认没动时人工标记；unknown 表示没有证据可判
+const outcomeLabels: Record<string, string> = { moved: '已动', no_motion: '未动（人工）', unknown: '待核实' };
+// 结论缺失时按状态兜底：只有“已完成”才能说已动，其余一律待核实，不能默认已动
+const outcomeLabelOf = (step: FineTuningBatch['steps'][number]) =>
+  outcomeLabels[step.outcome || ''] || (step.status === 'completed' ? '已动' : '待核实');
+const outcomeBusy = ref(false);
+const canMarkOutcome = (step: FineTuningBatch['steps'][number]) => Boolean(batchState.value?.id) &&
+  ['completed', 'uncertain', 'blocked', 'closed'].includes(batchState.value?.status || '') && step.status !== 'pending';
+const batchDetailLines = computed(() => (batchState.value?.steps || [])
+  .filter(step => step.status !== 'pending')
+  .map(step => {
+    const unit = stepUnit(step.parameter_name);
+    const tolerance = step.parameter_name === 'telescopic' ? 0.1 : 0.2;
+    const error = stepNumber(step.position_error);
+    const parts = ['固件自报误差 ' + formatStepSigned(error, unit), '容差 ±' + tolerance + unit];
+    if (step.completion_evidence) parts.push('完成证据 ' + (step.completion_evidence === 'run_arrive_idle' ? '运行+到位+空闲' : '到位+正常停止'));
+    return axisLabels[step.parameter_name] + '：' + parts.join('，');
+  }));
+const markOutcome = async (step: FineTuningBatch['steps'][number], noMotion: boolean) => {
+  // 批次还在下发/执行中时没有可判定的结论，界面不显示按钮，这里也拒绝写入
+  if (!batchState.value?.id || outcomeBusy.value || !canMarkOutcome(step)) return;
+  if (noMotion) {
+    try {
+      await ElMessageBox.confirm('确认' + (axisLabels[step.parameter_name] || step.parameter_name) + '轴本次没有动作？会记录到数据库，可随时撤销；不会发送任何运动指令。', '标记未动', { confirmButtonText: '确认未动', cancelButtonText: '取消' });
+    } catch {
+      return;
+    }
+  }
+  outcomeBusy.value = true;
+  try {
+    const result = await markFineTuningAxisOutcome(batchState.value.id, step.parameter_name, noMotion);
+    if (result.data) applyBatch(result.data, true);
+    ElMessage.success(noMotion ? '已记录：该轴本次未动' : '已撤销：该轴本次已动');
+  } catch (error: any) {
+    const detail = error.response?.data?.detail;
+    ElMessage.error(typeof detail === 'string' ? detail : '标记失败，请稍后重试');
+  } finally {
+    outcomeBusy.value = false;
+  }
+};
 // 到位误差超容差只做提示，不影响批次状态与下发能力
 const hasStepWarnings = computed(() => Boolean(batchState.value?.steps?.some(step => step.warning)));
 // 反馈 device_id → 轴下标映射：按选中机械臂的 V2 轴号动态构建，见 rebuildFeedbackIndex
@@ -580,6 +679,7 @@ const saveActiveProfile = (force = false) => {
 
 const resetControlState = (preserveBatch = false) => {
   ackEvents.value = [];
+  deviceEvents.value = [];
   if (!preserveBatch) {
     batchState.value = null;
     if (batchTimer !== undefined) clearInterval(batchTimer);
@@ -789,6 +889,54 @@ const applyAck = (feedback: any) => {
   ackEvents.value = ackEvents.value.slice(0, 20);
 };
 
+// 到位事件自带设备实测角度（0.01°/0.01mm）：页面“当前实测值”因此可以在静止无位置帧时也更新
+const applyArrival = (feedback: any) => {
+  if (!isReady.value) return;
+  const deviceId = finiteFeedbackNumber(feedback.device_id);
+  if (deviceId === null || !Number.isInteger(deviceId)) return;
+  const index = feedbackDeviceIndex[deviceId];
+  if (index === undefined) return;
+  const angle = finiteFeedbackNumber(feedback.angle);
+  const error = finiteFeedbackNumber(feedback.pos_error);
+  const bits = finiteFeedbackNumber(feedback.status_bits);
+  const flags = finiteFeedbackNumber(feedback.flags);
+  const unit = index === 2 ? 'mm' : '°';
+  const baseValid = flags !== null && Number.isInteger(flags) && (flags & 1) === 1;
+  const faulted = bits !== null && Number.isInteger(bits) && (bits & ((1 << 5) | (1 << 7))) !== 0;
+  const detail = [
+    angle === null ? '角度未知' : '到位实测 ' + (angle / 100).toFixed(2) + unit + '（固件原始 ' + angle + '）',
+    error === null ? null : '固件误差 ' + (error / 100).toFixed(2) + unit,
+    bits === null ? null : '状态字 0x' + bits.toString(16).padStart(2, '0'),
+    flags === null ? null : 'flags 0x' + flags.toString(16) + (baseValid ? '' : '（基准无效）'),
+  ].filter(Boolean).join(' · ');
+  if (angle !== null) updateAxisCurrent(index, angle / 100);
+  // 收到设备事件即证明反馈通道仍在工作
+  feedbackConnected.value = true;
+  deviceEvents.value.unshift({
+    id: ++deviceSequence,
+    text: '轴 ' + deviceId + ' 到位事件：' + detail,
+    type: baseValid && !faulted ? 'info' : 'warning',
+    raw: JSON.stringify(feedback, null, 2),
+  });
+  deviceEvents.value = deviceEvents.value.slice(0, 20);
+};
+
+const applyStop = (feedback: any) => {
+  if (!isReady.value) return;
+  const deviceId = finiteFeedbackNumber(feedback.device_id);
+  const reason = finiteFeedbackNumber(feedback.stop_reason);
+  if (deviceId === null || !Number.isInteger(deviceId) || reason === null) return;
+  if (feedbackDeviceIndex[deviceId] === undefined) return;
+  const labels: Record<number, string> = { 1: '到位', 2: '急停', 3: '命令停止' };
+  deviceEvents.value.unshift({
+    id: ++deviceSequence,
+    text: '轴 ' + deviceId + ' 停止事件：原因 ' + (labels[reason] || '未知 ' + reason) + '（output_level=' + (feedback.output_level ?? '未知') + '）',
+    type: reason === 1 ? 'info' : 'warning',
+    raw: JSON.stringify(feedback, null, 2),
+  });
+  deviceEvents.value = deviceEvents.value.slice(0, 20);
+};
+
 const applyFeedback = (feedback: any) => {
   if (feedback?.data_type === 'config_changed') { connectionChanged(); return; }
   if (!feedback || feedback.data_type === "error") {
@@ -812,6 +960,14 @@ const applyFeedback = (feedback: any) => {
   observeDrawingFeedback(feedback);
   if (!confirmedUnitIds.value.includes(Number(initConfig.unitId))) return;
   feedbackSimulated.value = feedback.simulated === true;
+  if (feedback.data_type === 'arrive_notification') {
+    applyArrival(feedback);
+    return;
+  }
+  if (feedback.data_type === 'stop_notification') {
+    applyStop(feedback);
+    return;
+  }
   const position = finiteFeedbackNumber(feedback.position);
   if (
     feedback.data_type === "axis_encoder" ||
@@ -1144,7 +1300,7 @@ const applyBatch = (batch: FineTuningBatch, preserveDrafts = false) => {
   busy.value = batch.target_locked;
   if (batch.status === 'completed' && batch.steps.some(step => step.warning) && !warnedDeviationBatches.has(batch.id)) {
     warnedDeviationBatches.add(batch.id);
-    ElMessage.warning('本批次有轴到位误差超出容差，已记录提示；不影响后续下发');
+    ElMessage.warning('本批次有轴偏差超出容差，已记录提示；不影响后续下发');
   }
   for (const step of batch.steps) {
     const index = adjustmentKeys.indexOf(step.parameter_name as AxisParameterName);
@@ -1932,7 +2088,15 @@ onBeforeUnmount(() => {
 .local-stop-title { color: #b91c1c; font-size: 13px; font-weight: 600; }
 .local-stop-hint { color: #718096; font-size: 12px; }
 .batch-controls span, .batch-progress p { color: #606266; font-size: 13px; }
+.step-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; font-size: 13px; color: #606266; }
+.step-axis { min-width: 40px; font-weight: 600; color: #303133; }
+.step-chain { font-variant-numeric: tabular-nums; }
+.step-state { color: #909399; font-size: 12px; }
+.step-outcome { padding: 0 6px; border-radius: 4px; background: #f0f9eb; color: #529b2e; font-size: 12px; }
+.step-outcome.unmoved { background: #fef0f0; color: #c45656; }
 .step-warning { margin-left: 8px; color: #b45309; }
+.step-details { margin-top: 10px; }
+.step-details p { margin: 2px 0; color: #718096; font-size: 12px; font-variant-numeric: tabular-nums; }
 .batch-progress { padding: 16px; border: 1px solid #e4e7ed; border-radius: 8px; }
 .ack-card { width: min(100%, 980px); }
 .ack-raw { white-space: pre-wrap; overflow-wrap: anywhere; }

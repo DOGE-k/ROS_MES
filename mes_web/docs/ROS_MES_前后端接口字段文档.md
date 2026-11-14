@@ -203,9 +203,11 @@
 - `POST /control/finetuning/batches`：携带客户端唯一 `request_id`、`module_id`、`unit_id` 和 `adjustments:[{parameter_name, position}]`。批次号只用于 MES 幂等和进度，不添加到 ROS 消息，不声称设备回显它。相同请求号不得重复执行；冲突请求返回 409。
 - `GET /control/finetuning/batches/{id}`：查询每轴及批次进度。刷新页面恢复查询，不自动再次提交。
 - 后端独立订阅反馈。`finetuning_preflight_enabled=true` 时，每轴发送前等待当前模块/机械臂三轴的新鲜位置及有效、空闲、无急停/故障状态。关闭该设置后，批次跳过反馈订阅就绪等待及发送前状态准备，直接进入当前轴相对增量发送。两种设置均在发送后等待同轴运行、有效到位事件和空闲组合，再推进下一轴。
+
+2026-11-14 起，开启发送前检查时若 5 秒内一帧轴状态帧都收不到（现场固件可能根本不周期上报 `/hardware/axis_status`），批次立即以 `blocked` 结束并给出话题名、已收帧统计和「关闭发送前检查」的提示，不再空等满 60 秒。该快速失败只改变提示时机，不放宽任何放行条件。
 - 轴忙/拒绝、限位/故障、失压、断线、急停和超时停止后续下发；无法证明结果时标为 `uncertain` 并保留目标锁，禁止自动重发。状态及幂等记录保存于后端专用批次表，重启后未结束批次变为待核实，不恢复执行。
 - 待核实批次经操作者现场核对后，可调用独立确认接口释放 MES 控制锁；该操作不发送运动、不解除设备故障，后续新批次按当前配置执行发送前检查。历史已发送项目不得作为一整批自动重试。
-- MES 批次在单个后端工作进程中执行；同一设备需由本控制会话独占，不能与 ROS 内部自动流程或其他控制器同时运动。现有反馈无设备请求序号，迟到/混合来源存在协议边界；真机启用前需核实状态、到位事件、单位及独占操作条件。发送后反馈不足时按待核实流程暂停后续轴，完成判定使用运行、到位及空闲证据。
+- MES 批次在单个后端工作进程中执行；同一设备需由本控制会话独占，不能与 ROS 内部自动流程或其他控制器同时运动。现有反馈无设备请求序号，迟到/混合来源存在协议边界；真机启用前需核实状态、到位事件、单位及独占操作条件。发送后反馈不足时按待核实流程暂停后续轴。完成判定优先使用运行→到位→空闲证据；若整批从未收到任何轴状态帧，则退化为「同轴发送后的有效到位事件 + `stop_reason=1` 的正常停止事件」设备事件证据，并在步骤中记录 `completion_evidence=arrive_stop`、`run_observed=false`，批次消息明确说明未收到运行/空闲状态帧。
 - 默认仅以隔离数据库和模拟 ROS 消息验证，不修改 ROS/固件。伸缩单位按现有共享契约 mm/CAN 0.01mm；到位原始字段与现场固件一致性仍需 ROS 方确认。
 
 下列路径均带 `/api` 前缀、要求登录；查询与恢复操作不发送运动指令。
@@ -236,10 +238,13 @@
 | `steps[].expected_position/observed_angle` | 起点加本次增量所得的预期位置 / 到位事件换算后的原始位置，保留于批次记录用于兼容与排查。起点未知时 `expected_position` 为 null |
 | `steps[].deviation/position_error/warning` | 实际增量与指令增量之差 / 固件到位误差换算值 / 相对增量提示，单位随该轴类型确定。起点未知时 `deviation` 为 null |
 | `steps[].status` | `pending` 未发送、`sent_unconfirmed` 发送阶段、`completed` 已观测完成、`uncertain` 已尝试发送但结果不明 |
+| `steps[].outcome` | 该轴运动结论：`moved` 已动、`no_motion` 人工判定未动、`unknown` 待核实。`pending` 步骤没有取值；其余步骤在批次结束回填后一定存在，不在客户端补默认值 |
 
 微调分为发送前检查与发送后完成确认两个阶段。发送前检查开关默认开启，每轴状态准备等待上限 60 秒，状态与位置新鲜度 3 秒。开启时，首轴的反馈订阅就绪与有效状态准备共用同一个 60 秒截止时间，后续每轴单独获得状态准备窗口。关闭时跳过该准备阶段，按本次请求发送相对增量。
 
 发送后完成确认的等待上限为 60 秒。每轴须观测到发送后的运行状态、有效到位事件（`status_bits & 4` 且 `flags & 1`、无超位/故障）和运行后的空闲状态，之后才推进下一轴。缺少有效完成证据时转为 `uncertain`，暂停后续轴并保留目标锁，动作过短漏掉 RUN 也按待核实处理。
+
+`uncertain` 的 `message` 区分两种原因，不要混读：操作者点「停止后续下发」时写“操作者已停止后续下发；已发送动作的结果仍需核实”；急停或联锁代次真的变化时写“控制联锁或急停状态已变化，结果待核实”；超时写超时说明。三种都保留目标锁，都不自动重发。
 
 发送前检查关闭且缺少有效同轴起点时，批次 `start_position/expected_position/observed_delta/deviation` 为 null。后续收到的原始位置可记录为 `observed_angle/raw_current`。页面 `current` 按该模式的有效显示基准计算，基准来源见 2.4.3 节。完成判定按运行、到位与空闲组合处理。
 
@@ -300,6 +305,52 @@
 图纸模式配置中的 `current` 表示相对固定基准的累计偏移，`requested_delta` 表示最近一次指令。单次动作到位偏差取 `progress_json.deviation = observed_delta - position`。无图纸调试模式在 `current/requested_delta` 都有效时可计算本次保存时差值。输入框草稿 `adjust` 用于页面输入和会话续接，保存配置时旧客户端传入的 `adjust` 会被忽略。旧客户端省略 `position_mode` 时默认按 `raw` 保存 `current`，省略 `requested_delta` 时保存为 null。压力项继续使用原始压力读数，IMU 各字段按既有反馈语义记录。[配置模型](../ros_mes_hou/app/schemas/finetuning.py)
 
 相对换算依赖原始反馈和对应基准的准确性。现场原始反馈 5/0 跳变的来源待核实，当前相对显示、图纸静止基准和到位提示的验证范围为前后端软件路径。
+
+2026-11-14 起，页面结果行改为每轴一行五段式 `初始 → 微调 → 应到 → 到位实测 → 偏差`，字段语义与术语对照见 2.4.4 节；`deviation` 的参照系固定为本次 `start_position`，不是图纸固定基准。
+
+### 2.4.4 微调记录字段语义与人工“未动”标记（2026-11-14）
+
+微调是相对增量指令，一条下发记录涉及三个不同的量。为避免和 ROS 侧“实际值”混淆，前后端统一使用下表叫法；这也是接口字段、数据库列名和页面标签的对照表。
+
+| 统一叫法 | 接口/数据库字段 | 含义与来源 | 缺省值 |
+|---|---|---|---|
+| 初始值 | `start_position`；记录表 `old_value` | 该轴发令前不超过新鲜度阈值的实测原始位置 | 发送前检查关闭或取不到新鲜样本时为 null |
+| 微调量 | `position`（批次步骤）、`requested_delta` | 输入框的本次增量，带符号；伸缩轴为 mm | 必填，0 表示不下发 |
+| 应到 | `expected_position`；记录表 `new_value` | `start_position + position`，MES 推算的目标原始位置 | `start_position` 为 null 时为 null |
+| 到位实测 | `observed_angle`；记录表 `observed_position` | 到位事件 `angle/100` 换算后的原始位置 | 未收到到位事件时为 null |
+| 到位变化量 | `observed_delta` | `observed_angle - start_position` | 同上 |
+| 偏差 | `deviation` | `observed_delta - position`，MES 自算，超容差只提示不阻止 | 同上 |
+| 固件自报误差 | `position_error` | 到位事件 `pos_error/100`，设备自己上报的误差 | 速度为 0 或设备未报时为 null |
+| 运动结论 | 记录表 `outcome` / `outcome_by` / `outcome_at` | `moved` / `no_motion` / `unknown` | 批次结束按到位证据回填 |
+| 完成证据 | 步骤 `completion_evidence` | `run_arrive_idle`（运行→到位→空闲）或 `arrive_stop`（到位+正常停止事件） | 无证据时省略 |
+
+偏差和固件自报误差来源不同，两者都保留、都要显示，不能用一个替代另一个：偏差是 MES 用 `start_position` 算出来的，固件自报误差是设备自己报的。
+
+`fine_tuning` 表在原有列之外新增 `requested_delta`、`observed_position`、`observed_delta`、`deviation`、`position_error`、`outcome`、`outcome_by`、`outcome_at` 八列，`new_value` 允许为空并改存“应到值”。含义变更如下：
+
+| 列 | 旧语义 | 现语义 |
+|---|---|---|
+| `old_value` | 该参数上一条记录的 `new_value` | 本次 `start_position` |
+| `new_value` | `old_value + position`，却被当作“实测值”读取 | 本次 `expected_position`（应到），非实测 |
+| `notes` | 带“仅供确认”免责声明 | 仅 `batch=<批次号>; mode=<execution_mode>` |
+
+每次下发每轴写一行，写入发生在 `publish()` 之前，因此该行存在只能证明“这条 CAN 帧发出去了”，不能证明设备接受、运动或到位；到位相关字段在批次结束时回填。旧的“读上一条 `new_value` 当起点”逻辑改为优先取 `observed_position`，取不到再退回 `new_value`。
+
+**人工“未动”标记**（新增接口）：
+
+| 项 | 内容 |
+|---|---|
+| 路径 | `POST /api/control/finetuning/batches/{batch_id}/axes/{parameter_name}/outcome` |
+| 鉴权 | 是 |
+| 请求体 | `{ "no_motion": true, "operator_confirmed": true }`（`operator_confirmed` 必须是字面量 `true`，防止误调用） |
+| 响应 | 批次快照，结构与批次查询一致，前端直接刷新结果行 |
+| 状态码 | 200 成功；404 批次不存在；409 批次仍在 `queued/checking/executing` 等非终态；422 `parameter_name` 不在 `rotation/swing/telescopic` 内 |
+| 写入 | 该批次该轴记录 `outcome`（`no_motion`；撤销回 `moved`）、`outcome_by`、`outcome_at`，并同步进批次 `progress_json` 步骤；靠 `notes` 的 `batch=<id>` 前缀定位批次所属行 |
+| 副作用 | 不发送任何运动指令，不改 `start_position`/`observed_*`/`deviation`，只写判定结果 |
+
+自动判定（`moved` / `unknown`）与人工判定写同一处：批次结束时既写 `fine_tuning` 行，也把结论回写进批次快照 `progress_json` 的 `steps[].outcome`。只写记录表时，查询接口返回的步骤没有结论，前端只能按默认值显示成“已动”，会把待核实的轴说成动了；页面另按 `steps[].status` 兜底，只有 `completed` 才显示已动。
+
+为什么标记而不是删行：记录行是“这条 CAN 帧发出去了”的审计证据，删掉就再也分不清“没发”和“发了没动”。运动与否需要人看现场，因此默认 `moved`，只在操作员确认没动时点「标记未动」，且可「撤销」。`unknown` 表示没有证据可判（运动超时无到位、中断、发令前被拦、反馈断线），页面显示“待核实”，不冒充“已动”。
 
 ### 2.5 硬件控制与状态接口
 
@@ -469,8 +520,8 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 | `pressure_sensor` | 瞬时压力，独立于轴的接收状态 |
 | `imu_pose` | `swing_angle/rotation_angle/x/y/z`，每个分量独立更新 |
 | `cmd_ack` | 回执事件提示，见下文 |
-| `axis_status`、`arrive_notification` | 后端批次消费者核验运行/目标到位/空闲；前端通过批次查询显示执行状态，不把事件字段当实测位置 |
-| `stop_notification`、`axis_fault`、`limit_event`、`vacuum_loss_event` | 后端批次消费者遇到所属臂异常时停止后续下发；前端通过批次结果显示，独立告警页未扩展 |
+| `axis_status`、`arrive_notification` | 后端批次消费者核验运行/目标到位/空闲；前端通过批次查询显示执行状态，另将到位事件 `angle`（0.01°/0.01mm）换算后补全该轴实测值，并在「到位 / 停止事件」卡片显示原始字段。事件不替代位置帧，也不单独改变批次判定 |
+| `stop_notification`、`axis_fault`、`limit_event`、`vacuum_loss_event` | 后端批次消费者遇到所属臂异常时停止后续下发；`stop_reason=1` 的正常停止可与其他证据组合判定完成。前端通过批次结果显示，停止事件另在「到位 / 停止事件」卡片显示原因，独立告警页未扩展 |
 | `pressure_average` | 已转发，前端未展示；ROS 均值采样归属仍待核实 |
 | `error` | 连接异常信息；不能继续将旧数值显示为实时 |
 
@@ -484,7 +535,7 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 
 收到接受回执也不表示运动完成。`ack_msg` 不同可能对应回零等其他命令，不能把任意 `result=3` 都称为“本次微调超限”。未收到回执不推断成功/失败，不无限等待或自动重发增量指令。
 
-回执事件列表最多保留 20 条，只在当前页面会话内存在，不是持久化日志或完整指令追踪。
+回执事件列表最多保留 20 条，只在当前页面会话内存在，不是持久化日志或完整指令追踪。到位/停止事件列表同样最多保留 20 条、仅当前页面会话内存在，切换机械臂或重新配置时清空。
 
 新增五类轴事件保留 `raw/header`，按 SEG 归属；整数事件字段缺失/非法时为 null，`position=null/position_valid=false`，不得伪造位置。字段分别为轴状态 `status_bits/axis_state/base_valid`、到位 `angle/pos_error/status_bits/flags`、停止 `stop_reason/output_level`、故障 `fault_bits/local_action/detail/duration_ms`、限位 `limit_type/output_level`；失压补充 `pressure_raw/loss_threshold`。批次消费者对可能属于当前臂的拒绝回执保守中止，但不以接受 ACK 推进，不能据此声称已建立设备逐请求追踪。
 
@@ -603,12 +654,14 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 
 SQLite（`ros_database.db`，项目根），当前模型 20 张表，模型在 `app/db/models.py`，历史建库种子脚本为仓库根的 `sqlite_create.py`。时间字段 `DateTime(timezone=True)` 默认 `now()`；业务表普遍带软删除 `del_flag` 与 `Notes`。
 
-2026-11-06 新增 `fine_tuning_batches`、`control_safety` 及页面配置表 `ros_debug_settings`。后端启动时已有的 `create_all` 会仅创建缺失表，无需重建/清空现有库，**不要为本次升级运行根种子脚本**。批次执行及恢复按单后端工作进程设计，当前不支持多 worker/多实例同时控制；重启后未完成批次转待核实并保留锁，不恢复动作。连接快照复用 JSON，不对已有业务表追加列。
+2026-11-06 新增 `fine_tuning_batches`、`control_safety` 及页面配置表 `ros_debug_settings`。后端启动时已有的 `create_all` 会仅创建缺失表，无需重建/清空现有库，**不要为本次升级运行根种子脚本**。
+
+2026-11-14：`create_all` 之后新增 `app/db/schema.py` 的 `ensure_schema()` 补列迁移。它检测到 `fine_tuning.new_value` 仍为 NOT NULL 时整表重建（DROP → CREATE → INSERT SELECT → DROP 旧表 → RENAME），否则只 `ALTER TABLE ADD COLUMN` 补缺失列；可重复执行，已有行按同名公共列保留。启动顺序为 `create_all` → `ensure_schema` → `runtime_settings.load()`。批次执行及恢复按单后端工作进程设计，当前不支持多 worker/多实例同时控制；重启后未完成批次转待核实并保留锁，不恢复动作。连接快照复用 JSON，不对已有业务表追加列。
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
 | `Users` | User_ID(PK), Username, Password(bcrypt), Type_ID(1=管理员/2=操作员), Creator_ID(自引用FK), Createtime, Islock, Locktime, Name, Headimage, Birthday, Sex, Modifytime, del_flag, Notes | 用户 |
-| `fine_tuning` | id(PK), module_id+unit_id(联合FK→Unit), module_address?, module_descript?, parameter_name(rotation/swing/telescopic), old_value?, new_value, creater_id→Users, create_time, notes, del_flag | 微调记录 |
+| `fine_tuning` | id(PK), module_id+unit_id(联合FK→Unit), module_address?, module_descript?, parameter_name(rotation/swing/telescopic), old_value?(=初始值 start_position), requested_delta?(=微调量), new_value?(=应到 expected_position，非实测), observed_position?(=到位实测), observed_delta?, deviation?(=MES 自算偏差), position_error?(=固件自报误差), outcome?(moved/no_motion/unknown), outcome_by?→Users, outcome_at?, creater_id→Users, create_time, notes, del_flag | 微调记录，字段语义见 2.4.4 节 |
 | `fine_tuning_batches` | id(UUID PK), request_id(Unique), target_key(可空 Unique，真实 SEG:arm / 模拟 mock:SEG:arm), module_id, unit_id, seg, creator_id, request_json, progress_json, status, message, cancel_requested, created_at, updated_at | 幂等请求、逐轴进度与目标锁；完成/人工关闭后 target_key 置空 |
 | `control_safety` | id(PK，1=真实、2=模拟), state, generation | MES 急停/解除发送状态及联锁版本，不是设备状态表；两种环境互不清除 |
 | `ros_debug_settings` | id(PK，单例 1), revision, config_json | 当前服务连接模式和地址，逐项自动保存 |

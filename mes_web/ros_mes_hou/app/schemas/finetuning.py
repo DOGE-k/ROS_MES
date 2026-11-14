@@ -38,7 +38,15 @@ class FineTuningResponse(BaseModel):
     module_descript: Optional[str] = None
     parameter_name: str
     old_value: Optional[float] = None
-    new_value: float
+    new_value: Optional[float] = None
+    requested_delta: Optional[float] = None
+    observed_position: Optional[float] = None
+    observed_delta: Optional[float] = None
+    deviation: Optional[float] = None
+    position_error: Optional[float] = None
+    outcome: Optional[str] = None
+    outcome_by: Optional[int] = None
+    outcome_at: Optional[datetime] = None
     creater_id: int
     create_time: Optional[datetime] = None
     notes: Optional[str] = None
@@ -76,6 +84,13 @@ class FineTuningBatchCreate(BaseModel):
 
 
 class BatchAcknowledge(BaseModel):
+    operator_confirmed: Literal[True]
+
+
+class BatchMotionOutcome(BaseModel):
+    """人工判断某轴本次是否运动；只写数据库记录，不发送任何运动指令。"""
+
+    no_motion: bool
     operator_confirmed: Literal[True]
 
 

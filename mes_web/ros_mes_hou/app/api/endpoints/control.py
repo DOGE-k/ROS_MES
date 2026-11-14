@@ -285,6 +285,20 @@ def acknowledge_finetuning_batch(batch_id: str, record: finetuning_schemas.Batch
     return {"code": 200, "message": "已关闭 MES 待核实记录；未发送运动", "data": batch_manager.acknowledge(batch_id)}
 
 
+@router.post("/finetuning/batches/{batch_id}/axes/{parameter_name}/outcome")
+def mark_finetuning_axis_outcome(
+    batch_id: str,
+    parameter_name: str,
+    record: finetuning_schemas.BatchMotionOutcome,
+    current_user: models.User = Depends(get_current_user),
+):
+    """人工判断某轴本次是否运动。默认已运动，仅在确认没动时标记；只写数据库，不发送运动指令。"""
+    data = batch_manager.set_outcome(batch_id, parameter_name, record.no_motion, current_user.User_ID)
+    message = ("已记录人工判断：该轴本次未运动；未发送运动指令" if record.no_motion
+               else "已恢复为该轴本次已运动；未发送运动指令")
+    return {"code": 200, "message": message, "data": data}
+
+
 @router.get("/emergency_stop/status")
 def get_emergency_state(current_user: models.User = Depends(get_current_user)):
     dispatcher = get_ros_dispatcher()

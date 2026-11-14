@@ -11,6 +11,54 @@
 
 ---
 
+
+## 2026-11-14（微调页面端到端自测：结论回填与停止说明两处修正，已完成）
+
+- 自测方式：按使用者路径走完全流程——登录 → 连接设置/会话 → 机械臂确认 → 三轴微调下发 → 轮询终态 → 人工判定 → 待核实关闭 → 保存配置/校零保存。对象是本机模拟连接（`ros_mode=mock`、`drawing_mode=mock`、`finetuning_preflight_enabled=true`、连接 revision 25），未接真机。
+- 实测覆盖与结果（全部符合预期）：三轴一次下发 `初始 0.00/0.00/0.00 → 微调 +0.50/-0.30/+1.00 → 应到 0.50/-0.30/1.00 → 到位实测同值 → 偏差 0.00`，终态 `completed`；同 `request_id` 重发返回同一批次、改内容 409、同臂在途再下发 409；标记未动写 `outcome=no_motion`+`outcome_by=1`+`outcome_at`、撤销回 `moved`；未发送的轴标记返回 404（没有记录可标）、非法轴名 422、批次不存在 404、缺 `operator_confirmed` 422；`interrupt` 后转 `uncertain` 且保留目标锁，`acknowledge` 后 `active` 查询为空；普通保存配置 200、校零保存 200、旧 `connection_revision` 保存 409、调试模式绑内置模拟图纸 422。
+- 修正 1（结论只写进记录表，没写进批次快照）：`_record_outcome()` 原来只更新 `fine_tuning` 行，没有回写 `fine_tuning_batches.progress_json`；而查询接口返回的是快照，于是自动判定的轴 `steps[].outcome` 为空，前端只能落到默认值“已动”——超时或中断的轴会被显示成已动，正好违背“没有到位证据就写待核实”的约定。现在回填结论后一并把 `steps` 写回快照；前端新增 `outcomeLabelOf()` 再按 `status` 兜底（只有 `completed` 才说已动，其余一律待核实），刷新后读旧批次也不会误显示。
+- 修正 2（操作者停止被报成急停）：`_check()` 原来把“操作者点了停止后续下发”和“急停/联锁代次真的变化”抛成同一句 `控制联锁或急停状态已变化，结果待核实`，实测点停止后批次说明就是这样，会让人去现场找一个根本没发生的急停。现在 `cancel_requested` 单独说明 `操作者已停止后续下发；已发送动作的结果仍需核实`，只有安全代次变化才报急停/联锁。
+- 验证：后端 `python -m unittest discover -s tests` 223/223（新增 3 项：快照带 `moved`、中断轴快照为 `unknown`、停止说明不含“急停”）；前端 `npm run test:finetuning` 162/162（新增 1 项：缺结论按状态兜底）、`npm run test:drawing` 12/12、`npm run build` 通过。以上均为隔离库、测试替身与模拟连接，真机与真实 rosbridge 未验证。
+- `???` 自测发现、本次未改的三项：① 页面刷新后 `batchState` 不恢复（会话快照里没有它），批次结果区和「标记未动」按钮一起消失，只能在刷新前补判；要留就得加“查最近一批”接口。② 图纸模式下若基准尚未锁定（`确认并下发` 的锁定窗口内，或下发失败后刷新会话），初始值/应到显示 `—` 而「确认下发三轴调整」仍可点，属于盲发；可把该按钮的可用条件和应到同源。③ 图纸模式静止时初始值与当前实测同值，已在另一条记录说明。
+
+---
+
+## 2026-11-14（修正图纸模式“应到”跳回图纸基准，已完成）
+
+- 现象：图纸下发后（基准已锁定）做微调，下发完成、输入框微调量自动归零时，「应到」立刻跳回图纸固定基准值。截图实测基准 `0.02 / 0.02 / 0.00`，实际 `0.02 / 0.02 / 7.00mm`，伸缩「应到」显示 `0.00mm`，而机械臂实际在 `7.00mm`。
+- 原因：[FineTuningPage.vue](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue) 的 `displayAxisInitial` / `displayAxisTarget` 在图纸模式下把「初始值」取成 `axisReferencePosition()`（图纸固定基准），应到 = 基准 + 微调量。微调是相对**当前位置**的增量，起点只能是实际位置；微调归零后应到自然等于基准，看起来就是“变回基准值”。
+- 修正：图纸模式下初始值与应到的基准改为 ROS 返回的实际位置（新增 `drawingAxisActual()`，基准未锁定时显示 `—`），应到 = 实际位置 + 微调量，与批次结果里的 `初始 → 微调 → 应到` 保持同一坐标。调试模式仍是虚拟起点 `0.00`，未改动。
+- 顺带修正横幅文案：`图纸固定基准已锁定，后续微调沿用这组基准` 改为 `图纸固定基准已锁定，微调以实际位置为起点`，不再暗示微调以基准为起点。
+- 已知表现：图纸模式下静止时「初始值」与「当前实测」数值相同（起点就是现在的实际位置），只有下发过程中才会分开；如需去掉冗余标签另行确认。
+- 验证：前端 `npm run test:finetuning` 161/161（图纸模式用例改为断言基准 47.25、实际 57.30 时初始值 `57.30`，微调归零后应到 `57.30°`、-0.3 时 `57.00°`，基准仍为 `47.25`）、`npm run test:drawing` 12/12、`npm run build` 通过。
+
+---
+
+## 2026-11-14（微调控制台中文标注，已完成）
+
+- 起因：测试微调时后端控制台只有 uvicorn 的英文访问日志（`POST /api/control/finetuning/batches HTTP/1.1" 200 OK`），看不出批次发了哪根轴、起点和应到多少、到没到位，只能回头翻数据库。ROS 节点侧一直是中文标注日志（`📤 模块{mid} 臂{arm_id} | 旋转增量:{...}`），本侧对齐同一风格。
+- 后端 [main.py](../ros_mes_hou/app/main.py)：新增 `logging.basicConfig(level=INFO, ...)`。uvicorn 只配置自己的 logger，业务代码走 root，不给 root 加 handler 时 `logger.info` 不输出。同时把 `sys.stdout`/`sys.stderr` 重设为 UTF-8 且 `errors="replace"`：Windows 控制台默认 GBK，日志里的表情会 `UnicodeEncodeError`，足以打断发送流程。
+- 后端 [finetuning_batch.py](../ros_mes_hou/app/ros/finetuning_batch.py)：按状态机打点，每行带批次短号——`📋 登记`（模块/臂/各轴增量/模式）、`⏳ 发送前检查`、`📤 发送`（轴号/轴名/增量/起点→应到/记录 id）、`🎯 到位实测`（到位值/偏差/固件自报误差/是否超差）、`📝 结论`（已动或待核实）、`🖊️ 人工判定`（标记未动或撤销，注明只改库不发令）、`✅/⚠️/🚫` 批次终态；异常分支额外打一条 `logger.warning`。
+- 日志只加标注，不改判定：放行条件、容差、证据路径、写库时机均未变动。
+- 验证：后端 `python -m unittest discover -s tests` 220/220 通过（`logger` 在测试路径里被真实调用，无 `NameError`）；单独验证 UTF-8 重设后表情与中文在管道输出下正常显示。控制台日志不落盘、随进程消失，事后追溯仍以 `fine_tuning` / `fine_tuning_batches` 表为准。
+- `???` 未加滚动文件日志，当前只有控制台输出；需要持久化日志时另开一条。
+
+---
+
+## 2026-11-14（微调记录语义重做：应到值 / 到位实测 / 人工未动标记，已完成）
+
+- 起因：与 ROS 侧对齐术语时发现 MES 的“实际值”和 ROS 的“到位实测”不是一回事。旧实现把 `new_value` 当成“实测值”写库，实际写的是 `old_value + position`（发令前推算的应到值），同一行既没有存微调量也没有存到位实测，`id=18 telescopic old=2.0 new=2.0` 就是被读成“没动”的典型：批次数说 `start=2.0 / position=+2.0 / expected=4.0`。前端也因此把“本次增量 / 到位实际增量 / 本次实际转动 / 相差”混着显示，同一个数字出现两三次。
+- 术语统一（新老叫法对照，见[接口字段文档](ROS_MES_前后端接口字段文档.md)）：`初始值`=`start_position`（发令前 ≤3 秒的新鲜实测）；`微调量`=`requested_delta`=`position`（输入框值，批次 `progress_json` 同名）；`应到`=`expected_position`=`start_position + position`；`到位实测`=`observed_angle`（到位事件 `angle/100`）；`偏差`=`deviation`=`observed_delta - position`（MES 自算）；`固件自报误差`=`position_error`（固件 `pos_error/100`）。偏差与固件误差来源不同，两个都留。
+- 数据库（[models.py](../ros_mes_hou/app/db/models.py)）：`fine_tuning` 表 `new_value` 去掉 NOT NULL 并改存“应到值”，新增 `requested_delta`、`observed_position`、`observed_delta`、`deviation`、`position_error`、`outcome`、`outcome_by`、`outcome_at` 八列。迁移用新增的 [schema.py](../ros_mes_hou/app/db/schema.py)：`ensure_schema()` 在 `create_all` 之后调用，检测到 `new_value` 仍为 NOT NULL 时整表重建（DROP→CREATE→INSERT SELECT→RENAME），否则只补缺失列；可重复执行。启动顺序 `create_all` → `ensure_schema` → `runtime_settings.load()`。
+- 记录语义（[finetuning_batch.py](../ros_mes_hou/app/ros/finetuning_batch.py)）：每轴下发仍在 `publish()` 之前写一行（保留 CAN 帧审计），`old_value=start_position`、`requested_delta=position`、`new_value=expected_position`、`notes=batch=<id>; mode=<execution_mode>`（去掉了原来的免责声明）；批次结束时 `_record_outcome()` 按 `record_id` 回填 `observed_position/observed_delta/deviation/position_error`，并把 `outcome` 置为 `moved`（收到到位）或 `unknown`（无到位证据）。`unknown` 覆盖运动超时、中断（`stop_sent`/反馈掉线）、发令前被拦（前置检查失败、`cmd_ack` 拒绝）、反馈断连——没有到位证据就不写“动了”。
+- 人工判定（新增 `POST /api/control/finetuning/batches/{batch_id}/axes/{parameter_name}/outcome`）：运动与否需要人看现场，默认按“已动”处理，只有操作员确认没动才点「标记未动」，写 `outcome=no_motion` + `outcome_by` + `outcome_at`，可「撤销」回 `moved`。接口只改数据库，不发送任何运动指令；批次仍在 `queued/checking/executing` 等非终态时返回 409，参数名不在三轴内返回 422。选择标记而不删行，是为了保留“发过这条 CAN 帧”的证据。
+- 前端（[FineTuningPage.vue](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)）：输入区三个标签改为`初始值`/`当前实测`/`应到`（应到=初始值+输入框微调量，随输入实时变）；批次结果每轴一行五段式 `初始 → 微调 → 应到 → 到位实测 → 偏差`，每个数只出现一次，缺项显示 `—` 不编造；`step.warning` 收成行尾 ⚠（悬停看原文），固件自报误差、容差、完成证据收进可折叠的“固件自报误差与判定依据”；每轴按终态显示「已动 / 未动（人工） / 待核实」+「标记未动」/「撤销」。
+- 图纸模式按 C 方案：图纸下发只显示“实际到位”（锁定基准 + 实际位置），不显示“图纸要求值”——MES 侧拿不到 `calculation_node` 的目标角，而 `kinematics_node` 会给未参与臂写 `[0,0,0]` 占位，与真实 0° 目标不可区分，读它就是编数据。调试模式仍从 0 开始计。
+- 偏差算法确认：偏差必须用 `start_position`（本次发令前实测），不能用图纸基准。连续批次本来就该各自收敛，实测 `baseline 47.25° / start 48.60° / +10° → 应到 58.60° / 到位 58.66° / 偏差 +0.06°` 正确；用基准算会假报 +1.41°。
+- 验证：后端 `python -m unittest discover -s tests` 220/220（新增 `test_finetuning_record_semantics.py` 12 项，覆盖记录语义、`moved`/`unknown` 回填、标记未动与撤销、非终态 409、非法轴 422、批次不存在 404、迁移重建保数据且可重复执行）；前端 `npm run test:finetuning` 161/161（新增 5 项：五段式只出现一次且缺项不编造、应到=初始+微调、标记未动/撤销且不发运动指令、非终态不显示按钮、图纸模式不出现图纸要求值）、`npm run test:drawing` 12/12、`npm run build` 通过（仅既有包体积提示）。全部为隔离库与测试替身，未接真机。
+- `???` 现场需重启后端让 `ensure_schema` 跑一次；`fine_tuning` 与 `fine_tuning_batches` 现有数据已按约定清空（纯开发库），旧行没有 `desired`/`observed` 语义，不要拿旧数据反推结论。`outcome` 的“已动”默认值只是操作便利，不等于设备真的动了——真机验证仍需到位事件或人工确认。
+
+---
 ## 2026-11-14（人工校零同步 ROS 软件基准，已完成）
 
 - 前端点亮「校准」后再保存配置，后端新增 `axis_zero` 分发，向 `/control/axis_zero` 发布 `IntCmd(module_id=业务模块号, device_id=0, position=[arm])`。业务 `unit_id` 支持 1～5 及 32/64/96/128/160 映射，仅复位目标臂，不影响其他臂；普通配置保存不发布该话题。
@@ -19,6 +67,20 @@
 - 四个 ROS 文件及后端适配文件 `py_compile` 通过；模拟 `IntCmd` 验证目标臂归零、其他臂不变、错误设备号及非法臂号不改变状态。校零相关后端 22/22 项、前端微调 155/155 项通过，覆盖消息映射、发布成功、普通保存不发布和发布失败不落库。
 - 全量后端运行 205 项，仅旧 `test_runtime_settings` 在当前 Python 3.8 环境因内置 `anext` 不存在报错；前端生产构建仍被其他页面的既有 TypeScript 错误阻塞，本次修改文件未出现在错误列表。
 - `???` 现场使用前需重启三轴节点、各臂状态聚合节点及后端服务；真实 rosbridge 接收和真机校零效果待现场核实。
+
+---
+
+## 2026-11-14（批次状态帧缺失快速失败与设备事件证据，已完成）
+
+- 起因：梳理微调链路时确认批次状态机的地基是「周期轴状态帧 + 静止周期位置帧」，而[实测报告](../../docs/机械臂物理状态实测报告_2026-11-07.md)记载运动结束后静默采集 5 秒未观测到任何周期位置帧、轴状态帧或事件帧。若现场固件确实不上报，开启发送前检查的批次会卡满 60 秒才报一句“超时”，无法区分“设备没上报”和“上报了但内容不合格”。
+- 后端[批次管理器](../ros_mes_hou/app/ros/finetuning_batch.py)：新增 `status_grace=5.0`。发送前检查开启时，若 5 秒内一帧轴状态帧都收不到，立即以 `blocked` 结束，消息包含状态帧话题名、本批次已收各类帧数、缺新鲜状态/位置的轴号，并提示可关闭“发送前检查”。该快速失败不改变任何放行条件，且未发送任何运动指令。
+- 完成判定改为两条证据路径：仍优先“运行→到位→空闲”；当整批从未收到任何轴状态帧时，接受“同轴发送后的有效到位事件 + `stop_reason=1` 正常停止事件”。步骤记录 `completion_evidence`（`run_arrive_idle`/`arrive_stop`）、`run_observed`、`idle_observed`、`stop_observed`，批次消息与逐轴消息明确说明按设备事件判定、未收到运行/空闲状态帧。发送前清空已收旧事件，事件仍要求发生在本次发送之后。
+- 超时消息附带本批次已收帧统计（轴状态/位置/到位/停止/回执/故障/限位/压力/陀螺仪各多少帧）与缺失项，用于现场定位“到底缺哪种帧”。
+- 前端[微调页](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue)：新增“到位 / 停止事件”卡片（最多 20 条、仅本会话、切换机械臂或重新配置时清空），显示 `angle/pos_error/status_bits/flags` 与停止原因；到位事件角度按 0.01°/0.01mm 换算后补全该轴实测值，因此静止无位置帧时“到位后值不更新”的现象可消除。该展示不参与批次判定；`flags` 基准无效或故障/急停位为 1 时降级为警告。
+- 对接状态清单更新：ROS 侧口述确认固件会周期上报 `0x0480xx4C`，该行“下位机支持”由“待确认”改为“ROS 侧已确认、MES 真机链路待复核”，并注明[硬件节点](../../robot_control_backend/scripts/hardware_node.py)是纯转发（仅在收到 `GRP=2/DIR=PERIODIC/MSG=3` 时发布，本侧无周期生成）。核对结论：[全流程测试报告](../../docs/ROS_MES_全流程测试报告.md) 的“2Hz 周期位置上报通过”来自 `sim_lower_machine.py` 仿真（该模拟器只发位置/压力/IMU，不发轴状态、到位、停止事件），不能作为固件已上报的证明；[11-07 实测报告](../../docs/机械臂物理状态实测报告_2026-11-07.md) 的 CAN 层静默结论与 ROS 侧反馈不一致，暂按固件版本差异存疑，待真机 `candump`/`rostopic hz` 复核。
+- 验证：后端 `python -m unittest discover -s tests` 206/206 通过（新增 3 项：无状态帧快速失败、仅到位+停止事件完成、有状态帧时保持严格证据）；前端 `npm run test:finetuning` 156/156（新增 1 项：到位/停止事件展示与实测值补全）、`npm run test:drawing` 12/12、`npm run build` 通过（仅既有包体积提示）。全部为隔离数据库与测试替身，未接真机。
+- `???` 固件是否周期上报 `/hardware/axis_status` 与静止位置帧仍待 ROS/固件方确认；确认前“事件证据”路径只是让现场能继续操作，不能当作固件已支持状态帧的证明。`stop_reason` 取值与作用域、到位 `flags bit0` 由硬件节点强制置位的现状同样待确认。
+
 
 ---
 

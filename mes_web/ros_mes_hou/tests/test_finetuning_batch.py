@@ -70,6 +70,23 @@ class FakeClient:
             self.queue.put_nowait(status(did, 2 if did == axis else 0))
 
 
+class EventOnlyClient(FakeClient):
+    """只回传设备事件（到位 + 正常停止），完全不发轴状态帧：模拟固件不周期上报状态的现场。"""
+
+    def __init__(self):
+        super().__init__(initial=False)
+        self.finetuning_preflight_enabled = False
+
+    async def publish(self, action, payload):
+        self.sent.append(payload)
+        axis = payload["message"]["device_id"]
+        self.positions[axis] += payload["message"]["position"][0]
+        self.queue.put_nowait(arrive(axis, self.positions[axis]))
+        self.queue.put_nowait({"data_type": "stop_notification", "module_id_space": "seg", "module_id": 0,
+                               "device_id": axis, "stop_reason": 1, "output_level": 0})
+        return {"sent": True}
+
+
 class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -261,11 +278,15 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(52, step["observed_angle"])
         self.assertIsNone(step["observed_delta"])
         self.assertIsNone(step["deviation"])
-        self.assertIn("本次相对运动结果待核实", step["warning"])
-        self.assertIn("固件误差 +0.45°", step["warning"])
+        # 缺少起点：初始/应到/偏差显示为 —，只保留固件自报误差
+        self.assertIn("初始 —", step["warning"])
+        self.assertIn("微调 +2.00°", step["warning"])
+        self.assertIn("应到 —", step["warning"])
+        self.assertIn("到位实测 52.00°", step["warning"])
+        self.assertIn("偏差 —", step["warning"])
+        self.assertIn("固件自报误差 +0.45°", step["warning"])
         self.assertNotIn("本次实际转动", step["warning"])
         self.assertNotIn("历史记录", step["warning"])
-        self.assertNotIn("相差", step["warning"])
 
     async def test_disabled_preflight_still_requires_run_before_arrival_advances_the_batch(self):
         client = FakeClient(initial=False)
@@ -323,7 +344,7 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
             db.commit()
 
     def test_legacy_snapshot_derives_relative_results_without_rewriting_persisted_json(self):
-        for name, axis, unit, motion in (("rotation", 1, "°", "转动"), ("telescopic", 3, "mm", "移动")):
+        for name, axis, unit in (("rotation", 1, "°"), ("telescopic", 3, "mm")):
             with self.subTest(parameter=name):
                 old_warning = "到位角 13.60 与期望 14.05 相差 -0.45（容差 0.2），仅提示，不阻止后续轴"
                 legacy_step = {
@@ -342,7 +363,8 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
                 self.assertAlmostEqual(4.55, step["observed_delta"])
                 self.assertEqual(14.05, step["expected_position"])
                 self.assertEqual(13.6, step["observed_angle"])
-                self.assertIn(f"本次实际{motion} 4.55{unit}", step["warning"])
+                self.assertIn(f"初始 9.05{unit} → 微调 +5.00{unit} → 应到 14.05{unit} → 到位实测 13.60{unit}", step["warning"])
+                self.assertIn(f"偏差 -0.45{unit}", step["warning"])
                 self.assertIn(step["warning"], result["message"])
                 self.assertNotIn("到位角", result["message"])
                 with self.sessions() as db:
@@ -375,7 +397,8 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
                 restored = result["steps"][0]
                 self.assertNotIn("start_position", restored)
                 self.assertNotIn("observed_delta", restored)
-                self.assertIn("本次相对运动结果待核实", restored["warning"])
+                # 起点无效：初始/应到/偏差显示 —，其余值照常给出
+                self.assertIn("初始 — → 微调 +5.00° → 应到 — → 到位实测 13.60° → 偏差 —", restored["warning"])
                 self.assertNotIn("到位角", result["message"])
 
     def test_legacy_message_with_identical_axis_warnings_keeps_the_current_axis_units(self):
@@ -387,8 +410,9 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
         } for name, axis in (("rotation", 1), ("telescopic", 3))]
         self.persist_history(steps, f"轴 3 已观测到运行、目标到位及空闲；{old_warning}")
         result = self.manager.get("legacy_batch")
-        self.assertIn("本次实际移动 4.55mm", result["message"])
-        self.assertIn("本次实际转动 4.55°", result["steps"][0]["warning"])
+        # 两条轴历史提示文本相同，但各自按自己的单位重新生成
+        self.assertIn("初始 9.05mm → 微调 +5.00mm → 应到 14.05mm → 到位实测 13.60mm → 偏差 -0.45mm", result["message"])
+        self.assertIn("初始 9.05° → 微调 +5.00° → 应到 14.05° → 到位实测 13.60° → 偏差 -0.45°", result["steps"][0]["warning"])
 
     async def test_three_axes_complete_in_order_with_real_completion_pattern(self):
         client = FakeClient(complete=True)
@@ -476,11 +500,14 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
                 self.assertAlmostEqual(9.05, step["start_position"])
                 self.assertAlmostEqual(4.55, step["observed_delta"])
                 self.assertAlmostEqual(-0.45, step["deviation"])
-                self.assertIn(f"本次实际{motion} 4.55{unit}", step["warning"])
-                self.assertIn(f"指令增量 5.00{unit}", step["warning"])
-                self.assertIn(f"相差 -0.45{unit}", step["warning"])
-                self.assertIn(f"固件误差 +0.45{unit}", step["warning"])
+                # 五段式：初始 → 微调 → 应到 → 到位实测 → 偏差，每个值只出现一次
+                self.assertEqual(
+                    f"初始 9.05{unit} → 微调 +5.00{unit} → 应到 14.05{unit} → 到位实测 13.60{unit} → 偏差 -0.45{unit}"
+                    f"（仅提示，不阻止后续轴；固件自报误差 +0.45{unit}，容差 ±{0.1 if unit == "mm" else 0.2}{unit}）",
+                    step["warning"],
+                )
                 self.assertNotIn("到位角", step["warning"])
+                self.assertNotIn("指令增量", step["warning"])
 
     async def test_accept_ack_does_not_advance_next_axis(self):
         client = FakeClient()
@@ -494,6 +521,19 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
         self.manager.interrupt(job["id"])
         await task
         self.assertEqual(2, len(client.sent))
+
+    async def test_operator_stop_reports_operator_stop_not_emergency(self):
+        """操作者点「停止后续下发」时不能报成急停/联锁变化，否则会误导现场。"""
+        client = FakeClient()
+        job, task = await self.start(client)
+        await self.wait_sent(client)
+        self.manager.interrupt(job["id"])
+        await task
+
+        batch = self.manager.get(job["id"])
+        self.assertEqual("uncertain", batch["status"])
+        self.assertIn("操作者已停止后续下发", batch["message"])
+        self.assertNotIn("急停", batch["message"])
 
     async def test_arrival_without_observed_run_does_not_prove_this_motion(self):
         client = FakeClient()
@@ -517,7 +557,7 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
         step = self.manager.get(job["id"])["steps"][0]
         self.assertEqual("completed", step["status"])
         self.assertAlmostEqual(0.45, step["deviation"], places=2)
-        self.assertIn("相差 +0.45", step["warning"])
+        self.assertIn("偏差 +0.45°", step["warning"])
         self.assertIn("不阻止", step["warning"])
 
     async def test_out_of_tolerance_arrival_keeps_dispatch_available(self):
@@ -529,7 +569,9 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("completed", result["status"])
         self.assertFalse(result["target_locked"])
         self.assertTrue(all(step.get("warning") for step in result["steps"]))
-        self.assertIn("未阻止下发", result["message"])
+        # 批次总述只报结论与超差轴数，细节留在各轴提示里
+        self.assertIn("本批次各轴已到位；3 个轴偏差超出容差", result["message"])
+        self.assertNotIn("未阻止下发", result["message"])
         # 容差不再锁批次：同一机械臂可以立刻开下一批
         await self.manager.start(self.request("request_002"), client, 1)
 
@@ -677,6 +719,51 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue({'/hardware/axis_status', '/hardware/arrive_notification', '/hardware/stop_notification', '/hardware/axis_fault', '/hardware/limit_event'} <= topics)
         self.assertEqual('axis_status', data[0]['data_type'])
         self.assertEqual(257, data[0]['status_bits'])
+
+    async def test_preflight_fails_fast_when_firmware_never_sends_axis_status(self):
+        # 现场固件可能根本不上报周期轴状态帧：不应等满 state_timeout，而应尽快给出可执行诊断。
+        self.manager.state_timeout = 60
+        self.manager.status_grace = 0.02
+        client = FakeClient(initial=False)
+
+        async def silent_feedback(*, ready=None):
+            ready.set()
+            yield await client.queue.get()
+
+        client.stream_feedback = silent_feedback
+        job, task = await self.start(client)
+        await asyncio.wait_for(task, 5)
+        result = self.manager.get(job["id"])
+        self.assertEqual("blocked", result["status"])
+        self.assertIn("未收到任何轴状态帧", result["message"])
+        self.assertIn("/hardware/axis_status", result["message"])
+        self.assertIn("关闭“发送前检查”", result["message"])
+        self.assertEqual([], client.sent)
+        self.assertFalse(result["target_locked"])
+
+    async def test_arrive_and_normal_stop_events_complete_without_status_frames(self):
+        client = EventOnlyClient()
+        job, task = await self.start(client)
+        await asyncio.wait_for(task, 2)
+        result = self.manager.get(job["id"])
+        self.assertEqual("completed", result["status"])
+        self.assertEqual([1, 2, 3], [sent["message"]["device_id"] for sent in client.sent])
+        first = result["steps"][0]
+        self.assertEqual("arrive_stop", first["completion_evidence"])
+        self.assertFalse(first["run_observed"])
+        self.assertTrue(first["stop_observed"])
+        # 批次总述只给结论；完成证据留在各轴 completion_evidence，由前端详情展示
+        self.assertEqual("本批次各轴已到位", result["message"])
+
+    async def test_status_frames_keep_the_strict_completion_evidence(self):
+        client = FakeClient(complete=True)
+        job, task = await self.start(client)
+        await asyncio.wait_for(task, 2)
+        result = self.manager.get(job["id"])
+        self.assertEqual("completed", result["status"])
+        self.assertEqual("run_arrive_idle", result["steps"][0]["completion_evidence"])
+        self.assertTrue(result["steps"][0]["run_observed"])
+        self.assertNotIn("到位+正常停止事件", result["message"])
 
 
 if __name__ == '__main__':

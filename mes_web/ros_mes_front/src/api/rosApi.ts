@@ -174,6 +174,9 @@ export interface FineTuningBatch {
 		expected_position?: number | null; observed_angle?: number; deviation?: number | null; position_error?: number;
 		// 到位误差超出容差时的提示：只记录，不阻止下发
 		warning?: string;
+		// 运动结论：moved 已动（默认）/ no_motion 人工标记未动 / unknown 无法判定
+		outcome?: "moved" | "no_motion" | "unknown" | null;
+		completion_evidence?: string;
 	}[];
 }
 
@@ -203,6 +206,15 @@ export function interruptFineTuningBatch(id: string) {
 
 export function acknowledgeFineTuningBatch(id: string) {
 	return request<any, ApiResponse<FineTuningBatch>>({ url: `/control/finetuning/batches/${encodeURIComponent(id)}/acknowledge`, method: 'post', data: { operator_confirmed: true } });
+}
+
+// 人工判断某轴本次是否运动：默认已动，仅在确认没动时调用；只写数据库记录，不发送运动指令
+export function markFineTuningAxisOutcome(id: string, parameterName: string, noMotion: boolean) {
+	return request<any, ApiResponse<FineTuningBatch>>({
+		url: `/control/finetuning/batches/${encodeURIComponent(id)}/axes/${encodeURIComponent(parameterName)}/outcome`,
+		method: 'post',
+		data: { no_motion: noMotion, operator_confirmed: true },
+	});
 }
 
 export interface EmergencyStopState {
