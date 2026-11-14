@@ -6,7 +6,10 @@
 V2 关键变更：
   - 5 臂映射（V1.1 为 3 臂）
   - device_id 即 AXIS 寻址单元（1~15轴/21~25臂级），每臂 3 轴（J1旋转/J2摆动/J3伸缩）
-  - 摆动角上限 ±15°（V1.1 为 ±20°，由 rob_arm.env 中 MAX_SWING_ANGLE 控制）
+  - 三轴限位全部由 rob_arm.env 控制：
+      旋转 ROTATION_MIN_ANGLE / ROTATION_MAX_ANGLE
+      摆动 SWING_MIN_ANGLE / MAX_SWING_ANGLE
+      伸缩 TELESCOPIC_MIN_MM / TELESCOPIC_MAX_MM
 """
 
 import rospy
@@ -47,7 +50,14 @@ class Config:
 
 def update_config_from_env():
     """强制从环境变量读取运动学参数，缺少任何一项将引发 KeyError"""
-    Config.MAX_SWING_ANGLE = float(os.environ['MAX_SWING_ANGLE'])
+    # 三轴绝对限位（与轴级节点共用同一组配置键）
+    Config.ROTATION_MIN_ANGLE = float(os.environ['ROTATION_MIN_ANGLE'])
+    Config.ROTATION_MAX_ANGLE = float(os.environ['ROTATION_MAX_ANGLE'])
+    Config.SWING_MIN_ANGLE    = float(os.environ['SWING_MIN_ANGLE'])
+    Config.MAX_SWING_ANGLE    = float(os.environ['MAX_SWING_ANGLE'])
+    Config.TELESCOPIC_MIN_MM  = float(os.environ['TELESCOPIC_MIN_MM'])
+    Config.TELESCOPIC_MAX_MM  = float(os.environ['TELESCOPIC_MAX_MM'])
+    # 点云几何可达范围（cm，用于逆解 j3 的几何裁剪，非轴行程限位）
     Config.ARM_MIN_EXTEND   = float(os.environ['ARM_MIN_EXTEND'])       # cm
     Config.ARM_MAX_EXTEND   = float(os.environ['ARM_MAX_EXTEND'])       # cm
     # 伸缩轴为直线位移轴，反馈/指令单位均为 mm（CAN 字段 0.01mm，由 feedback_node 换算）
@@ -64,9 +74,12 @@ def solve_3dof(arm_base, target_p):
     dxy = np.hypot(dx, dy)
     j1 = np.degrees(np.arctan2(dy, dx)) if dxy > 1e-3 else 0.0
     ideal_j2 = np.pi/2 if abs(dz) < 1e-6 else np.arctan2(dxy, dz)
-    limited_j2 = np.clip(ideal_j2, -np.radians(Config.MAX_SWING_ANGLE), np.radians(Config.MAX_SWING_ANGLE))
-    if abs(np.degrees(ideal_j2)) > Config.MAX_SWING_ANGLE:
-        rospy.logwarn(f"摆动角超限! 理想值: {np.degrees(ideal_j2):.2f}°, 已限制至 {Config.MAX_SWING_ANGLE}°")
+    j2_min = np.radians(Config.SWING_MIN_ANGLE)
+    j2_max = np.radians(Config.MAX_SWING_ANGLE)
+    limited_j2 = np.clip(ideal_j2, j2_min, j2_max)
+    if ideal_j2 < j2_min or ideal_j2 > j2_max:
+        rospy.logwarn(f"摆动角超限! 理想值: {np.degrees(ideal_j2):.2f}°, "
+                      f"已限制至 [{Config.SWING_MIN_ANGLE}, {Config.MAX_SWING_ANGLE}]°")
     j3 = dxy if abs(dz) < 1e-6 else dz / np.cos(limited_j2)
     j3 = np.clip(j3, Config.ARM_MIN_EXTEND, Config.ARM_MAX_EXTEND)
     return round(j1, 2), round(np.degrees(limited_j2), 2), round(j3, 2)
@@ -258,10 +271,14 @@ class KinematicsNode:
             target_j3_mm = target_j3_cm * 10.0
             delta_tel = target_j3_mm - cur_tel
 
-            # 增量限幅
-            delta_rot = max(-180, min(delta_rot, 180))
-            delta_sw  = max(-Config.MAX_SWING_ANGLE, min(delta_sw, Config.MAX_SWING_ANGLE))
-            delta_tel = max(-Config.TELESCOPIC_MAX_DELTA_MM, min(delta_tel, Config.TELESCOPIC_MAX_DELTA_MM))
+            # 增量限幅：单次增量上限 + 轴绝对限位（全部取自 rob_arm.env）
+            delta_rot = max(Config.ROTATION_MIN_ANGLE, min(delta_rot, Config.ROTATION_MAX_ANGLE))
+            delta_sw  = max(Config.SWING_MIN_ANGLE, min(delta_sw, Config.MAX_SWING_ANGLE))
+            delta_tel = max(-Config.TELESCOPIC_MAX_DELTA_MM,
+                            min(delta_tel, Config.TELESCOPIC_MAX_DELTA_MM))
+            # 伸缩轴按绝对行程再钳位，避免下发越界增量被轴节点整条丢弃
+            delta_tel = max(Config.TELESCOPIC_MIN_MM - cur_tel,
+                            min(delta_tel, Config.TELESCOPIC_MAX_MM - cur_tel))
 
         # V2 device_id 规则（device_id 即 AXIS 寻址单元，不再乘 100）：
         #   每臂 3 轴（J1旋转/J2摆动/J3伸缩），轴号=1~15
@@ -366,7 +383,7 @@ class KinematicsNode:
         base = np.array(item["base"])
         alpha = np.array(item["alpha"])
         j1, j2, j3 = solve_3dof(base, alpha)
-        if abs(j2) == Config.MAX_SWING_ANGLE:
+        if j2 < Config.SWING_MIN_ANGLE or j2 > Config.MAX_SWING_ANGLE:
             rospy.logwarn(f"机械臂 {item.get('arm_id','?')} 摆动角极限 {j2}°")
         return {
             "alpha": alpha.tolist(),

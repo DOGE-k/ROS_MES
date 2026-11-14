@@ -79,7 +79,7 @@
               <el-tag v-if="!isDebugMode && drawingSimulated" type="warning">图纸/三视图模拟</el-tag>
             </div>
             <div class="save-actions">
-              <el-tag v-if="calibrateMode" type="warning" effect="plain">保存时备注记为校零</el-tag>
+              <el-tag v-if="calibrateMode" type="warning" effect="plain">保存时同步 ROS 校零并备注</el-tag>
               <el-button
                 :type="calibrateMode ? 'warning' : 'info'"
                 :plain="!calibrateMode"
@@ -195,7 +195,7 @@
         <div class="batch-controls">
           <el-button type="primary" :disabled="busy || !isReady || !hasPendingAdjustments || hasLocalStop" @click="confirmAdjustments">确认下发三轴调整</el-button>
           <span v-if="!isDebugMode">输入为相对增量，例如 +10° 表示从当前位置再转 10°。图纸运动后，三轴连续静止 10 秒时锁定图纸基准，后续微调显示相对这组固定基准的变化量。</span>
-          <span v-else>输入为本次相对增量，无图纸调试显示该次动作的实际移动量。人工归位后点亮「校准」再保存可记录校零备注。</span>
+          <span v-else>输入为本次相对增量，无图纸调试显示该次动作的实际移动量。人工归位后点亮「校准」再保存可同步复位 ROS 三轴基准并记录校零备注。</span>
           <el-button v-if="!busy && !isReady" @click="openConfiguration">重新配置机械臂</el-button>
         </div>
         <div v-if="batchState" class="batch-progress">
@@ -397,7 +397,7 @@ const sharedDrawingViews = ref<Array<{ name: string; label: string; url: string 
 
 const loading = ref(false);
 const busy = ref(false);
-// 校准标记：点亮后本次「保存当前配置」会在数据库备注里记为校零，用来区分校零值与微调值
+// 校准标记：点亮后本次「保存当前配置」会发布 ROS 校零命令并写入校零备注
 const calibrateMode = ref(false);
 const batchState = ref<FineTuningBatch | null>(null);
 const feedbackSimulated = ref(false);
@@ -1424,7 +1424,7 @@ const handleSaveConfig = async () => {
         status: fieldStatus(field),
         age_ms: feedbackMarks[field].receivedAt === null ? null : Math.max(0, savedAt - feedbackMarks[field].receivedAt!),
       }])),
-      // 校准标记与备注：点亮「校准」保存时写入校零备注，普通保存备注留空
+      // 点亮「校准」保存时由后端发布 ROS 校零命令并写入备注；普通保存不发布
       calibrated: calibrateMode.value,
       notes: calibrateMode.value ? buildCalibrationNote() : null,
       devices: armList.device.map((item: any, index: number) => {
@@ -1459,7 +1459,7 @@ const handleSaveConfig = async () => {
       ElMessage.success(
         noRosDebug
           ? calibrated ? "校准标记模拟保存完成（未写入数据库）" : "配置模拟保存完成（未写入数据库）"
-          : calibrated ? "已保存并标记为校零（数据库备注已写入）"
+          : calibrated ? "ROS 校零命令已发送，配置和备注已保存"
           : isDebugMode.value ? "调试配置保存成功（未绑定图纸）" : "配置保存成功",
       );
     } else {

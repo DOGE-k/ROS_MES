@@ -115,8 +115,6 @@ class CANBusBridge:
         # V2：单帧相对增量上限（0.01°）与分帧下发周期（秒）
         self.max_delta_centideg = int(os.environ['CAN_MAX_DELTA_CENTIDEG'])
         self.chunk_period = float(os.environ['CAN_CHUNK_PERIOD'])
-        # 发出一帧增量后等待该轴位置反馈的超时（秒），超时视为反馈丢失继续下发
-        self.tx_wait_timeout = float(os.environ['CAN_TX_WAIT_TIMEOUT'])
         # 固件当前不支持回零（下发即返回 Result=3），默认不下发 CAN 帧
         self.home_supported = os.environ['CAN_HOME_SUPPORTED'].lower() == 'true'
 
@@ -128,8 +126,6 @@ class CANBusBridge:
         # 轴号 -> deque[delta_centideg]，相对增量分帧 FIFO（每周期取一帧）
         self.tx_queues = {}
         self.tx_lock = threading.Lock()
-        # 轴号 -> 最近一帧发出时间戳；已发出一帧、正在等待该轴位置反馈的标记
-        self.tx_waiting = {}
         # node -> {time, state, run_mask, base_mask}
         self.node_heartbeats = {}
         self.node_lost = set()
@@ -449,34 +445,29 @@ class CANBusBridge:
         return len(chunks)
 
     def _clear_axis_queue(self, axis):
-        """清空指定轴待发的增量分帧及等待反馈标记"""
+        """清空指定轴待发的增量分帧"""
         with self.tx_lock:
             q = self.tx_queues.pop(axis, None)
-            self.tx_waiting.pop(axis, None)
         if q:
             rospy.logwarn("🗑️ 轴%d 待发增量分帧已清空（%d 帧）", axis, len(q))
 
     def _clear_all_queues(self):
-        """清空全部轴待发的增量分帧及等待反馈标记（急停时调用）"""
+        """清空全部轴待发的增量分帧（急停时调用）"""
         with self.tx_lock:
             total = sum(len(q) for q in self.tx_queues.values())
             self.tx_queues.clear()
-            self.tx_waiting.clear()
         if total:
             rospy.logwarn("🗑️ 已清空全部待发增量分帧（%d 帧）", total)
 
     def _try_send_next(self, axis):
-        """若该轴未在等待反馈且队列非空，取队首一帧增量下发（MSG=1），并标记等待反馈"""
+        """若该轴队列非空，取队首一帧增量下发（MSG=1）；节拍由 CAN_CHUNK_PERIOD 定时器控制"""
         with self.tx_lock:
-            if axis in self.tx_waiting:
-                return False
             q = self.tx_queues.get(axis)
             if not q:
                 return False
             delta = q.popleft()
             if not q:
                 del self.tx_queues[axis]
-            self.tx_waiting[axis] = rospy.Time.now().to_sec()
         # 动态 SEG：按该轴最近一次指令所属业务模块的绑定关系寻址
         seg = self._seg_for(self.axis_module.get(axis, -1))
         can_id = self._build_id(self.PRI_MOTION, self.GRP_MOTION_CMD,
@@ -486,21 +477,13 @@ class CANBusBridge:
             unit = "0.01mm" if (axis - 1) % 3 == 2 else "0.01°"
             rospy.loginfo("📤 轴%d 相对增量 %+d(%s) → 0x%08X（SEG=%d）", axis, delta, unit, can_id, seg)
             return True
-        # 发送失败：帧放回队首并清除等待标记，下轮重试
+        # 发送失败：帧放回队首，下轮重试
         with self.tx_lock:
-            self.tx_waiting.pop(axis, None)
             self.tx_queues.setdefault(axis, deque()).appendleft(delta)
         return False
 
     def _flush_tx_queues(self, event):
-        """兜底扫描：清理等待反馈超时的轴，并为可发送的轴补发下一帧。
-        正常节奏由位置反馈驱动：收到该轴编码器反馈后才发下一帧（见 _dispatch_axis_feedback）"""
-        now = rospy.Time.now().to_sec()
-        with self.tx_lock:
-            for axis, ts in list(self.tx_waiting.items()):
-                if now - ts > self.tx_wait_timeout:
-                    del self.tx_waiting[axis]
-                    rospy.logwarn("⏰ 轴%d 等待位置反馈超时 %.1fs，视为反馈丢失，继续下发", axis, now - ts)
+        """周期扫描（CAN_CHUNK_PERIOD）：每个轴每周期下发一帧增量，不再等待位置反馈"""
         with self.tx_lock:
             axes = list(self.tx_queues.keys())
         for axis in axes:
@@ -828,12 +811,7 @@ class CANBusBridge:
 
     def _dispatch_axis_feedback(self, module_id, device_id, axis, angle):
         """按轴号分发到旋转/摆动/伸缩原始反馈话题（旋转/摆动 0.01°，伸缩 0.01mm）；
-        module_id 为帧 SEG 位域。同时将该反馈视为"轴编码器信息回传"：
-        清除该轴等待标记并立即补发下一帧增量"""
-        with self.tx_lock:
-            was_waiting = self.tx_waiting.pop(axis, None) is not None
-        if was_waiting:
-            self._try_send_next(axis)
+        module_id 为帧 SEG 位域。位置反馈只做上报，不参与下发节拍"""
         # 发布节流：同角度且距上次发布 <20ms 时跳过（下位机原始上报可达 ~5.5kHz）
         now = rospy.Time.now().to_sec()
         prev = self.fb_pub_cache.get(device_id)

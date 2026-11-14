@@ -197,6 +197,30 @@ def resolve_arm_from_unit_id(unit_id: int) -> int:
     )
 
 
+def build_axis_zero_publish_payload(
+    module_id: int,
+    unit_id: int,
+    profile: RosProfile | None = None,
+) -> Dict[str, Any]:
+    """构造人工校零命令：device_id=0，position=[arm]，仅复位该臂 ROS 软件基准。"""
+    profile = profile or get_active_profile()
+    arm = resolve_arm_from_unit_id(unit_id)
+    module_id = int(module_id)
+    if module_id <= 0:
+        raise RosbridgeError(f"校零 module_id={module_id} 非法（必须由前端下发正整数模块号）")
+    return {
+        "topic": profile.topics["axis_zero"],
+        "message_type": profile.message_type("IntCmd"),
+        "message": {
+            "header": {"stamp": _stamp(profile), "frame_id": ""},
+            "module_id": module_id,
+            "device_id": SYSTEM_DEVICE_ID,
+            "position": [arm],
+        },
+        "arm": arm,
+    }
+
+
 class RosbridgeClient:
     """rosbridge WebSocket 一次性客户端：每次下发新建连接，subscribe 后逐条收事件。"""
 
@@ -214,7 +238,7 @@ class RosbridgeClient:
         self.module_confirm_timeout = module_confirm_timeout or settings.MODULE_CONFIRM_ACK_WAIT_S
 
     def dispatch(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if action not in {"fine_tuning", "drawing_path", "module_confirm"}:
+        if action not in {"fine_tuning", "drawing_path", "module_confirm", "axis_zero"}:
             raise RosbridgeError(f"unsupported rosbridge action: {action}")
         return asyncio.run(self.publish(action, payload))
 

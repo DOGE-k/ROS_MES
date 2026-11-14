@@ -47,6 +47,8 @@ TOPIC_DEFAULTS: Dict[str, str] = {
     "module_confirm_failed": "/hardware/web_module_cmd",
     "softstop": "/control/softstop",
     "softstop_release": "/control/softstop_release",
+    # 人工校零：IntCmd device_id=0，position=[arm 1~5]，复位该臂 ROS 软件基准
+    "axis_zero": "/control/axis_zero",
     # 局部停（模块停/单轴停）直发系统指令，hardware_node 在此话题上处理 device_id=0 的子命令
     "arm_cmd": "/arm/cmd_vel",
     # 测试通道（/ros/** 接口）：ROS1 走 rospy、ROS2 走 rosbridge，话题契约一致

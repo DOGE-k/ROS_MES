@@ -40,6 +40,7 @@ class RotationSimple:
         TOPIC_CMD = os.environ['ROS_TOPIC_KINEMATICS_ROTATION_CMD_SEQ']
         TOPIC_ROTATION_FEEDBACK = os.environ['ROS_TOPIC_ROTATION_FEEDBACK']
         TOPIC_ROTATION_OUTPUT = os.environ['ROS_TOPIC_ROTATION_OUTPUT']
+        TOPIC_AXIS_ZERO = os.environ['ROS_TOPIC_AXIS_ZERO']
 
         # 旋转轴绝对角度软限位（°）
         self.ROT_MIN = float(os.environ['ROTATION_MIN_ANGLE'])
@@ -54,6 +55,7 @@ class RotationSimple:
 
         rospy.Subscriber(TOPIC_CMD, RotationCmd, self.cmd_callback)
         rospy.Subscriber(TOPIC_ROTATION_FEEDBACK, RotationCmd, self.feedback_callback)
+        rospy.Subscriber(TOPIC_AXIS_ZERO, IntCmd, self.zero_callback)
         self.output_pub = rospy.Publisher(TOPIC_ROTATION_OUTPUT, IntCmd, queue_size=10)
         self.pub_cmd_ack = rospy.Publisher(os.environ['ROS_TOPIC_CMD_ACK'], CmdAck, queue_size=10)
 
@@ -147,6 +149,20 @@ class RotationSimple:
 
         self._insert_sensor_log(msg.module_id, device_id, delta_centi_deg, "下发旋转增量数据")
         rospy.loginfo(f"Arm{arm_idx+1} 旋转增量：{delta_deg:+.4f}° → 下发 {delta_centi_deg}(0.01°) | 位置变量 {new_angle:+.3f}°")
+
+    def zero_callback(self, msg):
+        """人工校零：position=[arm]，将对应臂旋转轴软件基准重新归零"""
+        if int(msg.device_id) != 0 or not msg.position:
+            return
+        arm = int(msg.position[0])
+        if not 1 <= arm <= 5:
+            rospy.logwarn("⚠️ 旋转轴校零 arm=%d 非法（允许 1~5）", arm)
+            return
+        arm_idx = arm - 1
+        self.angles[arm_idx] = 0.0
+        self.axis_ready[arm_idx] = True
+        self.last_fb_time[arm_idx] = 0.0
+        rospy.logwarn("🎯 Arm%d 旋转轴 ROS 软件基准已校零", arm)
 
     def feedback_callback(self, msg):
         """零点由人工调零，下位机不回传基准：反馈仅记录时间戳，不参与基准计算"""

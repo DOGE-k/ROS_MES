@@ -153,7 +153,7 @@
 |------|---------|------|------|-------------|------|
 | 6 | `/control/finetuning` | POST | 否（白名单） | `/control/adjust_rotation_cmd`<br>`/control/adjust_swing_cmd`<br>`/control/adjust_telescopic_cmd` | 单轴微调指令下发（V2 主路径，写库+下发） |
 | 7 | `/finetuning/` | POST | 否（白名单）⚠修正 | （仅数据库，不下发 ROS） | 微调记录保存（旧路径，仅写库） |
-| 8 | `/finetuning/config` | POST | 否（白名单）⚠修正 | （仅数据库） | 保存微调配置快照 |
+| 8 | `/finetuning/config` | POST | 否（白名单）⚠修正 | 校零时 `/control/axis_zero` | 保存微调配置快照；`calibrated=true` 时先复位该臂 ROS 软件基准 |
 
 > ⚠ **修正**：基准文档将 7/8 标为"鉴权：是"。经核对 `app/api/endpoints/finetuning.py` 无 `get_current_user` 依赖，且前端 `request.ts` 白名单对 `/finetuning` 不带 token 调用——实际**全部免认证**。2026-11-05 复核：前端虽然有 GET `/finetuning/config` 封装，后端尚未实现该查询端点；本次只扩展保存接口。
 
@@ -255,7 +255,7 @@
 
 下发方式不变：仍是一个「确认下发三轴调整」按钮，三轴按旋转 → 摆动 → 伸缩顺序执行，不拆成逐轴按钮。
 
-「校准」是**保存时的标记开关，不产生任何运动指令**：点亮后再点「保存当前配置」，请求带 `calibrated=true` 与校零备注，后端把备注写进 `fine_tuning_config.notes`（该列此前一直为空），`calibrated` 落在 `config_json`。用途是让人翻数据库时能区分"人工归位后的校零值"和"微调值"。保存成功后开关自动熄灭，避免下一组微调值被误标；切换机械臂或重新配置时也会清零。普通保存 `calibrated=false`、`notes=null`。
+「校准」是**保存时的校零开关，本身不产生运动指令**：点亮后再点「保存当前配置」，请求带 `calibrated=true` 与校零备注。后端先向 `/control/axis_zero` 发布 `IntCmd`，其中 `module_id` 为业务模块号、`device_id=0`、`position=[arm]`；`unit_id` 为 1～5 时直接映射臂号，32/64/96/128/160 分别映射臂 1～5。该命令只复位目标臂的 ROS 三轴软件基准及状态缓存，不下发 CAN 运动。发布成功后把备注写进 `fine_tuning_config.notes`，`calibrated` 落在 `config_json`，响应 `data.ros_zero` 返回发布结果；发布失败返回 503 且不保存配置。普通保存 `calibrated=false`、`notes=null`，不发布校零话题。保存成功后开关自动熄灭，切换机械臂或重新配置时也会清零。`ros_zero.sent=true` 只表示 rosbridge 写出，不代表设备新增校零回执。
 
 备注示例：`校零：机械臂 1，三轴基准初始值 0.00/0.00/0.00（人工下发归位后保存）2026-11-11 20:31`。只给 `calibrated=true` 而不给 `notes` 时，后端补一条默认校零文案，避免漏标。
 

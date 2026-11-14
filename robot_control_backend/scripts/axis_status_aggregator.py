@@ -11,6 +11,9 @@
 数据来源：
     - /control/seg_assign、/control/seg_bind、/hardware/seg_confirm：SEG/ARM 绑定
     - /hardware/{rotation,swing,telescope}_output：指令发出 → RUNNING
+    - /arm/cmd_vel：模块停/单轴停 → IDLE_CONFIRMED，急停解除 → IDLE_CONFIRMED
+    - /control/axis_zero：人工校零，清零当前臂三轴缓存并恢复有效空闲
+    - /control/softstop、/control/softstop_release：全局急停/解除
     - /hardware/{rotation,swing,telescope}_feedback：真实位置
     - /hardware/cmd_ack：指令应答（result != 0 时回退空闲）
     - /hardware/arrive_notification：到位（用 angle 覆盖缓存位置）
@@ -177,6 +180,10 @@ class AxisStatusAggregator(object):
         topic_seg_assign = os.environ['ROS_TOPIC_SEG_ASSIGN']
         topic_seg_bind = os.environ['ROS_TOPIC_SEG_BIND']
         topic_seg_confirm = os.environ['ROS_TOPIC_SEG_CONFIRM']
+        topic_arm_cmd = os.environ['ROS_TOPIC_ARM_CMD_VEL']
+        topic_axis_zero = os.environ['ROS_TOPIC_AXIS_ZERO']
+        topic_softstop = os.environ['ROS_TOPIC_SOFTSTOP']
+        topic_release = os.environ['ROS_TOPIC_SOFTSTOP_RELEASE']
 
         # ---------- 发布 ----------
         self.pub_status = rospy.Publisher(topic_status, AxisStatus, queue_size=30)
@@ -202,6 +209,10 @@ class AxisStatusAggregator(object):
         rospy.Subscriber(topic_stop, StopNotification, self._on_stop)
         rospy.Subscriber(topic_fault, AxisFault, self._on_fault)
         rospy.Subscriber(topic_limit, LimitEvent, self._on_limit)
+        rospy.Subscriber(topic_arm_cmd, IntCmd, self._on_arm_cmd)
+        rospy.Subscriber(topic_axis_zero, IntCmd, self._on_axis_zero)
+        rospy.Subscriber(topic_softstop, IntCmd, self._on_softstop_cmd)
+        rospy.Subscriber(topic_release, IntCmd, self._on_release_cmd)
 
         rospy.Timer(rospy.Duration(1.0 / self.publish_hz), self._publish_status)
         rospy.Timer(rospy.Duration(1.0 / self.cache_hz), self._publish_cached_positions)
@@ -269,6 +280,13 @@ class AxisStatusAggregator(object):
     def _axis_from_msg(self, msg):
         return self._ensure_bound(msg.module_id, msg.device_id)
 
+    def _local_from_device(self, device_id):
+        """轴节点输出话题的 module_id 是业务模块号，只能按 device_id 定位"""
+        if self.bound_arm is None:
+            return None
+        local = int(device_id) - (self.bound_arm - 1) * 3
+        return local if 1 <= local <= 3 else None
+
     def _set_state(self, axis, new_state, reason):
         if axis.state == new_state:
             return
@@ -311,6 +329,81 @@ class AxisStatusAggregator(object):
             rospy.logwarn("⚠️ 收到 SEG=%d 绑定但缺少 ARM，等待反馈推断", seg)
 
     # ===================== 指令/反馈回调 =====================
+    def _set_idle(self, local, reason):
+        """停止命令直接确认空闲；故障/限位/急停仍需对应解除流程"""
+        axis = self.axes.get(local)
+        if axis is None or axis.state in LOCKED_STATES:
+            return
+        axis.pre_run_state = STATE_IDLE_CONFIRMED
+        axis.arrive_latched = False
+        axis.motion_seen = False
+        self._set_state(axis, STATE_IDLE_CONFIRMED, reason)
+
+    def _set_global_estop(self, reason):
+        if self.bound_arm is None:
+            return
+        with self._lock:
+            for axis in self.axes.values():
+                axis.estop = True
+                axis.base_valid = False
+                axis.arrive_latched = False
+                self._set_state(axis, STATE_ESTOP, reason)
+
+    def _release_estop(self, reason):
+        """操作员解除急停后，保留位置缓存并恢复三轴为有效空闲"""
+        if self.bound_arm is None:
+            return
+        with self._lock:
+            for axis in self.axes.values():
+                axis.estop = False
+                axis.base_valid = True
+                axis.pre_run_state = STATE_IDLE_CONFIRMED
+                axis.arrive_latched = False
+                axis.motion_seen = False
+                self._set_state(axis, STATE_IDLE_CONFIRMED, reason)
+
+    def _on_axis_zero(self, msg):
+        """下位机校零重启后，同步清零当前臂三轴缓存和推导状态"""
+        if int(msg.device_id) != 0 or not msg.position:
+            return
+        arm = int(msg.position[0])
+        with self._lock:
+            if self.bound_arm is None or arm != self.bound_arm:
+                return
+            for axis in self.axes.values():
+                axis.reset()
+        rospy.logwarn("🎯 Arm%d 状态缓存已校零：三轴位置=0、基准有效、空闲", arm)
+
+    def _on_softstop_cmd(self, _msg):
+        self._set_global_estop("收到全局急停命令")
+
+    def _on_release_cmd(self, _msg):
+        self._release_estop("收到急停解除命令")
+
+    def _on_arm_cmd(self, msg):
+        """直接消费停止/解除下行命令，避免无停止回帧时一直停留在 RUNNING"""
+        if not msg.position:
+            return
+        device_id = int(msg.device_id)
+        sub_cmd = int(msg.position[0]) & 0xFF
+        if device_id == 0:
+            if sub_cmd == 0x01:
+                self._set_global_estop("收到全局急停命令")
+            elif sub_cmd == 0x04:
+                self._release_estop("收到急停解除命令")
+            elif sub_cmd == 0x08:
+                with self._lock:
+                    if self.bound_seg is None or int(msg.module_id) != self.bound_seg:
+                        return
+                    for local in (1, 2, 3):
+                        self._set_idle(local, "收到模块停止命令")
+            return
+        if sub_cmd == 0x0C and len(msg.position) >= 2 and int(msg.position[1]) == 1:
+            with self._lock:
+                local = self._local_from_device(device_id)
+                if local:
+                    self._set_idle(local, "收到单轴停止命令")
+
     def _mark_running(self, local, reason):
         axis = self.axes.get(local)
         if axis is None or axis.state in LOCKED_STATES:
@@ -323,7 +416,7 @@ class AxisStatusAggregator(object):
 
     def _on_output(self, msg):
         with self._lock:
-            local = self._axis_from_msg(msg)
+            local = self._local_from_device(msg.device_id)
             if local:
                 self._mark_running(local, "收到指令输出")
 

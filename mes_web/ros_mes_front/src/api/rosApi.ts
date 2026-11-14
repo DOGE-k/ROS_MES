@@ -87,7 +87,7 @@ export function saveFineTuningConfigApi(data: {
 	y?: number | null;
 	z?: number | null;
 	feedback_state?: Record<string, { status: string; age_ms: number | null }>;
-	// 校准标记与备注：校零保存时写入数据库备注
+	// 校零保存时由后端发布 /control/axis_zero 并写入数据库备注
 	calibrated?: boolean;
 	notes?: string | null;
 	moduleId?: number;

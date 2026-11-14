@@ -2,6 +2,7 @@ import asyncio
 import json
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from sqlalchemy import create_engine, event
@@ -11,6 +12,19 @@ from sqlalchemy.pool import StaticPool
 from app.api.endpoints import finetuning
 from app.db import models
 from app.db.database import Base, get_db
+from app.ros.base import RosbridgeError
+
+
+class DummyDispatcher:
+    def __init__(self):
+        self.calls = []
+        self.error = None
+
+    def dispatch(self, action, payload):
+        self.calls.append((action, payload))
+        if self.error is not None:
+            raise self.error
+        return {"sent": True, "mode": "test", "action": action}
 
 
 class LocalASGIClient:
@@ -78,6 +92,12 @@ class FineTuningConfigDebugTest(unittest.TestCase):
 
         app.dependency_overrides[get_db] = isolated_db
         self.client = LocalASGIClient(app)
+        self.dispatcher = DummyDispatcher()
+        dispatcher_patch = patch(
+            "app.api.endpoints.finetuning.get_ros_dispatcher", return_value=self.dispatcher,
+        )
+        dispatcher_patch.start()
+        self.addCleanup(dispatcher_patch.stop)
 
     def tearDown(self):
         self.engine.dispose()
@@ -267,6 +287,15 @@ class FineTuningConfigDebugTest(unittest.TestCase):
         saved = response.json()["data"]
         self.assertEqual(saved["notes"], note)
         self.assertIs(saved["config"]["calibrated"], True)
+        self.assertTrue(saved["ros_zero"]["sent"])
+        self.assertEqual(len(self.dispatcher.calls), 1)
+        action, payload = self.dispatcher.calls[0]
+        self.assertEqual(action, "axis_zero")
+        self.assertEqual(payload["topic"], "/control/axis_zero")
+        self.assertEqual(payload["message_type"], "robot_control_backend/IntCmd")
+        self.assertEqual(payload["message"]["module_id"], 17)
+        self.assertEqual(payload["message"]["device_id"], 0)
+        self.assertEqual(payload["message"]["position"], [1])
         with self.session_factory() as db:
             record = db.query(models.FineTuningConfig).one()
             # 备注列落库：翻数据库能直接看出这条是校零值，不是微调值
@@ -304,10 +333,19 @@ class FineTuningConfigDebugTest(unittest.TestCase):
         with self.session_factory() as db:
             self.assertEqual(note, db.get(models.FineTuningConfig, saved["id"]).notes)
 
+    def test_calibration_ros_failure_returns_503_without_saving(self):
+        self.dispatcher.error = RosbridgeError("rosbridge unavailable")
+        response = self.client.post("/api/finetuning/config", json=self.payload(calibrated=True))
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertIn("配置未保存", response.json()["detail"])
+        with self.session_factory() as db:
+            self.assertEqual(db.query(models.FineTuningConfig).count(), 0)
+
     def test_plain_save_leaves_the_notes_column_empty(self):
         response = self.client.post("/api/finetuning/config", json=self.payload())
         self.assertEqual(response.status_code, 200, response.text)
         self.assertIsNone(response.json()["data"]["notes"])
+        self.assertEqual(self.dispatcher.calls, [])
 
 
 if __name__ == "__main__":

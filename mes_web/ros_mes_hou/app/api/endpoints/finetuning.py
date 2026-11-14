@@ -8,6 +8,10 @@ from sqlalchemy.orm import Session
 from app.crud import finetuning as crud
 from app.db.database import get_db
 from app.schemas import finetuning as schemas
+from app.ros import get_ros_dispatcher
+from app.ros.base import RosDispatchError, RosbridgeError
+from app.ros.rosbridge import build_axis_zero_publish_payload
+
 router = APIRouter()
 
 
@@ -78,24 +82,40 @@ def save_config(
         raise HTTPException(409, "连接设置已变更，请重新确认后保存")
     if config.drawing_source == "builtin_mock" and connection["drawing_mode"] != "mock":
         raise HTTPException(422, "内置模拟图纸不能作为真实图纸保存")
+
+    ros_zero = None
+    if config.calibrated:
+        try:
+            zero_payload = build_axis_zero_publish_payload(config.module_id, config.unit_id)
+        except RosbridgeError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        try:
+            ros_zero = get_ros_dispatcher().dispatch("axis_zero", zero_payload)
+        except (RosbridgeError, RosDispatchError) as exc:
+            raise HTTPException(503, f"ROS 校零命令发送失败，配置未保存：{exc}") from exc
+
     db_config = crud.save_fine_tuning_config(
         db=db,
         config=config,
         creater_id=1,
     )
 
+    data = {
+        "id": db_config.id,
+        "module_id": db_config.module_id,
+        "unit_id": db_config.unit_id,
+        "sensor_id": db_config.sensor_id,
+        "config": crud.parse_config(db_config),
+        "creater_id": db_config.creater_id,
+        "create_time": str(db_config.create_time),
+        "notes": db_config.notes,
+        "del_flag": db_config.del_flag,
+    }
+    if ros_zero is not None:
+        data["ros_zero"] = ros_zero
+
     return {
         "code": 200,
-        "message": "配置保存成功",
-        "data": {
-            "id": db_config.id,
-            "module_id": db_config.module_id,
-            "unit_id": db_config.unit_id,
-            "sensor_id": db_config.sensor_id,
-            "config": crud.parse_config(db_config),
-            "creater_id": db_config.creater_id,
-            "create_time": str(db_config.create_time),
-            "notes": db_config.notes,
-            "del_flag": db_config.del_flag,
-        },
+        "message": "ROS 校零命令已发送，配置保存成功" if config.calibrated else "配置保存成功",
+        "data": data,
     }
