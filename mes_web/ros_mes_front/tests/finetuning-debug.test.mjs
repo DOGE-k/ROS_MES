@@ -37,7 +37,8 @@ const bindings = `Object.assign(module.exports, {
   applyFeedback, openDrawingDialog, togglePointCloudViews,
   confirmedSeg, feedbackMarks, feedbackClock, feedbackConnected, fieldStatus, displayFeedback, ackEvents, deviceEvents,
   relativeAxisValue, displayAxisFeedback, axisFeedbackLabel, finetuningPreflightEnabled,
-  displayAxisInitial, displayAxisTarget, displayAxisCurrent, stepChain, canMarkOutcome, markOutcome, batchDetailLines, outcomeLabels, outcomeLabelOf, outcomeBusy,
+  displayAxisInitial, displayAxisTarget, displayAxisCurrent, axisInitialVisible, axisCurrentLabel, axisBaselineLocked,
+  stepChain, canMarkOutcome, markOutcome, batchDetailLines, outcomeLabels, outcomeLabelOf, outcomeBusy,
   drawingBaselines, activeDrawingBaseline, drawingBaselineLabel, displayDrawingReference,
   endSession, activeSession, resumedFromSession, tryResumeSession, persistSnapshot, drawingList, confirmedUnitIds,
   stopAxis, clearLocalStops, hasLocalStop, moduleHolds, localStopText, stopHolds, loadStopHolds, axisStopOptions,
@@ -542,7 +543,7 @@ test('relative motion uses each nonzero start while consecutive commands keep th
   assert.equal(h.page.displayAxisFeedback(0), '-3.00');
   assert.deepEqual(h.calls.adjusts.map(item => item.adjustments[0].position), [10, 10, -3]);
   assert.equal(h.page.armList.device[0].current, 29);
-  assert.match(descriptor.template.content, /当前实测/);
+  assert.match(descriptor.template.content, /\{\{ axisCurrentLabel \}\}/);
   assert.match(descriptor.template.content, /应到: \{\{ displayAxisTarget/);
 });
 
@@ -1372,6 +1373,10 @@ test('a new initial configuration clears prior arm profiles and shares its newly
   } }) });
   await enter(h, [1, 2]);
   await h.page.handleArmSwitch(2);
+  // 图纸模式下要先等基准锁定才允许下发，否则算不出应到
+  drawingArmFeedback(h, 2, [30, 5, 9]);
+  drawingArmFeedback(h, 2, [40, 7, 11]);
+  drawingStillness(h, [[2, [40, 7, 11]]]);
   h.page.armList.device[0].adjust = 2;
   await h.page.confirmAdjustments();
   assert.equal(h.page.batchState.value.unit_id, 64);
@@ -1899,6 +1904,9 @@ test('the target shown beside the input is the initial value plus the pending re
   assert.equal(h.page.displayAxisTarget(2), '0.00mm');
   assert.match(descriptor.template.content, /初始值: \{\{ displayAxisInitial/);
   assert.match(descriptor.template.content, /应到: \{\{ displayAxisTarget/);
+  // 调试模式两个数不同（虚拟起点 0.00 / 本次实际转动量），都显示
+  assert.equal(h.page.axisInitialVisible.value, true);
+  assert.equal(h.page.axisCurrentLabel.value, '当前实测');
 });
 
 test('a finished axis can be marked as not moved and the mark can be withdrawn', async t => {
@@ -1958,6 +1966,35 @@ test('an axis without a recorded outcome is never shown as moved', async t => {
   assert.equal(h.page.outcomeLabelOf({ ...step({}), status: 'blocked' }), '待核实');
 });
 
+test('drawing mode refuses to dispatch before the baseline is locked', async t => {
+  const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload, { rotation: 47.25 }) }) });
+  await enter(h);
+  // 图纸下发中：还没观察到运动、没静止满 10 秒，基准未锁定
+  assert.equal(h.page.activeDrawingBaseline.value.status, 'waiting_motion');
+  assert.equal(h.page.axisBaselineLocked.value, false);
+  // 未锁定时算不出起点，初始值与应到都是未知，不允许盲发
+  assert.equal(h.page.displayAxisInitial(0), '—');
+  assert.equal(h.page.displayAxisTarget(0), '—');
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 0);
+
+  drawingArmFeedback(h, 1, [37.25, 4, 8]);
+  drawingArmFeedback(h, 1, [47.25, 6, 9]);
+  drawingStillness(h, [[1, [47.25, 6, 9]]], 9);
+  // 静止中：仍在等满 10 秒，按钮依然不可用
+  assert.equal(h.page.axisBaselineLocked.value, false);
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 0);
+
+  drawingStillness(h, [[1, [47.25, 6, 9]]], 1);
+  assert.equal(h.page.axisBaselineLocked.value, true);
+  assert.equal(h.page.displayAxisTarget(0), '57.25°');
+  h.page.armList.device[0].adjust = 10;
+  await h.page.confirmAdjustments();
+  assert.equal(h.calls.adjusts.length, 1);
+});
+
 test('drawing mode shows the locked baseline once and never a drawing requirement value', async t => {
   const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload,
     { rotation: h.page.armList.device[0].current }) }) });
@@ -1981,6 +2018,10 @@ test('drawing mode shows the locked baseline once and never a drawing requiremen
   assert.equal(h.page.displayAxisTarget(0), '57.00°');
   // 基准仍然只是图纸下发那一组的参照，不再当作微调起点
   assert.equal(h.page.displayDrawingReference(0), '47.25');
+  // 图纸模式起点就是当前位置，初始值与当前位置同源，只显示一行「当前位置」
+  assert.equal(h.page.axisInitialVisible.value, false);
+  assert.equal(h.page.axisCurrentLabel.value, '当前位置');
+  assert.match(descriptor.template.content, /v-if="axisInitialVisible"/);
   // C 方案：图纸下发只显示实际到位，不显示拿不到的图纸要求值
   assert.equal(/图纸要求值/.test(descriptor.template.content), false);
 });

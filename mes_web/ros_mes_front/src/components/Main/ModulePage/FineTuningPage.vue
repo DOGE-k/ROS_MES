@@ -117,8 +117,8 @@
                 />
               </div>
 
-              <span class="real-time-tag">初始值: {{ displayAxisInitial(0) }}</span>
-              <span class="real-time-tag">当前实测: {{ displayAxisCurrent(0) }}° · {{ axisFeedbackLabel(0) }}</span>
+              <span v-if="axisInitialVisible" class="real-time-tag">初始值: {{ displayAxisInitial(0) }}</span>
+              <span class="real-time-tag">{{ axisCurrentLabel }}: {{ displayAxisCurrent(0) }}° · {{ axisFeedbackLabel(0) }}</span>
               <span class="real-time-tag">应到: {{ displayAxisTarget(0) }}</span>
             </div>
           </div>
@@ -141,8 +141,8 @@
                 />
               </div>
 
-              <span class="real-time-tag">初始值: {{ displayAxisInitial(1) }}</span>
-              <span class="real-time-tag">当前实测: {{ displayAxisCurrent(1) }}° · {{ axisFeedbackLabel(1) }}</span>
+              <span v-if="axisInitialVisible" class="real-time-tag">初始值: {{ displayAxisInitial(1) }}</span>
+              <span class="real-time-tag">{{ axisCurrentLabel }}: {{ displayAxisCurrent(1) }}° · {{ axisFeedbackLabel(1) }}</span>
               <span class="real-time-tag">应到: {{ displayAxisTarget(1) }}</span>
             </div>
           </div>
@@ -163,8 +163,8 @@
                 />
               </div>
 
-              <span class="real-time-tag">初始值: {{ displayAxisInitial(2) }}</span>
-              <span class="real-time-tag">当前实测: {{ displayAxisCurrent(2) }}mm · {{ axisFeedbackLabel(2) }}</span>
+              <span v-if="axisInitialVisible" class="real-time-tag">初始值: {{ displayAxisInitial(2) }}</span>
+              <span class="real-time-tag">{{ axisCurrentLabel }}: {{ displayAxisCurrent(2) }}mm · {{ axisFeedbackLabel(2) }}</span>
               <span class="real-time-tag">应到: {{ displayAxisTarget(2) }}</span>
             </div>
           </div>
@@ -184,8 +184,8 @@
         </div>
 
         <div class="batch-controls">
-          <el-button type="primary" :disabled="busy || !isReady || !hasPendingAdjustments || hasLocalStop" @click="confirmAdjustments">确认下发三轴调整</el-button>
-          <span v-if="!isDebugMode">输入为相对增量，例如 +10° 表示从当前位置再转 10°。图纸运动后，三轴连续静止 10 秒时锁定图纸基准，后续微调显示相对这组固定基准的变化量。</span>
+          <el-button type="primary" :disabled="busy || !isReady || !axisBaselineLocked || !hasPendingAdjustments || hasLocalStop" @click="confirmAdjustments">确认下发三轴调整</el-button>
+          <span v-if="!isDebugMode">输入为相对增量，例如 +10° 表示从当前位置再转 10°。图纸下发后需等三轴连续静止 10 秒锁定基准，锁定时「当前位置」与「应到」才有数，未锁定前按钮不可用。</span>
           <span v-else>输入为本次相对增量，无图纸调试显示该次动作的实际移动量。人工归位后点亮「校准」再保存可同步复位 ROS 三轴基准并记录校零备注。</span>
           <el-button v-if="!busy && !isReady" @click="openConfiguration">重新配置机械臂</el-button>
         </div>
@@ -560,6 +560,11 @@ const drawingBaselineLabel = computed(() => {
   return `正在等待机械臂静止满 10 秒，还需 ${remaining} 秒`;
 });
 const hasPendingAdjustments = computed(() => armList.device.slice(0, 3).some(item => Number(item.adjust) !== 0));
+// 图纸模式下基准没锁定就算不出「应到」，此时下发等于盲发：起点看不到、应到也看不到。
+// 调试模式起点固定 0.00，不依赖图纸基准；关闭下发前检查时页面本就不显示应到并已有警示，
+// 此时也不该再拿本地观测去拦下发（后端仍会自行取起点）。两种情况都照常可发。
+const axisBaselineLocked = computed(() => isDebugMode.value || !finetuningPreflightEnabled.value ||
+  activeDrawingBaseline.value?.status === 'locked');
 
 // ===== 微调值展示：初始值 → 微调量 → 应到 → 到位实测 → 偏差，每个数只出现一次 =====
 const axisUnitOf = (index: number) => (index === 2 ? 'mm' : '°');
@@ -579,6 +584,10 @@ const displayAxisInitial = (index: number) => {
   const actual = drawingAxisActual(index);
   return actual === null ? '—' : actual.toFixed(2);
 };
+// 调试模式「初始值」是虚拟起点 0.00，「当前实测」是本次实际转动量，两个数不同，都显示；
+// 图纸模式起点就是当前位置，两者同源同值，只保留一行「当前位置」，避免同一个数出现两次。
+const axisInitialVisible = computed(() => isDebugMode.value);
+const axisCurrentLabel = computed(() => (isDebugMode.value ? '当前实测' : '当前位置'));
 // 当前实测：调试模式显示相对本次起点的实测变化量，图纸模式显示绝对实际位置，与“初始值”“应到”同一坐标
 const displayAxisCurrent = (index: number) => {
   if (isDebugMode.value) return displayAxisFeedback(index);
@@ -1471,6 +1480,8 @@ const confirmAdjustments = async () => {
   }
   const pending = adjustments.filter(item => item.position !== 0);
   if (!pending.length) { ElMessage.warning('没有待下发的非零调整'); return; }
+  // 图纸模式下基准未锁定时算不出起点和应到，下发就是盲发；按钮已置灰，这里再拦一次
+  if (!axisBaselineLocked.value) { ElMessage.warning('图纸基准尚未锁定，暂时算不出应到；请等三轴静止锁定后再下发'); return; }
   pending.forEach(item => {
     const axis = armList.device[adjustmentKeys.indexOf(item.parameter_name)];
     if (isDebugMode.value) {
