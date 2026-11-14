@@ -7,10 +7,11 @@
 
 import rospy
 import os
+import time
 import threading
 from collections import defaultdict
 from std_msgs.msg import Header
-from robot_control_backend.msg import RotationCmd, SwingCmd, TelescopicCmd, IntCmd
+from robot_control_backend.msg import RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification
 
 
 def load_env_config():
@@ -35,6 +36,11 @@ class ArmSequenceController:
 
         # V2 空指令判定阈值：position 增量绝对值小于该值视为无需轴动（单位 °/mm）
         self.EMPTY_CMD_EPS = 1e-6
+
+        # ---------- V2 到位事件门控（时序阶段改为等真实到位）----------
+        self.ARRIVE_TIMEOUT_S = 30.0               # 单阶段等待到位的兜底超时，超时仅告警放行
+        self.arrive_cond = threading.Condition()
+        self.arrived = set()                       # {(module_id, axis)} 已到位轴
 
         # ---------- 输出话题（发布给功能节点，强制从 .env 读取）----------
         self.pub_rot_seq = rospy.Publisher(
@@ -87,6 +93,11 @@ class ArmSequenceController:
             os.environ['ROS_TOPIC_ADJUST_TELESCOPIC_CMD_INPUT'],
             TelescopicCmd, self.cb_adjust_telescopic)
 
+        # ---------- V2 到位事件（时序阶段门控依据）----------
+        rospy.Subscriber(
+            os.environ['ROS_TOPIC_ARRIVE_NOTIFICATION'],
+            ArriveNotification, self.cb_arrive)
+
         rospy.loginfo("🔧 控制节点启动（所有话题强制从 .env 读取）")
 
     # ---------- device_id 解析（V2：device_id 即 AXIS 寻址单元）----------
@@ -103,6 +114,46 @@ class ArmSequenceController:
         remainder = axis % 3
         joint_map = {1: "rotate", 2: "swing", 0: "extend"}
         return arm_idx, joint_map[remainder]
+
+    # ---------- V2 到位事件门控 ----------
+    def cb_arrive(self, msg):
+        """记录到位事件（status_bits bit2=到位），唤醒正在等待的时序线程"""
+        if not (msg.status_bits & 0x04):
+            return
+        with self.arrive_cond:
+            self.arrived.add((int(msg.module_id), int(msg.device_id)))
+            self.arrive_cond.notify_all()
+
+    def _axes_with_motion(self, arms, joint_name):
+        """返回该阶段需要等待到位的 V2 轴号集合（增量非空的臂）"""
+        offset = {"rotate": 1, "swing": 2, "extend": 3}[joint_name]
+        return {arm_idx * 3 + offset for arm_idx in sorted(arms.keys())
+                if abs(arms[arm_idx][joint_name].position[0]) >= self.EMPTY_CMD_EPS}
+
+    def _clear_arrivals(self, module_id, axes):
+        """下发前清除旧到位标记，避免上一拍的到位事件被误判为本次到位"""
+        with self.arrive_cond:
+            for axis in axes:
+                self.arrived.discard((module_id, int(axis)))
+
+    def _wait_for_arrivals(self, module_id, axes, stage_name):
+        """等待指定轴回传到位事件；超时仅告警并放行，避免整条链路卡死"""
+        deadline = time.monotonic() + self.ARRIVE_TIMEOUT_S
+        with self.arrive_cond:
+            while True:
+                pending = [a for a in sorted(axes)
+                           if (module_id, int(a)) not in self.arrived]
+                if not pending:
+                    rospy.loginfo(
+                        f"[时序] 模块{module_id} {stage_name}阶段全部到位：AXIS {sorted(axes)}")
+                    return True
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    rospy.logwarn(
+                        f"[时序] 模块{module_id} {stage_name}阶段等待到位超时"
+                        f"（{self.ARRIVE_TIMEOUT_S:.0f}s），未到位：AXIS {pending}，继续下一阶段")
+                    return False
+                self.arrive_cond.wait(remain)
 
     # ---------- 压力传感器触发管理 ----------
     def _send_pressure_trigger(self, module_id):
@@ -136,23 +187,26 @@ class ArmSequenceController:
         self._send_pressure_trigger(module_id)
 
     # ================= 第一套功能：逆解指令收集与顺序执行 =================
+    def _check_cmd_source(self, msg, expected_topic, label):
+        """校验指令来源话题：不匹配时告警并放行，避免静默丢帧"""
+        actual_topic = msg._connection_header.get('topic', '')
+        if actual_topic != expected_topic:
+            rospy.logwarn_throttle(
+                5.0,
+                "⚠️ %s 指令来源话题不匹配：actual=%s expected=%s，已放行处理",
+                label, actual_topic or "(空)", expected_topic)
+
     def cb_rotation(self, msg):
-        """仅处理来自指定话题的旋转消息，进行话题过滤"""
-        expected_topic = os.environ['ROS_TOPIC_KINEMATICS_ROTATION_CMD_INPUT']
-        if msg._connection_header.get('topic', '') != expected_topic:
-            return
+        """处理旋转逆解指令（来源话题不匹配时告警放行）"""
+        self._check_cmd_source(msg, os.environ['ROS_TOPIC_KINEMATICS_ROTATION_CMD_INPUT'], "逆解旋转")
         self._store_cmd(msg, "rotate")
 
     def cb_swing(self, msg):
-        expected_topic = os.environ['ROS_TOPIC_KINEMATICS_SWING_CMD_INPUT']
-        if msg._connection_header.get('topic', '') != expected_topic:
-            return
+        self._check_cmd_source(msg, os.environ['ROS_TOPIC_KINEMATICS_SWING_CMD_INPUT'], "逆解摆动")
         self._store_cmd(msg, "swing")
 
     def cb_telescopic(self, msg):
-        expected_topic = os.environ['ROS_TOPIC_KINEMATICS_TELESCOPIC_CMD_INPUT']
-        if msg._connection_header.get('topic', '') != expected_topic:
-            return
+        self._check_cmd_source(msg, os.environ['ROS_TOPIC_KINEMATICS_TELESCOPIC_CMD_INPUT'], "逆解伸缩")
         self._store_cmd(msg, "extend")
 
     def _store_cmd(self, msg, joint_name):
@@ -187,7 +241,7 @@ class ArmSequenceController:
                 rospy.sleep(0.1)
 
     def _execute_module(self, task):
-        """执行一个完整模块的逆解指令：旋转→8s→摆动→8s→伸缩→7s后触发压力传感器"""
+        """执行一个完整模块的逆解指令：旋转→等到位→摆动→等到位→伸缩→等到位→7s后触发压力传感器"""
         mid = task["module_id"]
         arms = task["arms"]
 
@@ -198,38 +252,25 @@ class ArmSequenceController:
                 for a in arms
             )
 
+        def run_stage(joint_name, label, pub, unit, fmt):
+            """发布一个阶段的五臂指令，并等待该阶段有动作的轴全部回传到位事件"""
+            if stage_all_empty(joint_name):
+                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} {label}阶段全部为空指令，直接下发下一阶段")
+                return
+            expect_axes = self._axes_with_motion(arms, joint_name)
+            self._clear_arrivals(mid, expect_axes)      # 清旧标记，避免上一拍到位误判
+            for arm_idx in sorted(arms.keys()):
+                msg = arms[arm_idx][joint_name]
+                msg.header.stamp = rospy.Time.now()
+                pub.publish(msg)
+                rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} {label}增量 "
+                              f"{format(msg.position[0], fmt)}{unit}")
+            self._wait_for_arrivals(mid, expect_axes, label)
+
         try:
-            # 旋转阶段：同时向五臂发布旋转指令；五臂全为空指令则不下发、不等待
-            if stage_all_empty("rotate"):
-                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} 旋转阶段全部为空指令，直接下发下一阶段")
-            else:
-                for arm_idx in sorted(arms.keys()):
-                    msg = arms[arm_idx]["rotate"]
-                    msg.header.stamp = rospy.Time.now()
-                    self.pub_rot_seq.publish(msg)
-                    rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 旋转增量 {msg.position[0]:.2f}°")
-                rospy.sleep(8.0)
-
-            # 摆动阶段
-            if stage_all_empty("swing"):
-                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} 摆动阶段全部为空指令，直接下发下一阶段")
-            else:
-                for arm_idx in sorted(arms.keys()):
-                    msg = arms[arm_idx]["swing"]
-                    msg.header.stamp = rospy.Time.now()
-                    self.pub_sw_seq.publish(msg)
-                    rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 摆动增量 {msg.position[0]:.2f}°")
-                rospy.sleep(8.0)
-
-            # 伸缩阶段（阶段后无等待；全空则同样跳过下发）
-            if stage_all_empty("extend"):
-                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} 伸缩阶段全部为空指令，跳过下发")
-            else:
-                for arm_idx in sorted(arms.keys()):
-                    msg = arms[arm_idx]["extend"]
-                    msg.header.stamp = rospy.Time.now()
-                    self.pub_tel_seq.publish(msg)
-                    rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} 伸缩增量 {msg.position[0]:.1f}mm")
+            run_stage("rotate", "旋转", self.pub_rot_seq, "°", ".2f")
+            run_stage("swing", "摆动", self.pub_sw_seq, "°", ".2f")
+            run_stage("extend", "伸缩", self.pub_tel_seq, "mm", ".1f")
 
             # 7秒后触发压力传感器（去抖）
             self._schedule_pressure(mid)
@@ -238,21 +279,15 @@ class ArmSequenceController:
 
     # ================= 第二套功能：前端微调转发 =================
     def cb_adjust_rotation(self, msg):
-        expected_topic = os.environ['ROS_TOPIC_ADJUST_ROTATION_CMD_INPUT']
-        if msg._connection_header.get('topic', '') != expected_topic:
-            return
+        self._check_cmd_source(msg, os.environ['ROS_TOPIC_ADJUST_ROTATION_CMD_INPUT'], "微调旋转")
         self._handle_adjust(msg, "rotate")
 
     def cb_adjust_swing(self, msg):
-        expected_topic = os.environ['ROS_TOPIC_ADJUST_SWING_CMD_INPUT']
-        if msg._connection_header.get('topic', '') != expected_topic:
-            return
+        self._check_cmd_source(msg, os.environ['ROS_TOPIC_ADJUST_SWING_CMD_INPUT'], "微调摆动")
         self._handle_adjust(msg, "swing")
 
     def cb_adjust_telescopic(self, msg):
-        expected_topic = os.environ['ROS_TOPIC_ADJUST_TELESCOPIC_CMD_INPUT']
-        if msg._connection_header.get('topic', '') != expected_topic:
-            return
+        self._check_cmd_source(msg, os.environ['ROS_TOPIC_ADJUST_TELESCOPIC_CMD_INPUT'], "微调伸缩")
         self._handle_adjust(msg, "extend")
 
     def _handle_adjust(self, msg, joint_name):

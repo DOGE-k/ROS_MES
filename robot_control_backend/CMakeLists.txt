@@ -219,6 +219,7 @@ catkin_install_python(PROGRAMS
   scripts/hardware_node.py
   scripts/zlg_bus.py
   scripts/sim_lower_machine.py
+  scripts/sim_axis_status_node.py
   scripts/rosbridge_wrapper.py
   scripts/softstop_node.py
   scripts/control_node.py
