@@ -210,6 +210,7 @@ catkin_install_python(PROGRAMS
   scripts/kinematics_node.py
   scripts/calculation_node.py
   scripts/feedback_node.py
+  scripts/axis_status_aggregator.py
   scripts/module_confirme_node.py
   scripts/data_process_node.py
   scripts/sensor_control_node.py

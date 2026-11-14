@@ -38,7 +38,7 @@ class ArmSequenceController:
         self.EMPTY_CMD_EPS = 1e-6
 
         # ---------- V2 到位事件门控（时序阶段改为等真实到位）----------
-        self.ARRIVE_TIMEOUT_S = 30.0               # 单阶段等待到位的兜底超时，超时仅告警放行
+        self.ARRIVE_TIMEOUT_S = 120.0              # 单阶段等待到位的兜底超时（2min），超时仅告警放行
         self.arrive_cond = threading.Condition()
         self.arrived = set()                       # {(module_id, axis)} 已到位轴
 

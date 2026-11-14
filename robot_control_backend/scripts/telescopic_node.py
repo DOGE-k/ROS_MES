@@ -5,7 +5,7 @@
 
 V2 变更：
   - 支持 5 臂，每臂 3 轴：伸缩轴 axis ∈ {3,6,9,12,15}，arm_idx=(axis-1)//3（J3，每臂第3轴）
-  - 伸缩长度绝对范围 0~30mm（TELESCOPIC_MIN_MM / TELESCOPIC_MAX_MM）
+  - 伸缩长度绝对范围 -10~20mm（TELESCOPIC_MIN_MM / TELESCOPIC_MAX_MM）
   - 控制语义：输入相对增量（mm），维护软件长度变量，未超限时把增量按 0.01mm 原样透传
   - 下发前检查：长度变量 + 增量超限则丢弃该指令、变量不变，并回执超位 CmdAck
   - 单位：电机3 为直线位移轴，下行增量/上行反馈的 CAN 字段均为 0.01mm（不再是角度）
@@ -35,7 +35,7 @@ class TelescopeSimple:
     def __init__(self):
         load_env_config()
         rospy.init_node("telescope_simple_node")
-        rospy.loginfo("✅ 伸缩轴节点 启动（5 臂×3 轴，0~30mm，增量按 0.01mm 透传）")
+        rospy.loginfo("✅ 伸缩轴节点 启动（5 臂×3 轴，-10~20mm，增量按 0.01mm 透传）")
 
         # 电机3 为直线位移轴：CAN 字段单位为 0.01mm，不再做 mm↔角度 换算
         # （台架标定 1cm=177847 counts，counts 换算由下位机固件完成）

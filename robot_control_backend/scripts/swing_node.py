@@ -5,7 +5,7 @@
 
 V2 变更：
   - 支持 5 臂，每臂 3 轴：摆动轴 axis ∈ {2,5,8,11,14}，arm_idx=(axis-1)//3
-  - 摆动角绝对范围 0~15°（SWING_MIN_ANGLE / MAX_SWING_ANGLE）
+  - 摆动角绝对范围 -15~15°（SWING_MIN_ANGLE / MAX_SWING_ANGLE）
   - 控制语义：输入相对增量角度（°），维护软件位置变量，未超限时原样透传增量（0.01°，int16）
   - 下发前检查：位置变量 + 增量超限则丢弃该指令、变量不变，并回执超位 CmdAck
   - 反馈只用于定初值；反馈中断超过 FEEDBACK_TIMEOUT 后恢复时用新反馈重建变量
@@ -34,7 +34,7 @@ class SwingSimple:
     def __init__(self):
         load_env_config()
         rospy.init_node("swing_simple_node")
-        rospy.loginfo("✅ 摆动轴节点 V2 启动（5 臂×3 轴，0~15°，增量透传，角度 0.01°）")
+        rospy.loginfo("✅ 摆动轴节点 V2 启动（5 臂×3 轴，-15~15°，增量透传，角度 0.01°）")
 
         # V2：module_id 不做静态配置，cmd_callback 从指令消息（msg.module_id）透传
         self.SWING_MIN = float(os.environ['SWING_MIN_ANGLE'])

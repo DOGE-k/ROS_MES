@@ -3,7 +3,7 @@
        ROS MES V2 启动文件
        - CAN ID 位域：PRI(3)|GRP(4)|SEG(4)|NODE(5)|AXIS(5)|DIR(2)|MSG(4)|RSV(2)
        - 5 臂系统，每臂 3 轴（J1旋转/J2摆动/J3伸缩），轴号 1~15
-       - 下行只发相对增量（0.01°，int16），摆动角范围 0~15°
+       - 下行只发相对增量（0.01°，int16），摆动角范围 -15~15°
        - 臂级传感器 axis 21~25（压力/IMU）
        ==================================================================== -->
 
@@ -20,6 +20,15 @@
     name="feedback_node"
     pkg="robot_control_backend"
     type="feedback_node.py"
+    output="screen"
+  />
+
+  <!-- 2.1 轴状态聚合节点：固件不发状态字帧时，由指令/事件推导轴状态，
+       并按最后一次真实位置补发空闲位置；与 sim_axis_status_node.py 互斥 -->
+  <node
+    name="axis_status_aggregator"
+    pkg="robot_control_backend"
+    type="axis_status_aggregator.py"
     output="screen"
   />
 
