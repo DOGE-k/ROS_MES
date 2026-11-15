@@ -1995,6 +1995,35 @@ test('drawing mode refuses to dispatch before the baseline is locked', async t =
   assert.equal(h.calls.adjusts.length, 1);
 });
 
+test('the expected value stays frozen at the dispatched target while the arm is still moving', async t => {
+  const h = setup(t, { adjust: async payload => ({ code: 200, data: {
+    ...relativeBatch(payload, { rotation: 47.25 }), status: 'executing', target_locked: true,
+  } }) });
+  await enter(h);
+  drawingArmFeedback(h, 1, [37.25, 4, 8]);
+  drawingArmFeedback(h, 1, [47.25, 6, 9]);
+  drawingStillness(h, [[1, [47.25, 6, 9]]], 10);
+  h.page.armList.device[0].adjust = 10;
+  assert.equal(h.page.displayAxisTarget(0), '57.25°');
+  await h.page.confirmAdjustments();
+  // 下发后 ROS 实际位置一直在变，应到必须钉在批次冻结的 47.25 + 10 上，不能跟着涨
+  assert.equal(h.page.displayAxisTarget(0), '57.25°');
+  drawingArmFeedback(h, 1, [50.00, 6, 9]);
+  assert.equal(h.page.displayAxisCurrent(0), '50.00');
+  assert.equal(h.page.displayAxisTarget(0), '57.25°');
+  drawingArmFeedback(h, 1, [55.40, 6, 9]);
+  assert.equal(h.page.displayAxisCurrent(0), '55.40');
+  assert.equal(h.page.displayAxisTarget(0), '57.25°');
+  // 到位后输入框归零，应到仍是这一批的应到，不是“当前实际位置”
+  await h.page.pollBatch();
+  drawingArmFeedback(h, 1, [57.30, 6, 9]);
+  h.page.armList.device[0].adjust = 0;
+  assert.equal(h.page.displayAxisTarget(0), '57.25°');
+  // 但操作员输入下一轮增量时，起点重新变回当前位置（预览）
+  h.page.armList.device[0].adjust = 2;
+  assert.equal(h.page.displayAxisTarget(0), '59.30°');
+});
+
 test('drawing mode shows the locked baseline once and never a drawing requirement value', async t => {
   const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload,
     { rotation: h.page.armList.device[0].current }) }) });

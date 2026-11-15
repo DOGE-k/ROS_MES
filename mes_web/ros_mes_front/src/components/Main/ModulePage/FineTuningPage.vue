@@ -185,7 +185,7 @@
 
         <div class="batch-controls">
           <el-button type="primary" :disabled="busy || !isReady || !axisBaselineLocked || !hasPendingAdjustments || hasLocalStop" @click="confirmAdjustments">确认下发三轴调整</el-button>
-          <span v-if="!isDebugMode">输入为相对增量，例如 +10° 表示从当前位置再转 10°。图纸下发后需等三轴连续静止 10 秒锁定基准，锁定时「当前位置」与「应到」才有数，未锁定前按钮不可用。</span>
+          <span v-if="!isDebugMode">输入为相对增量，例如 +10° 表示从当前位置再转 10°。图纸下发后需等三轴连续静止 10 秒锁定基准，锁定时「当前位置」与「应到」才有数，未锁定前按钮不可用。下发后「应到」固定为这一批的目标值，不随机械臂实际位置变化。</span>
           <span v-else>输入为本次相对增量，无图纸调试显示该次动作的实际移动量。人工归位后点亮「校准」再保存可同步复位 ROS 三轴基准并记录校零备注。</span>
           <el-button v-if="!busy && !isReady" @click="openConfiguration">重新配置机械臂</el-button>
         </div>
@@ -594,18 +594,42 @@ const displayAxisCurrent = (index: number) => {
   const actual = drawingAxisActual(index);
   return actual === null ? '—' : actual.toFixed(2);
 };
-// 应到 = 初始值（实际位置）+ 输入框里的微调量，随输入实时变化
+// 本轴在当前批次里已登记的步骤（pending 表示还没轮到，不算已下发）
+const axisBatchStep = (index: number) => (batchState.value?.steps || [])
+  .find(step => step.parameter_name === adjustmentKeys[index] && step.status !== 'pending') || null;
+// 批次里冻结的应到：优先用后端给的 expected_position，缺失时按 start + delta 兜底
+const stepExpectedPosition = (step: FineTuningBatch['steps'][number] | null) => {
+  if (!step) return null;
+  const expected = stepNumber(step.expected_position);
+  if (expected !== null) return expected;
+  const start = stepNumber(step.start_position);
+  const delta = stepNumber(step.position);
+  return start !== null && delta !== null ? start + delta : null;
+};
+// 应到 = 起点 + 微调量。关键区别在“起点”取哪个：
+// 没下发时起点是当前位置（预览，输入多少就离多少）；一旦这一批登记了，起点就是批次冻结的 start_position，
+// 因为机械臂随后会一直动，实际位置每秒都在变，拿它当起点会让应到跟着一起涨（ROSB 实测发现的漂移）。
+// 批次结束后输入框归零，应到仍停在冻结值上，和结果行五段式的「应到」是同一个数；等操作员输入新一轮增量才回到实时预览。
 const displayAxisTarget = (index: number) => {
-  const initial = isDebugMode.value ? 0 : drawingAxisActual(index);
+  const adjust = finiteFeedbackNumber(armList.device[index].adjust) ?? 0;
+  // 调试模式起点固定 0，坐标系是相对量，不参与批次冻结
+  if (isDebugMode.value) return adjust.toFixed(2) + axisUnitOf(index);
+  const step = axisBatchStep(index);
+  // 本轴还没跑完 → 一定用冻结值（运动中实际位置一直在变）；已跑完但输入框归零 → 停在这一批的应到，
+  // 两种情况都不能拿还在变的实际位置重算。后端没取到起点时这里同样显示 —，和结果行保持一致。
+  if (step && (step.status !== 'completed' || adjust === 0)) {
+    const frozen = stepExpectedPosition(step);
+    return frozen === null ? '—' : frozen.toFixed(2) + axisUnitOf(index);
+  }
+  const initial = drawingAxisActual(index);
   if (initial === null) return '—';
-  const adjust = finiteFeedbackNumber(armList.device[index].adjust);
-  return (initial + (adjust ?? 0)).toFixed(2) + axisUnitOf(index);
+  return (initial + adjust).toFixed(2) + axisUnitOf(index);
 };
 const stepChain = (step: FineTuningBatch['steps'][number]) => {
   const unit = stepUnit(step.parameter_name);
   const start = stepNumber(step.start_position);
   const requested = stepNumber(step.position);
-  const expected = stepNumber(step.expected_position) ?? (start !== null && requested !== null ? start + requested : null);
+  const expected = stepExpectedPosition(step);
   const observed = stepNumber(step.observed_angle);
   const deviation = stepNumber(step.deviation) ?? (observed !== null && start !== null && requested !== null ? observed - start - requested : null);
   return ['初始 ' + formatStepValue(start, unit), '微调 ' + formatStepSigned(requested, unit),
