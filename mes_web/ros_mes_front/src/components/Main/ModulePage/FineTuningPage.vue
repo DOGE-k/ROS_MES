@@ -119,7 +119,11 @@
 
               <span v-if="axisInitialVisible" class="real-time-tag">初始值: {{ displayAxisInitial(0) }}</span>
               <span class="real-time-tag">{{ axisCurrentLabel }}: {{ displayAxisCurrent(0) }}° · {{ axisFeedbackLabel(0) }}</span>
-              <span class="real-time-tag">应到: {{ displayAxisTarget(0) }}</span>
+              <div class="axis-target-summary">
+                <span class="real-time-tag">应到: {{ displayAxisTarget(0) }}</span>
+                <span class="real-time-tag" title="同一基准以来已下发的带符号增量累计，不含未下发输入；不代表设备已运动">微调总量: {{ displayAxisTotal(0) }}</span>
+                <span class="real-time-tag" :title="'ROS 实测位置减固定基准 · ' + fieldStatusLabel(adjustmentKeys[0])">实际微调总量: {{ displayAxisActualTotal(0) }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -143,7 +147,11 @@
 
               <span v-if="axisInitialVisible" class="real-time-tag">初始值: {{ displayAxisInitial(1) }}</span>
               <span class="real-time-tag">{{ axisCurrentLabel }}: {{ displayAxisCurrent(1) }}° · {{ axisFeedbackLabel(1) }}</span>
-              <span class="real-time-tag">应到: {{ displayAxisTarget(1) }}</span>
+              <div class="axis-target-summary">
+                <span class="real-time-tag">应到: {{ displayAxisTarget(1) }}</span>
+                <span class="real-time-tag" title="同一基准以来已下发的带符号增量累计，不含未下发输入；不代表设备已运动">微调总量: {{ displayAxisTotal(1) }}</span>
+                <span class="real-time-tag" :title="'ROS 实测位置减固定基准 · ' + fieldStatusLabel(adjustmentKeys[1])">实际微调总量: {{ displayAxisActualTotal(1) }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -165,7 +173,11 @@
 
               <span v-if="axisInitialVisible" class="real-time-tag">初始值: {{ displayAxisInitial(2) }}</span>
               <span class="real-time-tag">{{ axisCurrentLabel }}: {{ displayAxisCurrent(2) }}mm · {{ axisFeedbackLabel(2) }}</span>
-              <span class="real-time-tag">应到: {{ displayAxisTarget(2) }}</span>
+              <div class="axis-target-summary">
+                <span class="real-time-tag">应到: {{ displayAxisTarget(2) }}</span>
+                <span class="real-time-tag" title="同一基准以来已下发的带符号增量累计，不含未下发输入；不代表设备已运动">微调总量: {{ displayAxisTotal(2) }}</span>
+                <span class="real-time-tag" :title="'ROS 实测位置减固定基准 · ' + fieldStatusLabel(adjustmentKeys[2])">实际微调总量: {{ displayAxisActualTotal(2) }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -444,6 +456,14 @@ const confirmedUnitIds = ref<number[]>([]);
 const confirmedSeg = ref<number | null>(null);
 const feedbackMarks = reactive(emptyFeedbackMarks());
 const drawingBaselines = reactive<Record<string, DrawingBaselineState>>({});
+// 只供展示的本机会话累计，不参与应到计算或运动下发。
+interface AxisTuningTotals {
+  generation: string;
+  origins: Array<number | null>;
+  sent: Record<string, number>;
+  excludedBatchIds?: string[];
+}
+const tuningTotals = reactive<Record<string, AxisTuningTotals>>({});
 const feedbackClock = ref(performance.now());
 const feedbackConnected = ref(false);
 const timeouts = feedbackTimeouts(import.meta.env);
@@ -593,6 +613,41 @@ const displayAxisCurrent = (index: number) => {
   if (isDebugMode.value) return displayAxisFeedback(index);
   const actual = drawingAxisActual(index);
   return actual === null ? '—' : actual.toFixed(2);
+};
+const activeTuningTotals = () => {
+  const totals = tuningTotals[String(initConfig.unitId)];
+  const generation = isDebugMode.value ? 'debug' : activeDrawingBaseline.value?.generation;
+  return totals?.generation === generation ? totals : null;
+};
+const displayAxisTotal = (index: number) => {
+  const totals = activeTuningTotals();
+  if (!totals) return '—';
+  const value = Object.entries(totals.sent).reduce((sum, [key, delta]) =>
+    key.endsWith(':' + adjustmentKeys[index]) ? sum + delta : sum, 0);
+  return formatStepSigned(Math.abs(value) < 0.005 ? 0 : value, axisUnitOf(index));
+};
+const displayAxisActualTotal = (index: number) => {
+  const totals = activeTuningTotals();
+  const origin = isDebugMode.value ? totals?.origins[index]
+    : activeDrawingBaseline.value?.status === 'locked' ? activeDrawingBaseline.value.values?.[index] : null;
+  const current = finiteFeedbackNumber(armList.device[index].current);
+  if (!totals || origin == null || current === null || feedbackMarks[adjustmentKeys[index]].receivedAt === null) return '—';
+  const value = current - origin;
+  return formatStepSigned(Math.abs(value) < 0.005 ? 0 : value, axisUnitOf(index));
+};
+// 后端同批次轮询、结论标记和恢复不能重复累计。pending 未下发，不计入。
+const recordTuningTotals = (batch: FineTuningBatch) => {
+  const totals = activeTuningTotals();
+  if (!totals || !batch.id || totals.excludedBatchIds?.includes(batch.id)) return;
+  for (const step of batch.steps) {
+    const index = adjustmentKeys.indexOf(step.parameter_name as AxisParameterName);
+    const delta = stepNumber(step.position);
+    if (index < 0 || step.status === 'pending' || delta === null) continue;
+    const firstForAxis = !Object.keys(totals.sent).some(key => key.endsWith(':' + step.parameter_name));
+    totals.sent[batch.id + ':' + step.parameter_name] = delta;
+    const start = stepNumber(step.start_position);
+    if (isDebugMode.value && firstForAxis && start !== null) totals.origins[index] = start;
+  }
 };
 // 本轴在当前批次里已登记的步骤（pending 表示还没轮到，不算已下发）
 const axisBatchStep = (index: number) => (batchState.value?.steps || [])
@@ -843,6 +898,8 @@ const updateAxisCurrent = (index: number, position: number) => {
   axis.current = position;
   axis.referenceReady = finiteFeedbackNumber(axis.referencePosition) !== null;
   markReceived(adjustmentKeys[index]);
+  const totals = activeTuningTotals();
+  if (isDebugMode.value && totals && totals.origins[index] === null) totals.origins[index] = position;
 };
 
 const syncActiveDrawingSamples = () => {
@@ -1221,6 +1278,10 @@ const confirmInitConfig = async () => {
     const drawingId = isDebugMode.value ? 0 : Number(draftInitConfig.drawingId);
     if (dialogMode.value === 'initial') {
       for (const key of Object.keys(drawingBaselines)) delete drawingBaselines[key];
+      for (const key of Object.keys(tuningTotals)) delete tuningTotals[key];
+      if (isDebugMode.value) for (const unitId of confirmedUnitIds.value) {
+        tuningTotals[String(unitId)] = { generation: 'debug', origins: [null, null, null], sent: {} };
+      }
     }
     let firstDrawingResponse: any = null;
     if (!isDebugMode.value) {
@@ -1238,6 +1299,11 @@ const confirmInitConfig = async () => {
           generation: drawingGeneration, unitId, seg: Number(drawingSeg), connectionRevision: drawingRevision,
           drawingId: builtinDrawing ? null : drawingId, drawingSource: builtinDrawing ? 'builtin_mock' : 'database',
         }, seeds);
+        const oldTotals = tuningTotals[String(unitId)];
+        const priorBatchIds = Object.keys(oldTotals?.sent || {}).map(key => key.slice(0, key.lastIndexOf(':')));
+        if (batchState.value?.unit_id === unitId && batchState.value.id) priorBatchIds.push(batchState.value.id);
+        tuningTotals[String(unitId)] = { generation: drawingGeneration, origins: [null, null, null], sent: {},
+          excludedBatchIds: [...new Set([...(oldTotals?.excludedBatchIds || []), ...priorBatchIds])] };
       }
       if (!noRosDebug && !feedbackSocket) connectFeedbackSocket();
       for (const unit of confirmedUnits) {
@@ -1330,6 +1396,7 @@ const confirmInitConfig = async () => {
 const applyBatch = (batch: FineTuningBatch, preserveDrafts = false) => {
   if (batch.module_id !== Number(moduleId.value) || batch.unit_id !== Number(initConfig.unitId)) return;
   batchState.value = batch;
+  recordTuningTotals(batch);
   busy.value = batch.target_locked;
   if (batch.status === 'completed' && batch.steps.some(step => step.warning) && !warnedDeviationBatches.has(batch.id)) {
     warnedDeviationBatches.add(batch.id);
@@ -1705,6 +1772,7 @@ const buildSessionSnapshot = () => {
     sharedDrawingViews: sharedDrawingViews.value.map((item) => ({ ...item })),
     armProfiles: profiles,
     drawingBaselines: JSON.parse(JSON.stringify(drawingBaselines)),
+    tuningTotals: JSON.parse(JSON.stringify(tuningTotals)),
   };
 };
 
@@ -1764,6 +1832,20 @@ const restoreSessionContext = async (session: ControlSession) => {
     const baseline = restoreDrawingBaseline(saved);
     if (baseline && baseline.seg === confirmedSeg.value && baseline.connectionRevision === confirmedConnectionRevision.value &&
         confirmedUnitIds.value.includes(baseline.unitId) && key === String(baseline.unitId)) drawingBaselines[key] = baseline;
+  }
+
+  for (const key of Object.keys(tuningTotals)) delete tuningTotals[key];
+  for (const [key, raw] of Object.entries(snapshot?.tuningTotals ?? {})) {
+    const saved = raw as AxisTuningTotals;
+    const generation = isDebugMode.value ? 'debug' : drawingBaselines[key]?.generation;
+    if (!confirmedUnitIds.value.includes(Number(key)) || !saved || saved.generation !== generation ||
+        !Array.isArray(saved.origins) || saved.origins.length !== 3 ||
+        !saved.origins.every(value => value === null || stepNumber(value) !== null) ||
+        !saved.sent || typeof saved.sent !== 'object' || Array.isArray(saved.sent) ||
+        !Object.values(saved.sent).every(value => stepNumber(value) !== null) ||
+        (saved.excludedBatchIds !== undefined && (!Array.isArray(saved.excludedBatchIds) ||
+          !saved.excludedBatchIds.every(value => typeof value === 'string')))) continue;
+    tuningTotals[key] = JSON.parse(JSON.stringify(saved));
   }
 
   const unitRes: any = await getUnitsByDeviceApi(initConfig.deviceId);
@@ -1984,6 +2066,7 @@ const connectionChanged = (event?: Event) => {
   const config = (event as CustomEvent<ConnectionSettings> | undefined)?.detail;
   if (config) finetuningPreflightEnabled.value = config.finetuning_preflight_enabled !== false;
   else void readConnectionContext().catch(() => {});
+  for (const key of Object.keys(tuningTotals)) delete tuningTotals[key];
   // 服务端已因连接变更作废全部会话，本机快照同样不能再用
   sessionStore.clearSnapshot();
   clearSessionState();
@@ -2459,6 +2542,13 @@ onBeforeUnmount(() => {
   color: #606266;
   font-size: 14px;
   white-space: nowrap;
+}
+
+.axis-target-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .real-time-tag {

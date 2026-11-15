@@ -39,6 +39,7 @@ const bindings = `Object.assign(module.exports, {
   relativeAxisValue, displayAxisFeedback, axisFeedbackLabel, finetuningPreflightEnabled,
   displayAxisInitial, displayAxisTarget, displayAxisCurrent, axisInitialVisible, axisCurrentLabel, axisBaselineLocked,
   stepChain, canMarkOutcome, markOutcome, batchDetailLines, outcomeLabels, outcomeLabelOf, outcomeBusy,
+  displayAxisTotal, displayAxisActualTotal, tuningTotals, applyBatch,
   drawingBaselines, activeDrawingBaseline, drawingBaselineLabel, displayDrawingReference,
   endSession, activeSession, resumedFromSession, tryResumeSession, persistSnapshot, drawingList, confirmedUnitIds,
   stopAxis, clearLocalStops, hasLocalStop, moduleHolds, localStopText, stopHolds, loadStopHolds, axisStopOptions,
@@ -271,6 +272,167 @@ function drawingStillness(harness, arms, seconds = 10) {
     harness.advance(0);
   }
 }
+
+async function lockTotalsBaseline(h, arms = [[1, [47.25, 6, 9]]]) {
+  for (const [arm, positions] of arms) {
+    drawingArmFeedback(h, arm, positions.map(value => value - 1));
+    drawingArmFeedback(h, arm, positions);
+  }
+  drawingStillness(h, arms);
+}
+
+test('cumulative requested and actual tuning span multiple rounds without changing targets or input semantics', async t => {
+  const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload,
+    { rotation: h.page.armList.device[0].current, swing: h.page.armList.device[1].current, telescopic: h.page.armList.device[2].current }) }) });
+  await enter(h);
+  assert.equal(h.page.displayAxisTotal(0), '+0.00°');
+  assert.equal(h.page.displayAxisActualTotal(0), '—');
+  await lockTotalsBaseline(h);
+  assert.equal(h.page.displayAxisActualTotal(0), '+0.00°');
+  h.page.armList.device[0].adjust = 10;
+  assert.equal(h.page.displayAxisTotal(0), '+0.00°'); // 未发草稿不计
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.displayAxisTotal(0), '+10.00°');
+  drawingArmFeedback(h, 1, [57.10, 6, 9]);
+  h.page.armList.device[0].adjust = 5;
+  await h.page.confirmAdjustments();
+  drawingArmFeedback(h, 1, [62.10, 6, 9]);
+  assert.equal(h.page.displayAxisTotal(0), '+15.00°');
+  assert.equal(h.page.displayAxisActualTotal(0), '+14.85°');
+  assert.equal(h.page.displayAxisTarget(0), '62.10°'); // 原有按本批实测起点算应到，不改
+  assert.equal(h.page.armList.device[0].adjust, 0);
+  h.page.armList.device[0].adjust = -2;
+  h.page.armList.device[1].adjust = -1.25;
+  h.page.armList.device[2].adjust = 3;
+  await h.page.confirmAdjustments();
+  assert.equal(h.page.displayAxisTotal(0), '+13.00°');
+  assert.equal(h.page.displayAxisTotal(1), '-1.25°');
+  assert.equal(h.page.displayAxisTotal(2), '+3.00mm');
+  drawingArmFeedback(h, 1, [60.10, 4.75, 11.9]);
+  assert.equal(h.page.displayAxisActualTotal(2), '+2.90mm');
+});
+
+test('pending steps do not count and repeated polls or operator outcomes never double count', async t => {
+  const h = setup(t);
+  await enter(h);
+  await lockTotalsBaseline(h);
+  const first = batch();
+  h.page.applyBatch(first);
+  h.page.applyBatch(first);
+  assert.equal(h.page.displayAxisTotal(0), '+2.00°');
+  assert.equal(h.page.displayAxisTotal(1), '+0.00°');
+  assert.equal(h.page.displayAxisActualTotal(0), '+0.00°');
+  const done = { ...first, status: 'completed', target_locked: false, steps: first.steps.map(step => ({ ...step, status: 'completed' })) };
+  h.page.applyBatch(done);
+  h.page.applyBatch({ ...done, steps: done.steps.map(step => ({ ...step, outcome: 'no_motion' })) });
+  assert.equal(h.page.displayAxisTotal(0), '+2.00°'); // 下发累计，不因人工判定扣掉
+  assert.equal(h.page.displayAxisTotal(1), '+1.00°');
+  h.page.applyBatch({ ...done, id: 'foreign', unit_id: 64 });
+  assert.equal(h.page.displayAxisTotal(0), '+2.00°');
+  h.page.applyBatch({ ...done, id: 'blocked', steps: done.steps.map(step => ({ ...step, status: 'pending' })) });
+  assert.equal(h.page.displayAxisTotal(0), '+2.00°');
+});
+
+test('actual cumulative motion follows valid feedback while requested total stays fixed', async t => {
+  const h = setup(t);
+  await enter(h);
+  await lockTotalsBaseline(h);
+  h.page.applyBatch(batch());
+  for (const [position, expected] of [[48.25, '+1.00°'], [49.1, '+1.85°'], [46.25, '-1.00°']]) {
+    drawingArmFeedback(h, 1, [position, 6, 9]);
+    assert.equal(h.page.displayAxisActualTotal(0), expected);
+    assert.equal(h.page.displayAxisTotal(0), '+2.00°');
+  }
+  h.page.applyFeedback({ module_id: 0, device_id: 1, data_type: 'rotation_axis_encoder', position: null, position_valid: false });
+  assert.equal(h.page.displayAxisActualTotal(0), '-1.00°');
+});
+
+test('cumulative displays are independent per arm and redraw resets them for all rebound arms', async t => {
+  const h = setup(t);
+  await enter(h, [1, 2]);
+  await lockTotalsBaseline(h, [[1, [47.25, 6, 9]], [2, [20, 3, 4]]]);
+  h.page.applyBatch(batch({ status: 'completed', target_locked: false }));
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.displayAxisTotal(0), '+0.00°');
+  h.page.applyBatch(batch({ id: 'arm2', unit_id: 64 }));
+  drawingArmFeedback(h, 2, [21.5, 3, 4]);
+  assert.equal(h.page.displayAxisActualTotal(0), '+1.50°');
+  // Unlock test batches without changing sent totals.
+  h.page.applyBatch(batch({ id: 'arm2', unit_id: 64, status: 'completed', target_locked: false }));
+  await h.page.handleArmSwitch(1);
+  assert.equal(h.page.displayAxisTotal(0), '+2.00°');
+  h.page.applyBatch(batch({ status: 'completed', target_locked: false }));
+  h.page.openDrawingDialog();
+  await h.page.confirmInitConfig();
+  assert.equal(h.page.displayAxisTotal(0), '+0.00°');
+  assert.equal(h.page.displayAxisActualTotal(0), '—');
+  h.page.applyBatch(batch({ status: 'completed', target_locked: false })); // 旧批次回填不混入新基准
+  assert.equal(h.page.displayAxisTotal(0), '+0.00°');
+  await h.page.handleArmSwitch(2);
+  assert.equal(h.page.displayAxisTotal(0), '+0.00°');
+});
+
+test('debug actual cumulative motion uses one fixed measured origin, not each new batch start', async t => {
+  const h = setup(t, { debug: true });
+  await enter(h);
+  assert.equal(h.page.displayAxisActualTotal(0), '—');
+  drawingArmFeedback(h, 1, [100, 20, 30]);
+  h.page.applyBatch(batch({ steps: [{ parameter_name: 'rotation', position: 10, device_id: 1, status: 'completed', start_position: 100 }], status: 'completed', target_locked: false }));
+  drawingArmFeedback(h, 1, [109.9, 20, 30]);
+  h.page.applyBatch(batch({ id: 'second', steps: [{ parameter_name: 'rotation', position: 5, device_id: 1, status: 'completed', start_position: 109.9 }], status: 'completed', target_locked: false }));
+  drawingArmFeedback(h, 1, [114.85, 20, 30]);
+  assert.equal(h.page.displayAxisTotal(0), '+15.00°');
+  assert.equal(h.page.displayAxisActualTotal(0), '+14.85°');
+  h.page.connectionChanged();
+  assert.equal(h.page.displayAxisTotal(0), '—');
+  assert.equal(h.page.displayAxisActualTotal(0), '—');
+});
+
+test('session snapshots retain cumulative totals and poll deduplication after refresh', async t => {
+  const session = heldSession({ seg: 0 });
+  const h = setup(t, {
+    debug: true, localStorage: memoryStorage(SESSION_SETTINGS),
+    confirm: payload => ({ code: 200, data: { seg: 0, connection_revision: 0,
+      confirmations: payload.unit_ids.map(unit_id => ({ unit_id, confirmed: true })), session } }),
+  });
+  await enter(h);
+  drawingArmFeedback(h, 1, [100, 20, 30]);
+  const completed = batch({ status: 'completed', target_locked: false, steps: [
+    { parameter_name: 'rotation', position: 10, status: 'completed', device_id: 1, start_position: 100, expected_position: 110 },
+  ] });
+  h.page.applyBatch(completed);
+  drawingArmFeedback(h, 1, [109.85, 20, 30]);
+  h.page.persistSnapshot();
+  const restored = setup(t, {
+    debug: true, localStorage: memoryStorage(SESSION_SETTINGS), sessionStorage: h.storages.session,
+    sessionState: () => ({ session, latest: session, reason: null }), resume: () => ({ valid: true, session }),
+  });
+  await restored.mount();
+  assert.equal(restored.page.displayAxisTotal(0), '+10.00°');
+  assert.equal(restored.page.displayAxisActualTotal(0), '+9.85°');
+  restored.page.applyBatch(completed, true);
+  assert.equal(restored.page.displayAxisTotal(0), '+10.00°');
+  assert.equal(restored.page.feedbackMarks.rotation.historical, true);
+});
+
+test('missing historical cumulative data is unknown rather than a fabricated zero', async t => {
+  const session = heldSession();
+  const h = setup(t, { debug: true, localStorage: memoryStorage(SESSION_SETTINGS),
+    sessionStorage: memoryStorage({ 'mes.finetuning.session.snapshot.session-1': JSON.stringify(snapshotOf()) }),
+    sessionState: () => ({ session, latest: session, reason: null }), resume: () => ({ valid: true, session }),
+  });
+  await h.mount();
+  assert.equal(h.page.displayAxisTotal(0), '—');
+  assert.equal(h.page.displayAxisActualTotal(0), '—');
+});
+
+test('cumulative display markup follows expected value on all three axes', () => {
+  for (let index = 0; index < 3; index++) {
+    assert.ok(descriptor.template.content.includes('应到: {{ displayAxisTarget(' + index + ') }}'));
+    assert.ok(descriptor.template.content.includes('微调总量: {{ displayAxisTotal(' + index + ') }}'));
+    assert.ok(descriptor.template.content.includes('实际微调总量: {{ displayAxisActualTotal(' + index + ') }}'));
+  }
+});
 
 test('drawing motion settles for ten seconds and locks one baseline across consecutive relative commands', async t => {
   const h = setup(t, { adjust: async payload => ({ data: relativeBatch(payload,
