@@ -1,186 +1,200 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-旋转轴节点 V2
 
-V2 变更：
-  - 支持 5 臂，每臂 3 轴：旋转轴 axis ∈ {1,4,7,10,13}，arm_idx=(axis-1)//3
-  - 控制语义：输入相对增量角度（°），维护软件位置变量，未超限时原样透传增量（0.01°，int16）
-  - 下发前检查：位置变量 + 增量 > 限位则丢弃该指令、变量不变，并回执超位 CmdAck
-  - 反馈只用于定初值；反馈中断超过 FEEDBACK_TIMEOUT 后恢复时用新反馈重建变量
-"""
-import rospy
-import os
-import time
-import sqlite3
-import json
-from datetime import datetime
-from std_msgs.msg import Header
-from robot_control_backend.msg import RotationCmd, IntCmd, CmdAck
+import rclpy
+from rclpy.node import Node
+from robot_control_backend.msg import CmdAck, IntCmd, RotationCmd
+from robot_control_runtime.params import declare_env_parameter, load_environment
+from robot_control_runtime.telemetry import SensorLog
 
-def load_env_config():
-    """从 .env 文件加载配置"""
-    env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    os.environ[key] = value
-        rospy.loginfo("✅ 已从 rob_arm.env 加载配置")
 
-class RotationSimple:
-    def __init__(self):
-        load_env_config()
-        rospy.init_node("rotation_simple_node")
-        rospy.loginfo("旋转轴节点 V2 启动（5 臂×3 轴，增量透传，角度 0.01°）")
+class RotationSimple(Node):
+    """Checks each rotation increment against the raw encoder limits."""
 
-        # 话题只读 rob_arm.env（env 改了自动生效，无硬编码默认值）
-        TOPIC_CMD = os.environ['ROS_TOPIC_KINEMATICS_ROTATION_CMD_SEQ']
-        TOPIC_ROTATION_FEEDBACK = os.environ['ROS_TOPIC_ROTATION_FEEDBACK']
-        TOPIC_ROTATION_OUTPUT = os.environ['ROS_TOPIC_ROTATION_OUTPUT']
-        TOPIC_AXIS_ZERO = os.environ['ROS_TOPIC_AXIS_ZERO']
+    ROTATION_AXES = {1: 0, 4: 1, 7: 2, 10: 3, 13: 4}
 
-        # 旋转轴绝对角度软限位（°）
-        self.ROT_MIN = float(os.environ['ROTATION_MIN_ANGLE'])
-        self.ROT_MAX = float(os.environ['ROTATION_MAX_ANGLE'])
-        # 反馈中断阈值（秒）：超过该时长后恢复反馈，视为基准漂移并用新反馈重建软件位置变量
-        self.FEEDBACK_TIMEOUT = 1.0
+    def __init__(self) -> None:
+        super().__init__("rotation_simple_node")
+        env, _ = load_environment(self)
 
-        # 零点由人工调零，下位机不回传基准信息：软件基准固定为 0°
-        self.angles = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        self.axis_ready = {0: True, 1: True, 2: True, 3: True, 4: True}
-        self.last_fb_time = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        self._command_topic = declare_env_parameter(
+            self,
+            env,
+            "rotation_command_topic",
+            "ROS_TOPIC_KINEMATICS_ROTATION_CMD_SEQ",
+            "/control/kinematics_rotation_cmd_sequenced",
+        )
+        self._feedback_topic = declare_env_parameter(
+            self,
+            env,
+            "rotation_feedback_topic",
+            "ROS_TOPIC_ROTATION_FEEDBACK",
+            "/hardware/rotation_feedback",
+        )
+        self._output_topic = declare_env_parameter(
+            self,
+            env,
+            "rotation_output_topic",
+            "ROS_TOPIC_ROTATION_OUTPUT",
+            "/hardware/rotation_output",
+        )
+        self._ack_topic = declare_env_parameter(
+            self,
+            env,
+            "cmd_ack_topic",
+            "ROS_TOPIC_CMD_ACK",
+            "/hardware/cmd_ack",
+        )
+        self._encoder_min = declare_env_parameter(
+            self, env, "rotation_encoder_min", "ENC_MIN", 580, int
+        )
+        self._encoder_max = declare_env_parameter(
+            self, env, "rotation_encoder_max", "ENC_MAX", 29420, int
+        )
+        self._degrees_per_tick = declare_env_parameter(
+            self, env, "rotation_deg_per_tick", "DEG_PER_TICK", 0.01248, float
+        )
+        self._feedback_timeout_s = declare_env_parameter(
+            self, env, "feedback_timeout_s", "FEEDBACK_TIMEOUT_S", 1.0, float
+        )
+        db_path = declare_env_parameter(
+            self, env, "db_path", "DB_PATH", "ros_database.db"
+        )
 
-        rospy.Subscriber(TOPIC_CMD, RotationCmd, self.cmd_callback)
-        rospy.Subscriber(TOPIC_ROTATION_FEEDBACK, RotationCmd, self.feedback_callback)
-        rospy.Subscriber(TOPIC_AXIS_ZERO, IntCmd, self.zero_callback)
-        self.output_pub = rospy.Publisher(TOPIC_ROTATION_OUTPUT, IntCmd, queue_size=10)
-        self.pub_cmd_ack = rospy.Publisher(os.environ['ROS_TOPIC_CMD_ACK'], CmdAck, queue_size=10)
+        if self._degrees_per_tick <= 0.0:
+            raise ValueError("rotation_deg_per_tick must be greater than zero")
+        if self._encoder_min >= self._encoder_max:
+            raise ValueError("rotation encoder limits are inverted")
+        if self._feedback_timeout_s <= 0.0:
+            raise ValueError("feedback_timeout_s must be greater than zero")
 
-        # ------------------ 数据库初始化 ------------------
-        db_path = os.environ['DB_PATH']
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._create_table()
-        rospy.loginfo("✅ 数据库已连接，路径: %s", db_path)
+        self._angles = {arm: 0.0 for arm in range(5)}
+        self._axis_ready = {arm: False for arm in range(5)}
+        self._last_feedback_s = {arm: 0.0 for arm in range(5)}
 
-        rospy.loginfo(f"订阅指令话题: {TOPIC_CMD}")
+        self._output_publisher = self.create_publisher(IntCmd, self._output_topic, 10)
+        self._ack_publisher = self.create_publisher(CmdAck, self._ack_topic, 10)
+        self.create_subscription(RotationCmd, self._command_topic, self._on_command, 10)
+        self.create_subscription(
+            RotationCmd, self._feedback_topic, self._on_feedback, 10
+        )
+        self._sensor_log = SensorLog(db_path, self.get_logger())
 
-    def _create_table(self):
-        """创建 sensor_log 表（如果不存在）"""
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS sensor_log (
-                Createtime DATETIME NOT NULL,
-                creater_id INTEGER NOT NULL,
-                Work_ID INTEGER NOT NULL,
-                sensor_ID INTEGER NOT NULL,
-                isread INTEGER NOT NULL,
-                data TEXT NOT NULL,
-                del_flag BOOL DEFAULT false,
-                Notes TEXT,
-                PRIMARY KEY (Createtime, sensor_ID)
-            )
-        """)
-        self.conn.commit()
+        self.get_logger().info(
+            "Rotation node ready: "
+            f"encoder limits {self._encoder_min}..{self._encoder_max}, "
+            f"{self._degrees_per_tick} deg/tick"
+        )
 
-    def _insert_sensor_log(self, module_id, device_id, position, note_str):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-        data_json = json.dumps({
-            "module_id": module_id,
-            "device_id": device_id,
-            "position": position
-        })
-        try:
-            self.conn.execute("""
-                INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (now, 1, 1, device_id, 2, data_json, 0, note_str))
-            self.conn.commit()
-        except Exception as e:
-            rospy.logerr("数据库写入失败: %s", e)
+    def _now_s(self) -> float:
+        return self.get_clock().now().nanoseconds / 1_000_000_000.0
 
-    def _device_to_arm_idx(self, device_id):
-        """V2：device_id 即轴号；旋转轴 axis ∈ {1,4,7,10,13}，arm_idx=(axis-1)//3"""
-        axis = int(device_id)
-        if axis in (1, 4, 7, 10, 13):
-            return (axis - 1) // 3
-        return -1
+    def _header(self):
+        return self.get_clock().now().to_msg()
 
-    def _publish_over_limit(self, msg, detail, new_angle):
-        """回执超位 CmdAck：ack_msg=1、result=3（参数越界）、detail=1 上限 / 2 下限"""
+    def _arm_index(self, device_id: int) -> int:
+        return self.ROTATION_AXES.get(int(device_id), -1)
+
+    def _publish_over_limit(self, source: RotationCmd, detail: int) -> None:
         ack = CmdAck()
-        ack.header = Header(stamp=rospy.Time.now())
-        ack.module_id = msg.module_id
-        ack.device_id = msg.device_id
+        ack.header.stamp = self._header()
+        ack.module_id = source.module_id
+        ack.device_id = source.device_id
         ack.ack_msg = 1
         ack.result = 3
         ack.detail = detail
-        self.pub_cmd_ack.publish(ack)
+        self._ack_publisher.publish(ack)
 
-    def cmd_callback(self, msg):
-        device_id = msg.device_id
-        arm_idx = self._device_to_arm_idx(device_id)
-        if arm_idx < 0:
-            rospy.logwarn(f"旋转节点收到无法识别的 device_id: {device_id}")
+    def _on_command(self, message: RotationCmd) -> None:
+        arm_index = self._arm_index(message.device_id)
+        if arm_index < 0:
+            self.get_logger().warning(
+                f"Rotation command ignored for unknown device_id={message.device_id}"
+            )
             return
-        delta_deg = float(msg.position[0])
-        new_angle = self.angles[arm_idx] + delta_deg
-
-        # 下发前检查：超限则丢弃指令、软件位置变量保持不变
-        if new_angle > self.ROT_MAX or new_angle < self.ROT_MIN:
-            detail = 1 if new_angle > self.ROT_MAX else 2
-            self._publish_over_limit(msg, detail, new_angle)
-            rospy.logwarn("⚠️ Arm%d 旋转超位：当前 %.3f° + 增量 %.3f° = %.3f° 超出 [%.1f, %.1f]，指令已丢弃",
-                          arm_idx + 1, self.angles[arm_idx], delta_deg, new_angle,
-                          self.ROT_MIN, self.ROT_MAX)
+        if not message.position:
+            self.get_logger().warning("Rotation command has an empty position array")
+            return
+        if not self._axis_ready[arm_index]:
+            self.get_logger().warning(
+                f"Arm {arm_index + 1} has no rotation feedback baseline; command rejected",
+                throttle_duration_sec=2.0,
+            )
             return
 
-        self.angles[arm_idx] = new_angle
-
-        # 未超限：原样透传增量（0.01°，int16）
-        delta_centi_deg = int(round(delta_deg * 100))
-        int_cmd_msg = IntCmd()
-        int_cmd_msg.header = Header(stamp=rospy.Time.now())
-        int_cmd_msg.module_id = msg.module_id
-        int_cmd_msg.device_id = device_id
-        int_cmd_msg.position = [delta_centi_deg]
-        self.output_pub.publish(int_cmd_msg)
-
-        self._insert_sensor_log(msg.module_id, device_id, delta_centi_deg, "下发旋转增量数据")
-        rospy.loginfo(f"Arm{arm_idx+1} 旋转增量：{delta_deg:+.4f}° → 下发 {delta_centi_deg}(0.01°) | 位置变量 {new_angle:+.3f}°")
-
-    def zero_callback(self, msg):
-        """人工校零：position=[arm]，将对应臂旋转轴软件基准重新归零"""
-        if int(msg.device_id) != 0 or not msg.position:
+        delta_degrees = float(message.position[0])
+        next_angle = self._angles[arm_index] + delta_degrees
+        next_tick = round(next_angle / self._degrees_per_tick)
+        if next_tick < self._encoder_min or next_tick > self._encoder_max:
+            detail = 1 if next_tick > self._encoder_max else 2
+            self._publish_over_limit(message, detail)
+            self.get_logger().warning(
+                f"Arm {arm_index + 1} rotation limit hit: "
+                f"{next_angle:.3f} deg is tick {next_tick}, "
+                f"allowed {self._encoder_min}..{self._encoder_max}"
+            )
             return
-        arm = int(msg.position[0])
-        if not 1 <= arm <= 5:
-            rospy.logwarn("⚠️ 旋转轴校零 arm=%d 非法（允许 1~5）", arm)
+
+        self._angles[arm_index] = next_angle
+        delta_centideg = int(round(delta_degrees * 100.0))
+        output = IntCmd()
+        output.header.stamp = self._header()
+        output.module_id = message.module_id
+        output.device_id = message.device_id
+        output.position = [delta_centideg]
+        self._output_publisher.publish(output)
+        self._sensor_log.insert(
+            message.module_id,
+            message.device_id,
+            delta_centideg,
+            "rotation increment output",
+        )
+        self.get_logger().info(
+            f"Arm {arm_index + 1} rotation {delta_degrees:+.4f} deg -> "
+            f"{delta_centideg} centideg, position {next_angle:+.3f} deg"
+        )
+
+    def _on_feedback(self, message: RotationCmd) -> None:
+        arm_index = self._arm_index(message.device_id)
+        if arm_index < 0 or not message.position:
             return
-        arm_idx = arm - 1
-        self.angles[arm_idx] = 0.0
-        self.axis_ready[arm_idx] = True
-        self.last_fb_time[arm_idx] = 0.0
-        rospy.logwarn("🎯 Arm%d 旋转轴 ROS 软件基准已校零", arm)
 
-    def feedback_callback(self, msg):
-        """零点由人工调零，下位机不回传基准：反馈仅记录时间戳，不参与基准计算"""
-        arm_idx = self._device_to_arm_idx(msg.device_id)
-        if arm_idx < 0:
-            return
-        self.last_fb_time[arm_idx] = time.time()
+        angle = float(message.position[0])
+        now_s = self._now_s()
+        previous_s = self._last_feedback_s[arm_index]
+        if not self._axis_ready[arm_index]:
+            self._angles[arm_index] = angle
+            self._axis_ready[arm_index] = True
+            self.get_logger().info(
+                f"Arm {arm_index + 1} rotation baseline set to {angle:+.3f} deg"
+            )
+        elif now_s - previous_s > self._feedback_timeout_s:
+            self._angles[arm_index] = angle
+            self.get_logger().warning(
+                f"Arm {arm_index + 1} rotation feedback resumed after "
+                f"{now_s - previous_s:.2f}s; baseline reset to {angle:+.3f} deg"
+            )
+        self._last_feedback_s[arm_index] = now_s
 
-    def shutdown_hook(self):
-        self.conn.close()
-        rospy.loginfo("数据库连接已关闭")
+    def destroy_node(self) -> bool:
+        if hasattr(self, "_sensor_log"):
+            self._sensor_log.close()
+        return super().destroy_node()
 
-if __name__ == "__main__":
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = None
     try:
         node = RotationSimple()
-        rospy.on_shutdown(node.shutdown_hook)
-        rospy.spin()
-    except rospy.ROSInterruptException:
-        rospy.loginfo("旋转轴节点停止")
-    except Exception as e:
-        rospy.logerr("旋转轴异常：%s" % str(e))
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
