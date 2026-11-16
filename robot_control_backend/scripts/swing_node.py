@@ -1,188 +1,183 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-摆动轴节点 V2
 
-V2 变更：
-  - 支持 5 臂，每臂 3 轴：摆动轴 axis ∈ {2,5,8,11,14}，arm_idx=(axis-1)//3
-  - 摆动角绝对范围 -15~15°（SWING_MIN_ANGLE / MAX_SWING_ANGLE）
-  - 控制语义：输入相对增量角度（°），维护软件位置变量，未超限时原样透传增量（0.01°，int16）
-  - 下发前检查：位置变量 + 增量超限则丢弃该指令、变量不变，并回执超位 CmdAck
-  - 反馈只用于定初值；反馈中断超过 FEEDBACK_TIMEOUT 后恢复时用新反馈重建变量
-"""
-import rospy
-import os
-import time
-import sqlite3
-import json
-from datetime import datetime
-from std_msgs.msg import Header
-from robot_control_backend.msg import SwingCmd, IntCmd, CmdAck
+import rclpy
+from rclpy.node import Node
+from robot_control_backend.msg import CmdAck, IntCmd, SwingCmd
+from robot_control_runtime.params import declare_env_parameter, load_environment
+from robot_control_runtime.telemetry import SensorLog
 
-def load_env_config():
-    env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
-    if os.path.exists(env_path):
-        with open(env_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    os.environ[key] = value
-        rospy.loginfo("✅ 已从 rob_arm.env 加载配置")
 
-class SwingSimple:
-    def __init__(self):
-        load_env_config()
-        rospy.init_node("swing_simple_node")
-        rospy.loginfo("✅ 摆动轴节点 V2 启动（5 臂×3 轴，-15~15°，增量透传，角度 0.01°）")
+class SwingSimple(Node):
+    SWING_AXES = {2: 0, 5: 1, 8: 2, 11: 3, 14: 4}
 
-        # V2：module_id 不做静态配置，cmd_callback 从指令消息（msg.module_id）透传
-        self.SWING_MIN = float(os.environ['SWING_MIN_ANGLE'])
-        self.SWING_MAX = float(os.environ['MAX_SWING_ANGLE'])
-        # 反馈中断阈值（秒）：超过该时长后恢复反馈，用新反馈重建软件位置变量
-        self.FEEDBACK_TIMEOUT = 1.0
+    def __init__(self) -> None:
+        super().__init__("swing_simple_node")
+        env, _ = load_environment(self)
 
-        # 只订阅一个统一下发的话题（控制节点输出的 _sequenced）；话题只读 rob_arm.env
-        TOPIC_CMD = os.environ['ROS_TOPIC_KINEMATICS_SWING_CMD_SEQ']
-        TOPIC_SWING_FEEDBACK = os.environ['ROS_TOPIC_SWING_FEEDBACK']
-        TOPIC_SWING_OUTPUT = os.environ['ROS_TOPIC_SWING_OUTPUT']
-        TOPIC_AXIS_ZERO = os.environ['ROS_TOPIC_AXIS_ZERO']
+        self._command_topic = declare_env_parameter(
+            self,
+            env,
+            "swing_command_topic",
+            "ROS_TOPIC_KINEMATICS_SWING_CMD_SEQ",
+            "/control/kinematics_swing_cmd_sequenced",
+        )
+        self._feedback_topic = declare_env_parameter(
+            self,
+            env,
+            "swing_feedback_topic",
+            "ROS_TOPIC_SWING_FEEDBACK",
+            "/hardware/swing_feedback",
+        )
+        self._output_topic = declare_env_parameter(
+            self,
+            env,
+            "swing_output_topic",
+            "ROS_TOPIC_SWING_OUTPUT",
+            "/hardware/swing_output",
+        )
+        self._ack_topic = declare_env_parameter(
+            self,
+            env,
+            "cmd_ack_topic",
+            "ROS_TOPIC_CMD_ACK",
+            "/hardware/cmd_ack",
+        )
+        self._min_angle = declare_env_parameter(
+            self, env, "swing_min_angle", "SWING_MIN_ANGLE", 0.0, float
+        )
+        self._max_angle = declare_env_parameter(
+            self, env, "swing_max_angle", "MAX_SWING_ANGLE", 15.0, float
+        )
+        self._feedback_timeout_s = declare_env_parameter(
+            self, env, "feedback_timeout_s", "FEEDBACK_TIMEOUT_S", 1.0, float
+        )
+        db_path = declare_env_parameter(
+            self, env, "db_path", "DB_PATH", "ros_database.db"
+        )
+        if self._min_angle >= self._max_angle:
+            raise ValueError("swing angle limits are inverted")
+        if self._feedback_timeout_s <= 0.0:
+            raise ValueError("feedback_timeout_s must be greater than zero")
 
-        # 零点由人工调零，下位机不回传基准信息：软件基准固定为 0°
-        self.angles = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
-        self.axis_ready = {0: True, 1: True, 2: True, 3: True, 4: True}
-        self.last_fb_time = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+        self._angles = {arm: 0.0 for arm in range(5)}
+        self._axis_ready = {arm: False for arm in range(5)}
+        self._last_feedback_s = {arm: 0.0 for arm in range(5)}
 
-        rospy.Subscriber(TOPIC_CMD, SwingCmd, self.cmd_callback)
-        rospy.Subscriber(TOPIC_SWING_FEEDBACK, SwingCmd, self.feedback_callback)
-        rospy.Subscriber(TOPIC_AXIS_ZERO, IntCmd, self.zero_callback)
-        self.output_pub = rospy.Publisher(TOPIC_SWING_OUTPUT, IntCmd, queue_size=10)
-        self.pub_cmd_ack = rospy.Publisher(os.environ['ROS_TOPIC_CMD_ACK'], CmdAck, queue_size=10)
+        self._output_publisher = self.create_publisher(IntCmd, self._output_topic, 10)
+        self._ack_publisher = self.create_publisher(CmdAck, self._ack_topic, 10)
+        self.create_subscription(SwingCmd, self._command_topic, self._on_command, 10)
+        self.create_subscription(SwingCmd, self._feedback_topic, self._on_feedback, 10)
+        self._sensor_log = SensorLog(db_path, self.get_logger())
 
-        # ------------------ 数据库初始化 ------------------
-        db_path = os.environ['DB_PATH']
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._create_table()
-        rospy.loginfo("✅ 数据库已连接，路径: %s", db_path)
+        self.get_logger().info(
+            f"Swing node ready: limits {self._min_angle:.2f}..{self._max_angle:.2f} deg"
+        )
 
-        rospy.loginfo(f"订阅指令话题: {TOPIC_CMD}")
+    def _now_s(self) -> float:
+        return self.get_clock().now().nanoseconds / 1_000_000_000.0
 
-    def _create_table(self):
-        """创建 sensor_log 表（如果不存在）"""
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS sensor_log (
-                Createtime DATETIME NOT NULL,
-                creater_id INTEGER NOT NULL,
-                Work_ID INTEGER NOT NULL,
-                sensor_ID INTEGER NOT NULL,
-                isread INTEGER NOT NULL,
-                data TEXT NOT NULL,
-                del_flag BOOL DEFAULT false,
-                Notes TEXT,
-                PRIMARY KEY (Createtime, sensor_ID)
-            )
-        """)
-        self.conn.commit()
+    def _header(self):
+        return self.get_clock().now().to_msg()
 
-    def _insert_sensor_log(self, module_id, device_id, position, note_str):
-        """插入一条传感器日志，sensor_ID 填 device_id"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-        data_json = json.dumps({
-            "module_id": module_id,
-            "device_id": device_id,
-            "position": position
-        })
-        try:
-            self.conn.execute("""
-                INSERT INTO sensor_log (Createtime, creater_id, Work_ID, sensor_ID, isread, data, del_flag, Notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (now, 1, 1, device_id, 2, data_json, 0, note_str))
-            self.conn.commit()
-        except Exception as e:
-            rospy.logerr("数据库写入失败: %s", e)
-
-    def _device_to_arm_idx(self, device_id):
-        """V2：device_id 即轴号；摆动轴 axis ∈ {2,5,8,11,14}，arm_idx=(axis-1)//3"""
-        axis = int(device_id)
-        if axis in (2, 5, 8, 11, 14):
-            return (axis - 1) // 3
-        return -1
-
-    def _publish_over_limit(self, msg, detail, new_angle):
-        """回执超位 CmdAck：ack_msg=1、result=3（参数越界）、detail=1 上限 / 2 下限"""
+    def _publish_over_limit(self, source: SwingCmd, detail: int) -> None:
         ack = CmdAck()
-        ack.header = Header(stamp=rospy.Time.now())
-        ack.module_id = msg.module_id
-        ack.device_id = msg.device_id
+        ack.header.stamp = self._header()
+        ack.module_id = source.module_id
+        ack.device_id = source.device_id
         ack.ack_msg = 1
         ack.result = 3
         ack.detail = detail
-        self.pub_cmd_ack.publish(ack)
+        self._ack_publisher.publish(ack)
 
-    def cmd_callback(self, msg):
-        device_id = msg.device_id
-        arm_idx = self._device_to_arm_idx(device_id)
-        if arm_idx < 0:
-            rospy.logwarn(f"摆动节点收到无法识别的 device_id: {device_id}")
+    def _on_command(self, message: SwingCmd) -> None:
+        arm_index = self.SWING_AXES.get(int(message.device_id), -1)
+        if arm_index < 0:
+            self.get_logger().warning(
+                f"Swing command ignored for unknown device_id={message.device_id}"
+            )
+            return
+        if not message.position:
+            self.get_logger().warning("Swing command has an empty position array")
+            return
+        if not self._axis_ready[arm_index]:
+            self.get_logger().warning(
+                f"Arm {arm_index + 1} has no swing feedback baseline; command rejected",
+                throttle_duration_sec=2.0,
+            )
             return
 
-        delta_deg = float(msg.position[0])
-        new_angle = self.angles[arm_idx] + delta_deg
-
-        # 下发前检查：超限则丢弃指令、软件位置变量保持不变
-        if new_angle > self.SWING_MAX or new_angle < self.SWING_MIN:
-            detail = 1 if new_angle > self.SWING_MAX else 2
-            self._publish_over_limit(msg, detail, new_angle)
-            rospy.logwarn("⚠️ Arm%d 摆动超位：当前 %.3f° + 增量 %.3f° = %.3f° 超出 [%.1f, %.1f]，指令已丢弃",
-                          arm_idx + 1, self.angles[arm_idx], delta_deg, new_angle,
-                          self.SWING_MIN, self.SWING_MAX)
+        delta_degrees = float(message.position[0])
+        next_angle = self._angles[arm_index] + delta_degrees
+        if next_angle < self._min_angle or next_angle > self._max_angle:
+            detail = 1 if next_angle > self._max_angle else 2
+            self._publish_over_limit(message, detail)
+            self.get_logger().warning(
+                f"Arm {arm_index + 1} swing limit hit: {next_angle:.3f} deg, "
+                f"allowed {self._min_angle:.2f}..{self._max_angle:.2f}"
+            )
             return
 
-        self.angles[arm_idx] = new_angle
+        self._angles[arm_index] = next_angle
+        delta_centideg = int(round(delta_degrees * 100.0))
+        output = IntCmd()
+        output.header.stamp = self._header()
+        output.module_id = message.module_id
+        output.device_id = message.device_id
+        output.position = [delta_centideg]
+        self._output_publisher.publish(output)
+        self._sensor_log.insert(
+            message.module_id,
+            message.device_id,
+            delta_centideg,
+            "swing increment output",
+        )
+        self.get_logger().info(
+            f"Arm {arm_index + 1} swing {delta_degrees:+.4f} deg -> "
+            f"{delta_centideg} centideg, position {next_angle:+.3f} deg"
+        )
 
-        # 未超限：原样透传增量（0.01°，int16）
-        delta_centi_deg = int(round(delta_deg * 100))
-        int_cmd_msg = IntCmd()
-        int_cmd_msg.header = Header(stamp=rospy.Time.now())
-        int_cmd_msg.module_id = msg.module_id
-        int_cmd_msg.device_id = device_id
-        int_cmd_msg.position = [delta_centi_deg]
-        self.output_pub.publish(int_cmd_msg)
-
-        self._insert_sensor_log(msg.module_id, device_id, delta_centi_deg, "下发摆动增量数据")
-        rospy.loginfo(f"Arm{arm_idx+1} 摆动增量：{delta_deg:+.4f}° → 下发 {delta_centi_deg}(0.01°) | 位置变量 {new_angle:+.3f}°")
-
-    def zero_callback(self, msg):
-        """人工校零：position=[arm]，将对应臂摆动轴软件基准重新归零"""
-        if int(msg.device_id) != 0 or not msg.position:
+    def _on_feedback(self, message: SwingCmd) -> None:
+        arm_index = self.SWING_AXES.get(int(message.device_id), -1)
+        if arm_index < 0 or not message.position:
             return
-        arm = int(msg.position[0])
-        if not 1 <= arm <= 5:
-            rospy.logwarn("⚠️ 摆动轴校零 arm=%d 非法（允许 1~5）", arm)
-            return
-        arm_idx = arm - 1
-        self.angles[arm_idx] = 0.0
-        self.axis_ready[arm_idx] = True
-        self.last_fb_time[arm_idx] = 0.0
-        rospy.logwarn("🎯 Arm%d 摆动轴 ROS 软件基准已校零", arm)
 
-    def feedback_callback(self, msg):
-        """零点由人工调零，下位机不回传基准：反馈仅记录时间戳，不参与基准计算"""
-        arm_idx = self._device_to_arm_idx(msg.device_id)
-        if arm_idx < 0:
-            return
-        self.last_fb_time[arm_idx] = time.time()
+        angle = float(message.position[0])
+        now_s = self._now_s()
+        previous_s = self._last_feedback_s[arm_index]
+        if not self._axis_ready[arm_index]:
+            self._angles[arm_index] = angle
+            self._axis_ready[arm_index] = True
+            self.get_logger().info(
+                f"Arm {arm_index + 1} swing baseline set to {angle:+.3f} deg"
+            )
+        elif now_s - previous_s > self._feedback_timeout_s:
+            self._angles[arm_index] = angle
+            self.get_logger().warning(
+                f"Arm {arm_index + 1} swing feedback resumed after "
+                f"{now_s - previous_s:.2f}s; baseline reset to {angle:+.3f} deg"
+            )
+        self._last_feedback_s[arm_index] = now_s
 
-    def shutdown_hook(self):
-        self.conn.close()
-        rospy.loginfo("数据库连接已关闭")
+    def destroy_node(self) -> bool:
+        if hasattr(self, "_sensor_log"):
+            self._sensor_log.close()
+        return super().destroy_node()
 
-if __name__ == "__main__":
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = None
     try:
         node = SwingSimple()
-        rospy.on_shutdown(node.shutdown_hook)
-        rospy.spin()
-    except rospy.ROSInterruptException:
-        rospy.loginfo("摆动轴节点停止")
-    except Exception as e:
-        rospy.logerr("摆动轴异常：%s" % str(e))
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
