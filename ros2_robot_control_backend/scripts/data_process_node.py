@@ -26,7 +26,22 @@ if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
 # ===================== 数据库配置 =====================
-DB_FILE = "ros_database.db"
+def resolve_db_path():
+    """解析数据库路径（V2 改造新增）。
+
+    rob_arm.env 里的 DB_PATH 可以写绝对路径，也可以写相对仓库根目录的路径；
+    绝对路径的上级目录不存在时（换了电脑），回退到仓库根目录的 ros_database.db。
+    这样三个节点（data_process / calculation / kinematics）连的是同一个库。
+    """
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    db_path = os.environ.get('DB_PATH', 'ros_database.db')
+    if os.path.isabs(db_path):
+        if os.path.isdir(os.path.dirname(db_path)):
+            return db_path
+        return os.path.join(repo_root, 'ros_database.db')
+    return os.path.join(repo_root, db_path)
+
+
 DEFAULT_CREATER_ID = 1
 DEFAULT_DEL_FLAG = 0
 DEFAULT_NOTES = None
@@ -46,7 +61,8 @@ TOPIC_MODULE_ARM_TASK = None
 def init_database():
     """创建 point_data 表（如果不存在）"""
     try:
-        conn = sqlite3.connect(DB_FILE)
+        db_path = resolve_db_path()
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS point_data (
@@ -70,7 +86,8 @@ def save_modules_to_database(modules):
     if not modules:
         return
     try:
-        conn = sqlite3.connect(DB_FILE)
+        db_path = resolve_db_path()
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         success_count = 0
@@ -239,7 +256,7 @@ class DataProcessNode(Node):
         self.flask_thread.start()
 
         self.get_logger().info("✅ data_process_node ROS2启动")
-        self.get_logger().info(f"🗄️ 共享数据库: {os.path.abspath(DB_FILE)}")
+        self.get_logger().info(f"🗄️ 共享数据库: {resolve_db_path()}")
         self.get_logger().info("🌐 Flask图片服务 5000端口已启动")
 
     def json_callback(self, msg: String):
