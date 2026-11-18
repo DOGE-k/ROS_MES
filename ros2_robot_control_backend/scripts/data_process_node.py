@@ -42,6 +42,22 @@ def resolve_db_path():
     return os.path.join(repo_root, db_path)
 
 
+def resolve_calib_json_path():
+    """解析标定 json 路径（V2 改造新增）。
+
+    优先级：rob_arm.env 的 CALIB_JSON_PATH（绝对路径或相对仓库根目录）
+            > 旧默认路径 ~/ros2_ws/data/零件坐标绑定结果.json
+    文件缺失时由调用方决定是否降级，这里只负责算路径。
+    """
+    p = os.environ.get('CALIB_JSON_PATH')
+    if p:
+        if os.path.isabs(p):
+            return p
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        return os.path.join(repo_root, p)
+    return os.path.expanduser("~/ros2_ws/data/零件坐标绑定结果.json")
+
+
 DEFAULT_CREATER_ID = 1
 DEFAULT_DEL_FLAG = 0
 DEFAULT_NOTES = None
@@ -229,11 +245,21 @@ class DataProcessNode(Node):
         update_params_from_env()
         init_database()
 
-        # 加载标定json
-        json_path = os.path.expanduser("~/ros2_ws/data/零件坐标绑定结果.json")
-        with open(json_path, 'r', encoding='utf-8') as f:
-            self.calib_data = json.load(f)
-            self.get_logger().info("✅ 成功加载零件坐标绑定json")
+        # 加载标定json（V2 改造：路径可配，缺失只告警，不阻断启动）
+        json_path = resolve_calib_json_path()
+        self.calib_data = {}
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    self.calib_data = json.load(f)
+                self.get_logger().info(f"✅ 成功加载零件坐标绑定json：{json_path}")
+            except Exception as e:
+                self.get_logger().warn(f"⚠️ 标定json解析失败，按空配置继续：{json_path} ({e})")
+        else:
+            self.get_logger().warn(
+                f"⚠️ 未找到标定json，按空配置继续：{json_path}；"
+                f"如需指定路径，在 rob_arm.env 里配置 CALIB_JSON_PATH"
+            )
 
         # 图片任务要求：ROS消息回调组
         self.callback_group = ReentrantCallbackGroup()
