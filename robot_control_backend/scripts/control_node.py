@@ -66,6 +66,10 @@ class ArmSequenceController:
         self.buffer_lock = threading.Lock()
         # 缓冲结构：module_id -> arm_idx -> joint_name -> 对应的消息
         self.cmd_buffer = defaultdict(lambda: defaultdict(dict))
+        # 每个模块缓冲的最后来帧时刻：用于超时清理，避免某帧丢失导致永久滞留
+        self.cmd_buffer_ts = {}
+        # 缓冲集齐超时（秒）：正常 15 帧同轮发出（CYCLE_INTERVAL=8s），留足排队/错开余量
+        self.CMD_BUFFER_TIMEOUT_S = 30.0
         self.ready_queue = []                                      # 已集齐的模块指令队列
         self.seq_thread = threading.Thread(target=self._sequence_worker)
         self.seq_thread.daemon = True
@@ -126,12 +130,22 @@ class ArmSequenceController:
 
     # ---------- V2 到位事件门控 ----------
     def cb_arrive(self, msg):
-        """记录到位事件（status_bits bit2=到位），唤醒正在等待的时序线程"""
-        if not (msg.status_bits & 0x04):
-            return
+        """记录到位事件，唤醒正在等待的时序线程。
+
+        到位判据：hardware_node 只在收到固件"到位通知帧"（GRP_EVENT / DIR_EVENT / mnum=0）
+        时才发布本话题，因此**收到 ArriveNotification 即代表该轴到位**——帧的类型本身就是到位语义。
+
+        不再用 status_bits bit2 二次过滤：那只是该帧顺带透传的轴状态字低 8 位，
+        固件不保证置位（与 flags bit0 恒 0 同类问题），拿它当到位条件会把到位事件全部吞掉，
+        导致每个时序阶段都白等 ARRIVE_TIMEOUT_S。这里收到即记录，仅打印帧内容供现场核对。
+        """
         with self.arrive_cond:
             self.arrived.add((int(msg.module_id), int(msg.device_id)))
             self.arrive_cond.notify_all()
+        rospy.loginfo(
+            f"[时序] ✅ 轴{int(msg.device_id)} 到位（模块{int(msg.module_id)}）："
+            f"angle={int(msg.angle)}(0.01) pos_err={int(msg.pos_error)}(0.01) "
+            f"status_bits=0x{int(msg.status_bits):02X} flags=0x{int(msg.flags):02X}")
 
     def cb_module_status(self, msg):
         """登记在线轴：exist_mask bit0~2 对应 axis_base 起的三轴（仅模块确认状态应答）"""
@@ -243,6 +257,7 @@ class ArmSequenceController:
         mid = msg.module_id
         with self.buffer_lock:
             self.cmd_buffer[mid][arm_idx][joint_name] = msg
+            self.cmd_buffer_ts[mid] = time.monotonic()
             if len(self.cmd_buffer[mid]) >= 5 and all(
                 len(self.cmd_buffer[mid].get(i, {})) == 3 for i in range(5)
             ):
@@ -252,11 +267,35 @@ class ArmSequenceController:
                 }
                 self.ready_queue.append(pkg)
                 del self.cmd_buffer[mid]
+                self.cmd_buffer_ts.pop(mid, None)
                 rospy.loginfo(f"✅ 模块{mid} 指令集齐，加入队列")
+
+    def _sweep_stale_buffers(self):
+        """清理超时未集齐的模块缓冲：某帧丢失时把"永久滞留"变成有界等待 + 可见告警"""
+        now = time.monotonic()
+        with self.buffer_lock:
+            stale = [mid for mid, ts in self.cmd_buffer_ts.items()
+                     if now - ts > self.CMD_BUFFER_TIMEOUT_S]
+            for mid in stale:
+                buf = self.cmd_buffer.get(mid, {})
+                received = sum(len(joints) for joints in buf.values())
+                missing = []
+                for arm_idx in range(5):
+                    joints = buf.get(arm_idx, {})
+                    for jn in ("rotate", "swing", "extend"):
+                        if jn not in joints:
+                            missing.append(f"Arm{arm_idx+1}.{jn}")
+                rospy.logwarn(
+                    f"[逆解] ⚠️ 模块{mid} 指令缓冲超过 {self.CMD_BUFFER_TIMEOUT_S:.0f}s 未集齐"
+                    f"（已收 {received}/15 帧），判定有帧丢失，丢弃残缺缓冲；"
+                    f"缺失：{', '.join(missing) if missing else '无'}")
+                self.cmd_buffer.pop(mid, None)
+                self.cmd_buffer_ts.pop(mid, None)
  
     def _sequence_worker(self):
         """顺序执行线程，不断从队列取出模块指令，按阶段发送"""
         while not rospy.is_shutdown():
+            self._sweep_stale_buffers()     # 每轮顺带清理超时未集齐的缓冲
             if self.ready_queue:
                 with self.buffer_lock:
                     if self.ready_queue:
