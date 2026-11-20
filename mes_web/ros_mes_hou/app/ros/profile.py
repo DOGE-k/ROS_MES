@@ -26,6 +26,8 @@ TOPIC_DEFAULTS: Dict[str, str] = {
     "fine_tuning_rotation": "/control/adjust_rotation_cmd",
     "fine_tuning_swing": "/control/adjust_swing_cmd",
     "fine_tuning_telescopic": "/control/adjust_telescopic_cmd",
+    # 微调应用层回执（control_node 收到微调后回执，后端按 request_id 匹配确认送达）
+    "adjust_ack": "/control/adjust_ack",
     "feedback_rotation": "/hardware/rotation_feedback",
     "feedback_swing": "/hardware/swing_feedback",
     "feedback_telescope": "/hardware/telescope_feedback",

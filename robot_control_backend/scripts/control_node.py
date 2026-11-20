@@ -12,7 +12,7 @@ import threading
 from collections import defaultdict
 from std_msgs.msg import Header
 from robot_control_backend.msg import (
-    RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification, ModuleStatus)
+    RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification, ModuleStatus, AdjustAck)
 
 
 def load_env_config():
@@ -61,6 +61,11 @@ class ArmSequenceController:
         self.pub_sensor_trigger = rospy.Publisher(
             os.environ['ROS_TOPIC_SENSOR_CMD'],                    # 如 /control/sensor_cmd
             IntCmd, queue_size=10)
+
+        # 微调应用层回执话题（发布给后端，确认微调指令已送达控制节点）
+        self.pub_adjust_ack = rospy.Publisher(
+            os.environ.get('ROS_TOPIC_ADJUST_ACK', '/control/adjust_ack'),
+            AdjustAck, queue_size=50)
 
         # ---------- 第一套功能：逆解指令缓冲 ----------
         self.buffer_lock = threading.Lock()
@@ -361,12 +366,14 @@ class ArmSequenceController:
         self._handle_adjust(msg, "extend")
 
     def _handle_adjust(self, msg, joint_name):
-        """将前端微调指令立即转发到对应关节的功能节点，并启动7秒压力触发定时器"""
+        """将前端微调指令立即转发到对应关节的功能节点，并启动7秒压力触发定时器。
+        若指令带 request_id(>0)，无论接受/拒绝都回 /control/adjust_ack，供后端确认送达。"""
         try:
             device_id = msg.device_id
             arm_idx, _ = self._parse_device(device_id)
             if arm_idx < 0 or arm_idx > 4:
                 rospy.logerr(f"device_id {device_id} 非法")
+                self._send_adjust_ack(msg, 1, f"device_id {device_id} 非法")
                 return
 
             module_id = msg.module_id
@@ -381,12 +388,34 @@ class ArmSequenceController:
                 self.pub_tel_seq.publish(msg)
             else:
                 rospy.logerr(f"未知关节类型 {joint_name}")
+                self._send_adjust_ack(msg, 2, f"未知关节类型 {joint_name}")
                 return
 
             rospy.loginfo(f"[微调] 🎯 Arm{arm_idx+1} {joint_name} -> {msg.position[0]:.2f}")
+            self._send_adjust_ack(msg, 0, "已接收并转发到轴节点")
             self._schedule_pressure(module_id)
         except Exception as e:
             rospy.logerr(f"前端调节异常: {e}")
+            self._send_adjust_ack(msg, 2, str(e))
+
+    def _send_adjust_ack(self, msg, result, message=""):
+        """微调应用层回执：仅当指令带 request_id(>0) 时回 /control/adjust_ack。
+        图纸逆解等 request_id=0 的指令不回执，保持原行为。回执失败不影响主流程。"""
+        try:
+            request_id = int(getattr(msg, "request_id", 0) or 0)
+            if request_id <= 0:
+                return
+            ack = AdjustAck()
+            ack.header.stamp = rospy.Time.now()
+            ack.module_id = int(getattr(msg, "module_id", 0) or 0)
+            ack.device_id = int(getattr(msg, "device_id", 0) or 0)
+            ack.request_id = request_id
+            ack.result = int(result)
+            ack.message = message
+            self.pub_adjust_ack.publish(ack)
+            rospy.loginfo(f"[微调] 📨 adjust_ack request_id={request_id} result={result} {message}")
+        except Exception as e:
+            rospy.logerr(f"adjust_ack 发送失败: {e}")
 
 
 if __name__ == "__main__":

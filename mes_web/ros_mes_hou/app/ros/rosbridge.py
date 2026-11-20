@@ -228,6 +228,158 @@ def build_axis_zero_publish_payload(
     }
 
 
+class _AdjustCommandLink:
+    """微调指令常驻链路：独立线程跑常驻事件循环，维持一条 WS 长连接。
+
+    背景：微调走同步 dispatch，原先每次 asyncio.run() 新建事件循环、跑完即销毁，
+    常驻连接无法跨调用存活；且每次 advertise→sleep(0.1)→publish→立即关连接，
+    存在 rosbridge 订阅握手窗口——订阅者未就绪时 publish 的帧会被丢弃
+    （±70 旋转 / -10 伸缩偶发丢失的根因）。
+
+    本类在独立线程里跑一个常驻 asyncio 事件循环，维持一条 WS 长连接：
+      - 启动即 advertise 三个微调话题 + 订阅 adjust_ack 回执话题，之后只发 publish，
+        不再有每次的握手窗口；
+      - send() 通过 run_coroutine_threadsafe 提交到该循环复用长连接；
+      - 每条微调带 request_id，control_node 回 adjust_ack 才算确认送达；
+        超时/断链标记"未确认"，**不自动重发运动指令**（避免机械臂重复动作）。
+    """
+
+    def __init__(self, profile: RosProfile, url: str, timeout: float = 3.0):
+        self._profile = profile
+        self._url = url
+        self._timeout = timeout
+        self._cmd_topics = [
+            (m["topic"], m["message_type"]) for m in _fine_tuning_topic_map(profile).values()
+        ]
+        self._ack_topic = profile.topics["adjust_ack"]
+        self._ack_type = profile.message_type("AdjustAck")
+        self._loop = None
+        self._thread = None
+        self._ws = None
+        self._ready = None                # asyncio.Event（常驻循环内）：连接+订阅就绪
+        self._loop_up = threading.Event()  # 常驻事件循环已启动
+        self._pending = {}                # request_id -> asyncio.Future（仅常驻循环内访问）
+        self._req_lock = threading.Lock()
+        self._req_seq = 0
+        self._start_lock = threading.Lock()
+        self._started = False
+
+    def start(self) -> None:
+        with self._start_lock:
+            if self._started:
+                return
+            self._started = True
+            self._thread = threading.Thread(
+                target=self._thread_main, name="adjust-cmd-link", daemon=True)
+            self._thread.start()
+
+    def _thread_main(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._ready = asyncio.Event()
+        self._loop_up.set()
+        self._loop.create_task(self._connection_manager())
+        self._loop.run_forever()
+
+    def _next_request_id(self) -> int:
+        with self._req_lock:
+            self._req_seq += 1
+            # 秒级时间戳拼序号，跨进程重启也基本唯一，且在 uint64 范围内
+            return int(time.time()) * 100000 + (self._req_seq % 100000)
+
+    # ---------- 对外同步接口（dispatch 工作线程调用）----------
+    def send(self, payload: Dict[str, Any], timeout: float | None = None) -> Dict[str, Any]:
+        self.start()
+        if not self._loop_up.wait(5.0):
+            raise RosbridgeError("微调常驻链路启动超时")
+        timeout = timeout or self._timeout
+        request_id = self._next_request_id()
+        msg = dict(payload)
+        msg["message"] = {**payload["message"], "request_id": request_id}
+        coro = self._send_and_confirm(msg, request_id, timeout)
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout * 2 + 10.0)
+
+    # ---------- 以下仅在常驻事件循环内运行 ----------
+    async def _send_and_confirm(self, payload, request_id, timeout):
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout)
+        except asyncio.TimeoutError:
+            return {"sent": False, "confirmed": False, "request_id": request_id,
+                    "confirmation_status": "unconfirmed",
+                    "error": "微调常驻链路未连接到 rosbridge"}
+        fut = self._loop.create_future()
+        self._pending[request_id] = fut
+        try:
+            publish_json = json.dumps(
+                {"op": "publish", "topic": payload["topic"], "msg": payload["message"]},
+                ensure_ascii=False)
+            ws = self._ws
+            if ws is None:
+                # _ready 置位后连接仍可能被重连置空：显式判空，避免 NoneType.send
+                return {"sent": False, "confirmed": False, "request_id": request_id,
+                        "confirmation_status": "unconfirmed", "error": "常驻链路连接已断开，未发送"}
+            await ws.send(publish_json)
+            ack = await asyncio.wait_for(fut, timeout)
+            result = int(ack.get("result", 0))
+            return {
+                "sent": True, "confirmed": True, "request_id": request_id,
+                "ack": ack, "result": result,
+                "confirmation_status": "confirmed" if result == 0 else "rejected",
+            }
+        except asyncio.TimeoutError:
+            return {"sent": True, "confirmed": False, "request_id": request_id,
+                    "confirmation_status": "unconfirmed",
+                    "error": "未收到控制节点 adjust_ack 回执，指令可能未送达；不自动重发，请核实后手动重试"}
+        except Exception as exc:
+            return {"sent": False, "confirmed": False, "request_id": request_id,
+                    "confirmation_status": "unconfirmed", "error": str(exc)}
+        finally:
+            self._pending.pop(request_id, None)
+
+    async def _connection_manager(self):
+        while True:
+            try:
+                async with websockets.connect(self._url, close_timeout=1, open_timeout=3) as ws:
+                    self._ws = ws
+                    # 常驻 advertise 三个微调话题 + 订阅回执话题，只建一次
+                    for topic, mtype in self._cmd_topics:
+                        await ws.send(json.dumps({"op": "advertise", "topic": topic, "type": mtype}))
+                    await ws.send(json.dumps(
+                        {"op": "subscribe", "topic": self._ack_topic, "type": self._ack_type}))
+                    await asyncio.sleep(0.2)  # 等 rosbridge 建好 publisher/subscriber
+                    self._ready.set()
+                    async for raw in ws:
+                        self._on_message(raw)
+            except Exception as exc:
+                print(f"[adjust-link] 连接异常：{exc}")
+            finally:
+                self._ws = None
+                if self._ready is not None:
+                    self._ready.clear()
+                self._fail_all_pending("微调常驻链路断开，指令未确认")
+            await asyncio.sleep(1.0)
+
+    def _on_message(self, raw):
+        try:
+            event = json.loads(raw)
+        except Exception:
+            return
+        if event.get("op") != "publish" or event.get("topic") != self._ack_topic:
+            return
+        msg = event.get("msg") or {}
+        request_id = msg.get("request_id")
+        fut = self._pending.get(request_id)
+        if fut is not None and not fut.done():
+            fut.set_result(msg)
+
+    def _fail_all_pending(self, error):
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.set_exception(RuntimeError(error))
+        self._pending.clear()
+
+
 class RosbridgeClient:
     """rosbridge WebSocket 一次性客户端：每次下发新建连接，subscribe 后逐条收事件。"""
 
@@ -243,11 +395,31 @@ class RosbridgeClient:
         self.timeout = timeout
         # 模块确认回执等待上限：V2.1 会话式握手含 30s 等宣告窗口，必须远大于普通超时
         self.module_confirm_timeout = module_confirm_timeout or settings.MODULE_CONFIRM_ACK_WAIT_S
+        # 微调常驻链路：实例在构造时创建（不耗资源），后台线程与长连接在首次 send 时才 start
+        self._adjust_link = _AdjustCommandLink(profile, self.url)
 
     def dispatch(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if action not in {"fine_tuning", "drawing_path", "module_confirm", "axis_zero"}:
             raise RosbridgeError(f"unsupported rosbridge action: {action}")
+        if action == "fine_tuning":
+            # 微调走常驻链路：长连接 + 常驻 advertise + adjust_ack 回执确认送达
+            return self._dispatch_fine_tuning(payload)
         return asyncio.run(self.publish(action, payload))
+
+    def _dispatch_fine_tuning(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        result = self._adjust_link.send(payload)
+        return {
+            "sent": result.get("sent", False),
+            "mode": "rosbridge_persistent",
+            "url": self.url,
+            "action": "fine_tuning",
+            "payload": payload,
+            "confirmed": result.get("confirmed"),
+            "confirmation_status": result.get("confirmation_status"),
+            "request_id": result.get("request_id"),
+            "ack": result.get("ack"),
+            "error": result.get("error"),
+        }
 
     async def publish(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if websockets is None:
