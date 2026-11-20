@@ -90,6 +90,9 @@ class CANBusBridge:
     EVT_ARRIVE, EVT_STOP, EVT_AXIS_FAULT, EVT_HOME, EVT_LIMIT = 1, 2, 3, 4, 5
     EVT_CMD_ACK, EVT_VACUUM_LOSS, EVT_WDG_WARN, EVT_NODE_FAULT, EVT_BOOT = 6, 7, 8, 9, 10
 
+    # 单轴位置反馈发布上限（秒）：下位机原始上报实测可达 ~5.5kHz
+    FB_PUB_MIN_INTERVAL_S = 0.02
+
     def __init__(self):
         load_env_config()
         rospy.init_node("can_bridge")
@@ -136,7 +139,7 @@ class CANBusBridge:
         self.fb_archive_cache = {}
         # 轴号 -> (最近发布的角度, 发布时刻)：位置反馈发布节流。
         # 下位机位置反馈实测可达 ~5.5kHz，逐帧 publish 会占满 ROS 侧带宽并
-        # 拖慢接收线程，导致 CmdAck 被淹没；这里限制到每轴 50Hz。
+        # 拖慢接收线程，导致 CmdAck 被淹没；这里按轴限制到 50Hz。
         self.fb_pub_cache = {}
 
         # ---------- 话题（发布；只读 rob_arm.env，无硬编码默认值）----------
@@ -812,10 +815,12 @@ class CANBusBridge:
     def _dispatch_axis_feedback(self, module_id, device_id, axis, angle):
         """按轴号分发到旋转/摆动/伸缩原始反馈话题（旋转/摆动 0.01°，伸缩 0.01mm）；
         module_id 为帧 SEG 位域。位置反馈只做上报，不参与下发节拍"""
-        # 发布节流：同角度且距上次发布 <20ms 时跳过（下位机原始上报可达 ~5.5kHz）
+        # 发布节流：每轴最多 50Hz（20ms 一帧），期间多余的原始帧直接丢弃。
+        # 不能只在"角度与上次相同"时跳帧：运动中角度每帧都在变，那样等于不限速，
+        # ~5.5kHz 会瞬间塞满 queue_size=50 的发布队列，把 CmdAck/到位事件挤到几万帧之后。
         now = rospy.Time.now().to_sec()
         prev = self.fb_pub_cache.get(device_id)
-        if prev is not None and prev[0] == angle and (now - prev[1]) < 0.02:
+        if prev is not None and (now - prev[1]) < self.FB_PUB_MIN_INTERVAL_S:
             return
         self.fb_pub_cache[device_id] = (angle, now)
         fb = Feedback(header=self._header(), module_id=module_id,
