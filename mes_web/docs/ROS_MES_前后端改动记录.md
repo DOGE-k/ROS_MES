@@ -12,6 +12,16 @@
 ---
 
 
+## 2026-11-20（部署指南升级 V1.1，已完成）
+
+- 范围：只更新部署文档与部署模板，不改业务代码。
+- [部署指南](../../deploy/README_DEPLOY.md) 重写为 V1.1：串口/CH340 → ZLG USBCAN-II CAN；模块 `module_id → SEG/ARM` 会话绑定；轴状态聚合节点；`/control/axis_zero` 校零；批次接口与五段值；13 路反馈；rosbridge 9010 已内置 launch；后端 Python 3.10+ 与 ROS 3.8 隔离；补充跨机网络、验证清单和故障表。
+- 模板同步：[rob_arm.env](../../deploy/config/rob_arm.env) 以现场配置为基准并改为 `DB_PATH`、`ZLG_LIBUSB_PATH` 占位；[frontend.env](../../deploy/config/frontend.env) 移除废弃的 `VITE_DEBUG_NO_ROS`；[ros_requirements.txt](../../deploy/config/ros_requirements.txt) 增加 `cryptography` 和 open3d 版本区分。
+- 修正 [deploy_windows.ps1](../../deploy/deploy_windows.ps1) 的项目根路径双重嵌套、Python 3.10+ 检查，以及“先建 venv 装依赖、再用 venv Python 建库”的顺序。
+- 验证：文档与模板已按 2026-11-20 工作区源码逐项核对；未在新机器/Windows 实测，现场仍需验证 CAN、模块确认和批次预检。
+
+---
+
 ## 2026-11-15（应到右侧增加理论与实际微调总量，已完成）
 
 - 范围：按用户确认仅新增展示，不改变原有输入框、当前位置、应到算法、下发请求、结果五段式、校准保存和人工未动判定。三轴在「应到」后依次显示「微调总量」「实际微调总量」，窄屏在同一展示组内自动换行。

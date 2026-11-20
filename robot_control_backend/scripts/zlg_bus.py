@@ -101,6 +101,8 @@ class ZLGBus:
         # 无界队列会让命令应答(CmdAck)排在数万帧之后，表现为"下发无应答"。
         # 超过上限时丢弃最旧帧，保证队列延迟有界（512 帧 ≈ 90ms）。
         self._rx_limit = 512
+        # 接收溢出丢帧计数：超过上限丢最旧帧时累加，供上层周期日志/排查使用
+        self.rx_dropped = 0
         self.dev_node = ""      # 打开时该适配器对应的 /dev/bus/usb/BBB/DDD
         self._closed = False
         self._open()
@@ -189,6 +191,7 @@ class ZLGBus:
                             ))
                     while len(self._rx_queue) > self._rx_limit:
                         self._rx_queue.popleft()
+                        self.rx_dropped += 1
             if got and self._rx_queue:
                 return self._rx_queue.popleft()
             time.sleep(0.01)

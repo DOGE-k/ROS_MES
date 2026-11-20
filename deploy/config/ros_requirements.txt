@@ -1,7 +1,12 @@
 # ============================================================
-# ROS MES 机器人控制后端 Python 依赖
-# 安装方式：pip install -r requirements.txt
-# 注意：需先安装 ROS Noetic/Melodic 的 rospy 环境
+# ROS MES 机器人控制节点 Python 依赖（V1.1）
+# 适用：Ubuntu 20.04 + ROS Noetic（系统 Python 3.8）
+# 安装：python3 -m pip install --user -r deploy/config/ros_requirements.txt
+#
+# 注意：
+#   1. 这些包装在 ROS 节点的 Python 3.8 里，不要装进后端的 3.10+ venv；
+#   2. rospy / std_msgs / 自定义消息由 catkin + ROS 提供，不是 pip 包；
+#   3. rosbridge 通过 apt 安装：ros-noetic-rosbridge-server。
 # ============================================================
 
 # ---- 核心科学计算 ----
@@ -9,24 +14,22 @@ numpy>=1.21.0
 scipy>=1.7.0
 
 # ---- 点云处理 ----
-open3d>=0.15.0
+# Noetic 的 Python 3.8 用 0.15.2 更稳；新 Python 可用更高版本
+open3d==0.15.2; python_version < "3.10"
+open3d>=0.15.0; python_version >= "3.10"
 
-# ---- 串口通信（V1.1 主链路已迁移至 CAN；serial_test_node 等调试工具仍在使用，保留）----
-pyserial>=3.5
-
-# ---- CAN 总线（V1.1 起为 hardware_node 必需依赖，CAN 2.0B 29位扩展帧）----
+# ---- CAN 总线（V1.1 起 hardware_node 必需）----
+# ZLG USBCAN-II 走 libusbcan.so，但消息类型仍由 python-can 提供
 python-can>=4.0.0
 
-# ---- Web 服务（data_process_node 内嵌 Flask）----
+# ---- Web 服务（data_process_node 内嵌 Flask，端口 5000）----
 flask>=2.0.0
 
-# ---- 数据库 ----
-# sqlite3 为 Python 标准库，无需安装
+# ---- 模块确认 UID 校验 ----
+cryptography>=3.4
 
-# ---- rosbridge 相关 ----
-# rosbridge_suite 通过 apt 安装，不是 pip 包
-# websockets 用于后端与 rosbridge 通信
-websockets>=12.0
+# ---- 调试工具（serial_test_node 等旧工具仍使用）----
+pyserial>=3.5
 
-# ---- 其他工具 ----
+# ---- 环境变量 ----
 python-dotenv>=1.0.0

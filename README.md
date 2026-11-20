@@ -21,7 +21,7 @@
 | `robot_control_backend/` | ROS 机器人控制节点（现场运行入口） | ROS1 Noetic · Python |
 | `ros2_robot_control_backend/` | ROS2（rclpy）迁移副本，未作为现网入口；部分脚本/launch 仍保留 ROS1 写法 | ROS2 · rclpy（迁移中） |
 | `docs/` | 双方共享的接口契约、ROS/CAN 资料、跨系统报告及整仓历史归档 | — |
-| `deploy/` | 部署配置与说明（见 `deploy/README_DEPLOY.md`） | — |
+| `deploy/` | 部署配置与说明（V1.1 指南见 `deploy/README_DEPLOY.md`） | — |
 | `sqlite_create.py` | 数据库初始化脚本（建表 + 种子数据，生成仓库根 `ros_database.db`） | Python · SQLite |
 
 > 后端内置 ROS1/ROS2 适配层：`backend.env` 中 `ROS_VERSION=1`（默认）或 `2` 切换，协议差异集中在 `mes_web/ros_mes_hou/app/ros/profile.py`。
