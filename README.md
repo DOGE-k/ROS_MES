@@ -18,7 +18,8 @@
 | `mes_web/docs/` | 前后端专属接口、更新记录与接入状态；入口见 `mes_web/AGENTS.md` | — |
 | `mes_web/ros_mes_front/` | Web 前端 | Vue 3 · TypeScript · Vite · Element Plus · Pinia |
 | `mes_web/ros_mes_hou/` | 业务后端 | FastAPI · SQLAlchemy · SQLite · rosbridge-websocket |
-| `robot_control_backend/` | ROS 机器人控制节点 | ROS · Python |
+| `robot_control_backend/` | ROS 机器人控制节点（现场运行入口） | ROS1 Noetic · Python |
+| `ros2_robot_control_backend/` | ROS2（rclpy）迁移副本，未作为现网入口；部分脚本/launch 仍保留 ROS1 写法 | ROS2 · rclpy（迁移中） |
 | `docs/` | 双方共享的接口契约、ROS/CAN 资料、跨系统报告及整仓历史归档 | — |
 | `deploy/` | 部署配置与说明（见 `deploy/README_DEPLOY.md`） | — |
 | `sqlite_create.py` | 数据库初始化脚本（建表 + 种子数据，生成仓库根 `ros_database.db`） | Python · SQLite |
@@ -65,13 +66,14 @@ npm run dev
 
 **5. 登录**：浏览器访问 http://localhost:5173 ，默认管理员 `admin / 123456`（⚠ 比赛部署前务必修改密码）。
 
-> 无 ROS 环境调试：前端 `.env.development` 中 `VITE_DEBUG_NO_ROS=true` 时，模块下发/微调等走前端模拟，无需机器人在线。
+> 无 ROS 环境调试：在「个人中心 → 调试设置 → ROS 通信与微调」中选择模拟连接（`ros_mode=mock`、`drawing_mode=mock`），由后端运行期配置控制；历史 `VITE_DEBUG_NO_ROS` 已不再绕过后端。
 
 ## 文档索引
 
 | 文档 | 说明 |
 |---|---|
 | [mes_web/AGENTS.md](mes_web/AGENTS.md) | **前后端开发入口**：任务定位、维护范围、按需阅读与验证；规则只适用于前后端任务 |
+| [前端图纸到微调下发全流程说明](docs/前端图纸到微调下发全流程说明.md) | **推荐先读**：图纸下发 → 微调录入 → 预检 → 逐轴下发 → 完成判定的端到端流程、话题/参数与真机缺口 |
 | [前后端接口字段文档](mes_web/docs/ROS_MES_前后端接口字段文档.md) | REST、前后端 WebSocket、数据库、鉴权与页面流程 |
 | [前后端改动记录](mes_web/docs/ROS_MES_前后端改动记录.md) | 前后端更新和验证结果的唯一日志 |
 | [后端与 ROS 接口对接状态清单](mes_web/docs/后端与ROS接口对接状态清单.md) | 本侧接入/使用状态、证据、缺口；不替代共享协议 |

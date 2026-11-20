@@ -1,6 +1,6 @@
 # 后端与 ROS 接口对接状态清单
 
-核查日期 2026-11-13。维护范围：前后端视角的接入状态、证据和缺口。本清单不是 ROS 协议定义，不替代根 `docs/` 的[三轴版 V2.1 共享契约](../../docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md)。前后端任务入口见 [AGENTS.md](../AGENTS.md)，HTTP/WS 字段见[接口文档](ROS_MES_前后端接口字段文档.md)，本次最终验证结果由[改动记录](ROS_MES_前后端改动记录.md)统一维护。
+核查日期 2026-11-13（2026-11-20 按最新 ROS 源码复核）。维护范围：前后端视角的接入状态、证据和缺口。本清单不是 ROS 协议定义，不替代根 `docs/` 的[三轴版 V2.1 共享契约](../../docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md)。前后端任务入口见 [AGENTS.md](../AGENTS.md)，HTTP/WS 字段见[接口文档](ROS_MES_前后端接口字段文档.md)，本次最终验证结果由[改动记录](ROS_MES_前后端改动记录.md)统一维护。
 
 ## 1. 状态与证据口径
 
@@ -35,6 +35,8 @@
 
 以下 13 路由 [profile](../ros_mes_hou/app/ros/profile.py)、[反馈流](../ros_mes_hou/app/ros/rosbridge.py)和[归一化](../ros_mes_hou/app/ros/normalizer.py)接入。新增五类事件由后端批次管理器消费，前端通过批次查询显示结果；下位机支持一列区分“ROS/固件方口述或仿真验证”与“真机实测”，未标真机验证的一律按待确认处理。
 
+> 2026-11-14 新增 `axis_status_aggregator.py` 并默认随 `ros_robot.launch` 启动：绑定 SEG/ARM 后按 5Hz 推导发布三轴 `/hardware/axis_status`，空闲时在三条 `/hardware/*_feedback` 话题上按 2Hz 补发最后一次真实位置；停止命令、急停解除、人工校零后立即置空闲，解除急停与校零会恢复 `base_valid`，故障/限位/急停使其失效（停止命令本身不恢复）。`sim_axis_status_node.py` 是联调替代（位置恒 0、`base_valid` 恒 1、`module_id=SEG`），默认不启动且不能与聚合节点同时发布。聚合状态与补发位置均来自指令、事件和缓存，不等于设备实测运动。
+
 | 话题/消息 | 用途与编号语义 | ROS 源码实现状态 | 下位机支持 | 后端接入 | 前端使用 | 验证证据/缺口 | 优先级及后续条件 |
 |---|---|---|---|---|---|---|---|
 | `/hardware/rotation_feedback` / `RotationCmd` | 旋转角度，`module_id` 为 CAN SEG | `feedback_node.py` 换算 CAN 位置并透传 SEG | 待确认 | 已转发；本次补有效性标记 | 主微调页按 SEG/臂核验及逐项时效消费，原始反馈按图纸固定基准或动作起点换算相对量 | [反馈节点](../../robot_control_backend/scripts/feedback_node.py)；需与当前固件单位和现场版本核对 | P0；未归属或无效样本不更新实际值 |
@@ -45,7 +47,7 @@
 | `/hardware/pressure_avg` / `SensorCmd` | 采样窗口均值，`module_id` 来自触发上下文的业务编号 | `imu_average_calculator_node.py` 已发布，但存在异臂样本进入同一窗口的路径 | 待确认 | 已转发 `pressure_average`，不能一律当 SEG | **前端未展示** | [均值节点](../../robot_control_backend/scripts/imu_average_calculator_node.py)；只提示来源问题，本次不修改 ROS 或把界面接通当作均值正确 | P2；ROS 侧先核实采样归属、触发和窗口 |
 | `/hardware/vacuum_loss` / `VacuumLoss` | 失压事件，硬件 CAN SEG 与臂级编号 | 硬件节点有事件解析与发布 | 待确认 | 转发事件及压力/阈值字段；所属臂事件中止批次后续下发 | 通过批次待核实原因提示；未新增独立告警页 | [批次管理器](../ros_mes_hou/app/ros/finetuning_batch.py)；现场压力单位和防误报条件待核对 | P1；模拟中止路径已接入，设备保护效果未验证 |
 | `/hardware/cmd_ack` / `CmdAck` | 接受/拒绝事件；软件回执用业务号，CAN 回执用 SEG | 三轴节点软件拒绝、硬件节点 CAN ACK及回零软件拒绝均可发布到此话题 | 各类 ACK 的实际发送支持待确认 | 转发 result/detail/raw 及保守归属元数据；可能属于当前臂的非零拒绝保守中止，接受不推进 | 可归属及归属待确认事件提示，批次另行显示中止结果 | [CmdAck](../../robot_control_backend/msg/CmdAck.msg)、[硬件节点](../../robot_control_backend/scripts/hardware_node.py)；没有发布者来源或请求 ID | P0；不能关联为某次请求最终结果 |
-| `/hardware/axis_status` / `AxisStatus` | SEG、轴号、状态字/运行状态/基准有效性 | 硬件节点解析并发布（纯转发：仅在收到 `GRP=2/DIR=PERIODIC/MSG=3` 的 `0x0480xx4C` 时发布，本侧无周期生成） | ROS 侧 2026-11-14 确认固件会周期上报；MES 真机链路待复核 | 新鲜有效空闲用于发送前检查；新 RUN 及后续空闲用于批次完成判定。2026-11-14 起发送前 5 秒内一帧都收不到即快速失败，消息含话题名与已收帧统计，不再空等 60 秒（不放宽放行条件） | 批次进度间接消费，未增加独立状态仪表 | [归一化](../ros_mes_hou/app/ros/normalizer.py)、批次管理器；缺字段不补默认值；[实测报告](../../docs/机械臂物理状态实测报告_2026-11-07.md) 的 CAN 层静默结论与 ROS 侧反馈不一致（疑为固件版本差异），需真机 `candump`/`rostopic hz` 复核 | P0；真机复核前短动作漏 RUN 时仍按停止后续发送处理 |
+| `/hardware/axis_status` / `AxisStatus` | SEG、轴号、状态字/运行状态/基准有效性 | 硬件节点解析纯转发；2026-11-14 起 `axis_status_aggregator.py` 在绑定 SEG/ARM 后按 5Hz 推导发布状态、空闲按 2Hz 补发缓存位置 | 固件周期上报由 ROS 侧口述确认；聚合节点可补全链路，但状态非设备实测，MES 真机链路待复核 | 新鲜有效空闲用于发送前检查；新 RUN 及后续空闲用于批次完成判定。2026-11-14 起发送前 5 秒内一帧都收不到即快速失败，消息含话题名与已收帧统计，不再空等 60 秒（不放宽放行条件） | 批次进度间接消费，未增加独立状态仪表 | [归一化](../ros_mes_hou/app/ros/normalizer.py)、[聚合节点](../../robot_control_backend/scripts/axis_status_aggregator.py)、批次管理器；缺字段不补默认值；[实测报告](../../docs/机械臂物理状态实测报告_2026-11-07.md) 的 CAN 层静默结论与 ROS 侧反馈不一致（疑为固件版本差异），需真机 `candump`/`rostopic hz` 复核 | P0；聚合状态只能保证链路推进，不能证明设备真的运动；真机复核前短动作漏 RUN 时仍按停止后续发送处理 |
 | `/hardware/arrive_notification` / `ArriveNotification` | SEG、轴号、原始位置/误差及有效标志 | 硬件节点有 CAN 事件解析 | 待确认 | 同轴发送后检查目标、误差和有效标志，配合空闲判定；整批从未收到轴状态帧时，可与 `stop_reason=1` 组合作为完成证据（步骤记录 `completion_evidence=arrive_stop`、`run_observed=false`） | 通过批次查询显示完成/待核实；另在「到位 / 停止事件」卡片显示原始字段，并用 `angle` 补全该轴实测值 | 消息无设备请求号；伸缩原始单位等需按现场版本核实 | P0；软件观测完成不等于固件级逐请求关联 |
 | `/hardware/stop_notification` / `StopNotification` | SEG、轴号、停止原因/输出 | 硬件节点有解析 | 待确认 | 非正常到位停止中止后续下发；正常停止不单独替代到位判定，仅在无轴状态帧时与到位事件组合 | 通过批次原因提示；另在「到位 / 停止事件」卡片显示停止原因 | `StopReason`、作用域和现场版本待核实 | P0；未由发送结果推断停机 |
 | `/hardware/axis_fault` / `AxisFault` | SEG、轴号、故障字段 | 消息及解析存在；协议说明记载部分固件判断关闭 | 待确认 | 所属臂故障事件中止后续下发 | 通过批次原因提示，无新增故障复位入口 | 不凭消息定义推断实际报告种类 | P0；现场固件实际支持待核实 |
@@ -90,7 +92,7 @@ CmdAck 同一话题混合不同编号空间，`header` 目前也没有可靠的�
 | 查询当前模块绑定（只读） | `hardware_node` 有状态查询桥接（CAN `0x00000020`），`module_confirme_node` 仅在握手流程内按 token 复核 `module_state` bit0/bit1 | 待确认 | MES 无独立查询入口，续接只能按自身记录恢复 | 需 ROS 侧新增只读查询命令与回执定义，本侧不改 `robot_control_backend` |
 | 回零 `/control/home_cmd` / `IntCmd`、`/hardware/home_status` / `HomeStatus` | 硬件节点有处理且有 `home_supported` 限制；可发 `ack_msg=4` 软件拒绝 | 待确认 | MES 未提供本次回零操作入口或状态消费 | 先核实真实固件能力及操作条件 |
 | 单轴故障复位 | 共享保护说明给出 CAN 复位帧 | 待确认 | 未发现已建立的独立 MES→ROS 复位契约 | 双方先确认对外 ROS 接口，不能直接新增 CAN 指令 |
-| 独立模块状态查询 `/control/module_status_query` / `IntCmd`、`/hardware/module_status` / `ModuleStatus` | 硬件节点实现；模块确认节点内部用于状态复核 | 待确认 | 模块确认内部使用，不等于 MES 有独立查询入口 | 明确独立查询需求、token匹配及状态字段 |
+| 独立模块状态查询 `/control/module_status_query` / `IntCmd`、`/hardware/module_status` / `ModuleStatus` | 硬件节点实现；模块确认节点内部用于状态复核；2026-11-20 起 `control_node` 用应答中的 `exist_mask` bit0~2 过滤在线轴，只等待在线轴到位 | 待确认 | MES 无独立查询入口；ROS 内部已用于时序等待集合 | 明确独立查询需求、token匹配及状态字段 |
 | 图纸要求的目标角（页面“图纸要求值”） | 目标角写在共享库 `calculation` 表：`calculation_node` 写 `coord={unit: {alpha,…}}`、`position={unit: beta}`（`Unit_ID=0`），`kinematics_node` 写 `coord={unit: [j1,j2,j3_cm]}`、`position={axis: 增量}`（`Unit_ID=unit`）；两节点 `DB_PATH` 都指向仓库根 `ros_database.db` | 不适用 | 前端按 C 方案只显示“实际到位”（锁定图纸基准 + 实际位置），不显示图纸要求值 | 该表由两节点按不同键空间写入、无请求号/批次号，且 `kinematics_node` 对未参与该模块的臂用 `target_j*=0.0` 写 `[0,0,0]` 占位——真 0° 目标与占位不可分辨；当前开发库该表 0 行。MES 直接读它会给页面编出假目标，故不读。要显示需 ROS 侧提供带“参与标志”和请求关联的目标角话题，本侧不改共享协议去猜 |
 | 固件级完整指令追踪 | 当前消息无可靠请求关联标识 | 待确认 | 已有 MES 批次幂等及观测进度，尚不能精确匹配固件逐请求接受→执行→停止/到位 | 需双方明确设备关联能力；本次不改 ROS/固件协议 |
 | 大屏 `/api/ws/ws/robot_status` 的底层数据源 | 后端端点存在，`web_data_node.py` 历史代码整段注释 | 不适用/待有效数据源 | 有受 token 保护的转发入口，不能证明大屏已有实时流 | ROS 数据源与实际页面订阅应单独核查 |

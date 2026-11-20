@@ -202,11 +202,12 @@ class LocalStopTest(unittest.TestCase):
             self.assertTrue(asyncio.run(client.publish_local_stop(scope="module", module_id=17)))
             self.assertTrue(asyncio.run(client.publish_local_stop(scope="axis", module_id=17, device_id=5)))
 
-        self.assertEqual(sent[0]["topic"], "/arm/cmd_vel")
-        self.assertEqual(sent[0]["msg"]["device_id"], 0)
-        self.assertEqual(sent[0]["msg"]["position"], [0x08, 17])
-        self.assertEqual(sent[1]["msg"]["device_id"], 5)
-        self.assertEqual(sent[1]["msg"]["position"], [0x0C, 1])
+        publishes = [item for item in sent if item.get("op") == "publish"]
+        self.assertEqual(publishes[0]["topic"], "/arm/cmd_vel")
+        self.assertEqual(publishes[0]["msg"]["device_id"], 0)
+        self.assertEqual(publishes[0]["msg"]["position"], [0x08, 17])
+        self.assertEqual(publishes[1]["msg"]["device_id"], 5)
+        self.assertEqual(publishes[1]["msg"]["position"], [0x0C, 1])
 
     def test_unknown_scope_is_not_published(self):
         client = RosbridgeClient(ROS1_PROFILE, url="ws://test", timeout=0.1)
@@ -257,9 +258,10 @@ class LocalStopTest(unittest.TestCase):
             websockets_mock.connect = Mock(return_value=FakeWebSocket())
             self.assertTrue(asyncio.run(client.publish_local_stop(scope="arm", module_id=17, device_id=2)))
 
-        self.assertEqual([item["msg"]["device_id"] for item in sent], [4, 5, 6])
-        self.assertTrue(all(item["msg"]["position"] == [0x0C, 1] for item in sent))
-        self.assertTrue(all(item["topic"] == "/arm/cmd_vel" for item in sent))
+        publishes = [item for item in sent if item.get("op") == "publish"]
+        self.assertEqual([item["msg"]["device_id"] for item in publishes], [4, 5, 6])
+        self.assertTrue(all(item["msg"]["position"] == [0x0C, 1] for item in publishes))
+        self.assertTrue(all(item["topic"] == "/arm/cmd_vel" for item in publishes))
 
     def test_arm_hold_target_skips_batches_of_other_arms(self):
         manager = BatchManager(sessions=self.Session)

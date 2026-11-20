@@ -11,7 +11,8 @@ import time
 import threading
 from collections import defaultdict
 from std_msgs.msg import Header
-from robot_control_backend.msg import RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification
+from robot_control_backend.msg import (
+    RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification, ModuleStatus)
 
 
 def load_env_config():
@@ -41,6 +42,9 @@ class ArmSequenceController:
         self.ARRIVE_TIMEOUT_S = 120.0              # 单阶段等待到位的兜底超时（2min），超时仅告警放行
         self.arrive_cond = threading.Condition()
         self.arrived = set()                       # {(module_id, axis)} 已到位轴
+        # 在线轴集合：由模块状态应答的电机存在掩码推导；为空时回退为等待该阶段全部轴
+        self.online_lock = threading.Lock()
+        self.online_axes = set()
 
         # ---------- 输出话题（发布给功能节点，强制从 .env 读取）----------
         self.pub_rot_seq = rospy.Publisher(
@@ -98,6 +102,11 @@ class ArmSequenceController:
             os.environ['ROS_TOPIC_ARRIVE_NOTIFICATION'],
             ArriveNotification, self.cb_arrive)
 
+        # ---------- 模块状态应答（在线轴识别，避免等待离线臂导致阶段空等）----------
+        rospy.Subscriber(
+            os.environ['ROS_TOPIC_MODULE_STATUS'],
+            ModuleStatus, self.cb_module_status)
+
         rospy.loginfo("🔧 控制节点启动（所有话题强制从 .env 读取）")
 
     # ---------- device_id 解析（V2：device_id 即 AXIS 寻址单元）----------
@@ -124,11 +133,30 @@ class ArmSequenceController:
             self.arrived.add((int(msg.module_id), int(msg.device_id)))
             self.arrive_cond.notify_all()
 
+    def cb_module_status(self, msg):
+        """登记在线轴：exist_mask bit0~2 对应 axis_base 起的三轴（仅模块确认状态应答）"""
+        arm, axis_base = int(msg.arm), int(msg.axis_base)
+        if arm < 1 or axis_base < 1 or int(msg.seg) == 0xFF:
+            return
+        axes = {axis_base + bit for bit in range(3)
+                if int(msg.exist_mask) & (1 << bit)}
+        if not axes:
+            return
+        with self.online_lock:
+            self.online_axes |= axes
+        rospy.loginfo("[时序] 模块状态应答：SEG=%s 臂%d 在线轴 %s",
+                      msg.seg, arm, sorted(axes))
+
     def _axes_with_motion(self, arms, joint_name):
-        """返回该阶段需要等待到位的 V2 轴号集合（增量非空的臂）"""
+        """返回该阶段需要等待到位的 V2 轴号集合（增量非空且在线；无在线信息时保留全部）"""
         offset = {"rotate": 1, "swing": 2, "extend": 3}[joint_name]
-        return {arm_idx * 3 + offset for arm_idx in sorted(arms.keys())
+        axes = {arm_idx * 3 + offset for arm_idx in sorted(arms.keys())
                 if abs(arms[arm_idx][joint_name].position[0]) >= self.EMPTY_CMD_EPS}
+        with self.online_lock:
+            online = set(self.online_axes)
+        if not online:
+            return axes
+        return axes & online
 
     def _clear_arrivals(self, module_id, axes):
         """下发前清除旧到位标记，避免上一拍的到位事件被误判为本次到位"""
@@ -265,6 +293,9 @@ class ArmSequenceController:
                 pub.publish(msg)
                 rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} {label}增量 "
                               f"{format(msg.position[0], fmt)}{unit}")
+            if not expect_axes:
+                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} {label}阶段无在线轴需等待到位，直接下发下一阶段")
+                return
             self._wait_for_arrivals(mid, expect_axes, label)
 
         try:

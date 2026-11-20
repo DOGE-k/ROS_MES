@@ -10,7 +10,7 @@ import asyncio
 import json
 import threading
 import time
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, List
 
 try:
     import websockets
@@ -30,6 +30,13 @@ from app.ros.profile import RosProfile, get_active_profile
 # softstop_node 收到后转发 position=[0x01] 全局急停
 SYSTEM_MODULE_ID = 0
 SYSTEM_DEVICE_ID = 0
+
+# 急停类指令（急停/解除/局部停）不等待设备回执，必须靠传输层尽量保证送达：
+# advertise 后留时间让 rosbridge 建好 Publisher，publish 后留时间让帧交给 rospy，
+# 再优雅关闭连接。整条链路失败按次数重试，全部失败才返回 False。
+STOP_ADVERTISE_WAIT_S = 0.1
+STOP_PUBLISH_DRAIN_S = 0.1
+STOP_SEND_RETRIES = 3
 
 
 def _stamp(profile: RosProfile) -> Dict[str, int]:
@@ -348,71 +355,89 @@ class RosbridgeClient:
             ):
                 return msg
 
+    async def _publish_stop_frames(self, frames: List[Dict[str, Any]], tag: str) -> bool:
+        """发送急停类系统指令（IntCmd）：advertise → 等待 → publish → 停留 → 优雅关闭。
+
+        返回 True 仅表示每帧都已写出并经过 rosbridge 的处理窗口，**不代表设备已执行**；
+        急停/解除/局部停三个话题在 ROS 端没有应用层回执，因此用重试兜底。
+        """
+        if websockets is None:
+            print(f"[{tag}] websockets 库未安装，无法发送指令")
+            return False
+
+        message_type = self.profile.message_type("IntCmd")
+        topics = list(dict.fromkeys(frame["topic"] for frame in frames))
+        last_error: Exception | None = None
+
+        for attempt in range(1, STOP_SEND_RETRIES + 1):
+            try:
+                async with websockets.connect(
+                    self.url, close_timeout=1, open_timeout=3
+                ) as ws:
+                    for topic in topics:
+                        await asyncio.wait_for(
+                            ws.send(json.dumps(
+                                {"op": "advertise", "topic": topic, "type": message_type},
+                                ensure_ascii=False,
+                            )),
+                            self.timeout,
+                        )
+                    # Publisher 建立需要时间，过早 publish 会被 rosbridge 当成未注册话题丢弃
+                    await asyncio.sleep(STOP_ADVERTISE_WAIT_S)
+                    for frame in frames:
+                        await asyncio.wait_for(
+                            ws.send(json.dumps(
+                                {"op": "publish", "topic": frame["topic"], "msg": frame["msg"]},
+                                ensure_ascii=False,
+                            )),
+                            self.timeout,
+                        )
+                    # 关闭前留出处理窗口：连接一关，未交给 rospy 的帧就会丢
+                    await asyncio.sleep(STOP_PUBLISH_DRAIN_S)
+                return True
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+            except Exception as exc:
+                last_error = exc
+            if attempt < STOP_SEND_RETRIES:
+                await asyncio.sleep(0.05 * attempt)
+
+        print(f"[{tag}] 发送失败（已重试 {STOP_SEND_RETRIES} 次）: {last_error}")
+        return False
+
     async def publish_softstop(self) -> bool:
         """全局急停：/control/softstop 的 typeless publish（与 ROS1 现网行为一致）。"""
-        if websockets is None:
-            print("[紧急故障] websockets 库未安装，无法发送急停指令")
-            return False
-
         softstop_topic = self.profile.topics["softstop"]
-        emergency_msg = json.dumps(
-            {
-                "op": "publish",
-                "topic": softstop_topic,
-                "msg": {
-                    "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
-                    "module_id": SYSTEM_MODULE_ID,
-                    "device_id": SYSTEM_DEVICE_ID,
-                    "position": [0x01],
-                },
+        frames = [{
+            "topic": softstop_topic,
+            "msg": {
+                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
+                "module_id": SYSTEM_MODULE_ID,
+                "device_id": SYSTEM_DEVICE_ID,
+                "position": [0x01],
             },
-            ensure_ascii=False,
-        )
-
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                await asyncio.wait_for(ws.send(emergency_msg), timeout=2.0)
+        }]
+        if await self._publish_stop_frames(frames, "急停"):
             print(f"[急停] 指令已发送: {softstop_topic}")
             return True
-        except asyncio.TimeoutError:
-            print("[紧急故障] 急停 WebSocket 发送超时")
-            return False
-        except Exception as exc:
-            print(f"[紧急故障] 急停系统异常: {exc}")
-            return False
+        return False
 
     async def publish_stop_release(self) -> bool:
         """急停解除：/control/softstop_release（softstop_node 转发 /arm/cmd_vel [0x04]）。"""
-        if websockets is None:
-            print("[紧急故障] websockets 库未安装，无法发送急停解除指令")
-            return False
-
         release_topic = self.profile.topics["softstop_release"]
-        release_msg = json.dumps(
-            {
-                "op": "publish",
-                "topic": release_topic,
-                "msg": {
-                    "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
-                    "module_id": SYSTEM_MODULE_ID,
-                    "device_id": SYSTEM_DEVICE_ID,
-                    "position": [0x01],
-                },
+        frames = [{
+            "topic": release_topic,
+            "msg": {
+                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
+                "module_id": SYSTEM_MODULE_ID,
+                "device_id": SYSTEM_DEVICE_ID,
+                "position": [0x01],
             },
-            ensure_ascii=False,
-        )
-
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                await asyncio.wait_for(ws.send(release_msg), timeout=2.0)
+        }]
+        if await self._publish_stop_frames(frames, "急停解除"):
             print(f"[急停解除] 指令已发送: {release_topic}")
             return True
-        except asyncio.TimeoutError:
-            print("[紧急故障] 急停解除 WebSocket 发送超时")
-            return False
-        except Exception as exc:
-            print(f"[紧急故障] 急停解除系统异常: {exc}")
-            return False
+        return False
 
     async def publish_local_stop(self, *, scope: str, module_id: int, device_id: int | None = None) -> bool:
         """局部停：直发 /arm/cmd_vel 系统级指令，经 softstop_node 之外的同一话题进入 hardware_node。
@@ -443,30 +468,20 @@ class RosbridgeClient:
             print(f"[局部停] 未知 scope 或缺 device_id：{scope!r}/{device_id!r}")
             return False
 
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                for payload in targets:
-                    message = json.dumps(
-                        {
-                            "op": "publish",
-                            "topic": topic,
-                            "msg": {
-                                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
-                                **payload,
-                            },
-                        },
-                        ensure_ascii=False,
-                    )
-                    await asyncio.wait_for(ws.send(message), timeout=2.0)
-                    print(f"[局部停] 指令已发送: {topic} scope={scope} "
-                          f"device_id={payload['device_id']} position={payload['position']}")
-            return True
-        except asyncio.TimeoutError:
-            print("[局部停] WebSocket 发送超时")
+        frames = [{
+            "topic": topic,
+            "msg": {
+                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
+                **payload,
+            },
+        } for payload in targets]
+
+        if not await self._publish_stop_frames(frames, "局部停"):
             return False
-        except Exception as exc:
-            print(f"[局部停] 发送异常: {exc}")
-            return False
+        for payload in targets:
+            print(f"[局部停] 指令已发送: {topic} scope={scope} "
+                  f"device_id={payload['device_id']} position={payload['position']}")
+        return True
 
     async def publish_web_cmd(self, command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """测试通道：向 /web_cmd 发布 JSON 指令（std_msgs/String）。
