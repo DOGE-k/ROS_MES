@@ -3,6 +3,8 @@
 > 版本：**V1.1**（2026-11-20）
 > 适用源码：当前 `robot_control_backend/`（ROS1 Noetic）+ `mes_web/`（FastAPI + Vue3）
 > V1.0 部署文档（2026-11-02）对应串口/CH340 旧链路，已废止；请以本文为准。
+> **驱动包已内置**：ZLG USBCAN-II 的 x64/x86/aarch64 预编译库随仓库放在 `deploy/drivers/`，无需额外下载。
+> 零基础照做：见 [零基础部署手册](BEGINNER_DEPLOY_GUIDE_V1.1.md)。
 > 新环境逐项验收请使用：[新环境部署检查清单 V1.1](DEPLOY_CHECKLIST_V1.1.md)。
 
 ---
@@ -78,6 +80,7 @@ rsync -av \
 ```
 
 - **建议带上** `ros_database.db`：账号、图纸、微调记录都在里面。
+- **驱动包已内置**在 `deploy/drivers/usbcan_ii_libusb_251028/`（约 2.9MB，含 x64/x86/aarch64）；交付/打包时不要排除该目录，否则新机器没有 ZLG 预编译库 `libusbcan.so`。
 - 不带数据库时，新机器首次执行 `sqlite_create.py` 初始化（默认账号 `admin / 123456`）。
 - **不要带** `mes_web/ros_mes_hou/venv`、`mes_web/ros_mes_front/node_modules`，换机后重装。
 - 交付后修改 `SECRET_KEY` 和默认管理员密码。
@@ -126,26 +129,45 @@ npm -v
 
 ### 4.4 ZLG USBCAN-II
 
-1. 把 `libusbcan.so` 放到固定位置并刷新缓存：
+`libusbcan.so` 是 **ZLG 官方预编译库**（分 x64/x86/aarch64），不是本项目编译生成的；驱动包里的 `Makefile` 只编译 `test`/`test_zuds` 示例，项目里的 `zlg_bus.py` 只是 `ctypes` 封装。
 
-   ```bash
-   sudo cp libusbcan.so /usr/local/lib/libusbcan.so
-   sudo ldconfig
-   ```
+**驱动包已内置在仓库中，无需额外下载或向厂商索取。** 位置：
 
-2. 给适配器 USB 权限（USBCAN-II 为 `0471:1200`）：
+```text
+deploy/drivers/usbcan_ii_libusb_251028/
+├── usbcan_ii_libusb_x64/      # Intel/AMD 64 位
+├── usbcan_ii_libusb_x86/      # 32 位
+└── usbcan_ii_libusb_aarch64/  # ARM 64 位
+```
 
-   ```bash
-   echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0471", ATTR{idProduct}=="1200", MODE="0666"' \
-     | sudo tee /etc/udev/rules.d/99-zlg-usbcan.rules
-   sudo udevadm control --reload-rules && sudo udevadm trigger
-   ```
+> 驱动库版权归 ZLG；仓库公开前请确认厂商的再分发授权。
+> 只有仓库被裁剪、或只拷贝了部分目录时，才需要从原机器/厂商补回驱动包，并用 `--driver-dir` 指定。
 
-3. 确认设备存在：
+推荐用安装脚本自动完成“选架构、装 libusb、复制库、写 udev、校验”：
 
-   ```bash
-   lsusb | grep 0471
-   ```
+```bash
+cd ~/robot_ws/src/ROS_MES
+sudo bash deploy/install_zlg_can.sh
+# 指定其他驱动目录时：
+sudo bash deploy/install_zlg_can.sh \
+  --driver-dir deploy/drivers/usbcan_ii_libusb_251028/usbcan_ii_libusb_x64
+# 仅预览：
+bash deploy/install_zlg_can.sh --dry-run
+```
+
+手动安装等价步骤：
+
+```bash
+sudo apt install -y libusb-1.0-0 usbutils
+sudo install -m 0644 /path/to/libusbcan.so /usr/local/lib/libusbcan.so
+sudo ldconfig
+
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="0471", ATTR{idProduct}=="1200", MODE="0666"' \
+  | sudo tee /etc/udev/rules.d/99-zlg-usbcan.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+
+lsusb | grep 0471
+```
 
 > 适配器优先插主板直出的 USB2.0 口，不要用外接 HUB。USB 端口卡死时换物理端口重新插拔。
 
@@ -165,6 +187,8 @@ npm -v
 | `CAN_BITRATE` | `500000` | 固定 500kbps |
 | `ZLG_LIBUSB_PATH` | `/usr/local/lib/libusbcan.so` | **必须改**；也可在 shell 里 export |
 | `CAN_DEFAULT_SEG` | `0` | 未绑定模块时的回退 SEG，单工位填 0 |
+
+> 现场 `robot_control_backend/rob_arm.env` 可能没有 `ZLG_LIBUSB_PATH` 这一行；如果没有，手动新增。`deploy/config/rob_arm.env` 模板已包含该键。
 
 其余限位、话题、聚合节点参数保持默认即可。重点确认：
 
@@ -449,7 +473,10 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 | `deploy/config/frontend.env` | 前端 `.env.development` 模板 |
 | `deploy/config/ros_requirements.txt` | ROS 节点 Python 依赖 |
 | `deploy/deploy_windows.ps1` | Windows 前后端一键部署（不含 ROS） |
+| `deploy/install_zlg_can.sh` | ZLG USBCAN-II 驱动安装脚本（选架构/装库/udev/校验） |
+| `deploy/drivers/usbcan_ii_libusb_251028/` | ZLG 官方预编译驱动包（x64/x86/aarch64） |
 | `deploy/DEPLOY_CHECKLIST_V1.1.md` | 新环境部署逐项检查清单 |
+| `deploy/BEGINNER_DEPLOY_GUIDE_V1.1.md` | 零基础部署手册（先跑页面，再接真机） |
 | `robot_control_backend/launch/ros_robot.launch` | 真机全量启动入口 |
 | `mes_web/ros_mes_hou/requirements.txt` | 后端依赖 |
 | `sqlite_create.py` | 首次数据库初始化 |

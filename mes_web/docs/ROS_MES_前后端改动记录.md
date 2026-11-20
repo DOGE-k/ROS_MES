@@ -18,6 +18,9 @@
 - [部署指南](../../deploy/README_DEPLOY.md) 重写为 V1.1：串口/CH340 → ZLG USBCAN-II CAN；模块 `module_id → SEG/ARM` 会话绑定；轴状态聚合节点；`/control/axis_zero` 校零；批次接口与五段值；13 路反馈；rosbridge 9010 已内置 launch；后端 Python 3.10+ 与 ROS 3.8 隔离；补充跨机网络、验证清单和故障表。
 - 模板同步：[rob_arm.env](../../deploy/config/rob_arm.env) 以现场配置为基准并改为 `DB_PATH`、`ZLG_LIBUSB_PATH` 占位；[frontend.env](../../deploy/config/frontend.env) 移除废弃的 `VITE_DEBUG_NO_ROS`；[ros_requirements.txt](../../deploy/config/ros_requirements.txt) 增加 `cryptography` 和 open3d 版本区分。
 - 修正 [deploy_windows.ps1](../../deploy/deploy_windows.ps1) 的项目根路径双重嵌套、Python 3.10+ 检查，以及“先建 venv 装依赖、再用 venv Python 建库”的顺序。
+- 新增 [零基础部署手册](../../deploy/BEGINNER_DEPLOY_GUIDE_V1.1.md)：按“先路线 A 跑页面、再路线 B 接真机”组织，补齐 Ubuntu/ROS/Node/Python 安装、项目放置、逐步成功标志、停止条件和 Windows 演示路径；并在部署指南顶部与文件索引中互相链接。
+- 新增 [ZLG 驱动安装脚本](../../deploy/install_zlg_can.sh)：自动识别 x64/x86/aarch64、校验架构、安装 libusb 运行库、复制 `libusbcan.so`、写入 0471:1200 udev 规则并校验加载；支持 `--dry-run` 预览。同步修正文档中“需要手动获取/编译 libusbcan.so”的表述：该库是 ZLG 预编译库，驱动包 `Makefile` 只编译 test 示例。
+- 将 ZLG 官方驱动包 `usbcan_ii_libusb_251028` 收入 [deploy/drivers/](../../deploy/drivers/)（约 2.9MB，含 x64/x86/aarch64），安装脚本默认优先使用仓库内驱动包，clone 后可直接运行；部署指南、零基础手册和检查清单均已补充“驱动包已内置、无需额外下载”的说明，并注明公开仓库前需确认 ZLG 再分发授权。
 - 验证：文档与模板已按 2026-11-20 工作区源码逐项核对；未在新机器/Windows 实测，现场仍需验证 CAN、模块确认和批次预检。
 
 ---

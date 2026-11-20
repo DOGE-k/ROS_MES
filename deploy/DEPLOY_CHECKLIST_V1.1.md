@@ -1,7 +1,7 @@
 # ROS MES 新环境部署检查清单（V1.1）
 
 > 适用：把项目部署到一台新电脑/新工控机，并确认可运行。
-> 配套文档：[部署指南 V1.1](README_DEPLOY.md)
+> 配套文档：[部署指南 V1.1](README_DEPLOY.md) ｜ 零基础操作步骤：[零基础部署手册](BEGINNER_DEPLOY_GUIDE_V1.1.md)
 > 使用方式：按顺序逐项打勾；出现「阻断项」未通过时不要继续后续步骤。
 > 建议记录：目标机 IP、ROS 机 IP、项目路径、Git 提交号、数据库路径。
 
@@ -83,7 +83,11 @@
 
 ## 4. CAN / ZLG 硬件检查
 
+- [ ] 驱动包已内置：`deploy/drivers/usbcan_ii_libusb_251028/` 存在（无需额外下载）。
+- [ ] 驱动包架构与目标机匹配（x64/x86/aarch64）。
+- [ ] 已运行 `sudo bash deploy/install_zlg_can.sh`，或按文档手动完成安装。
 - [ ] `libusbcan.so` 已放到目标机，路径与 `ZLG_LIBUSB_PATH` 一致。
+- [ ] `python3 -c "import ctypes; ctypes.CDLL('/usr/local/lib/libusbcan.so')"` 能成功加载。
 - [ ] 已执行 `sudo ldconfig`（库放在 `/usr/local/lib` 时）。
 - [ ] `lsusb | grep 0471` 能看到 USBCAN-II 设备。
 - [ ] 已配置 udev 权限规则并执行 `udevadm control --reload-rules && udevadm trigger`。
