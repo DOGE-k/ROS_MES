@@ -542,31 +542,44 @@ class RosbridgeClient:
                         "feedback_stop", "feedback_fault", "feedback_limit")
         ]
 
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                for topic in feedback_topics:
-                    await ws.send(json.dumps({"op": "subscribe", "topic": topic}, ensure_ascii=False))
-                if ready is not None:
-                    ready.set()
+        # 自动重连：ROS/rosbridge 瞬时抖动不再让反馈流终止。
+        # 不 yield data_type=="error"——finetuning 批次的 consume 会把 error 当 Halt 杀掉在途批次；
+        # 这里静默重连，由批次自身的 preflight/arrive 超时做最终兜底，瞬时断开可恢复。
+        attempt = 0
+        while True:
+            try:
+                async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
+                    for topic in feedback_topics:
+                        await ws.send(json.dumps({"op": "subscribe", "topic": topic}, ensure_ascii=False))
+                    if ready is not None:
+                        ready.set()
+                    attempt = 0  # 连接建立即清零重连计数
 
-                async for raw in ws:
-                    try:
-                        event = json.loads(raw)
-                    except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
-                        continue
-                    if not isinstance(event, dict) or event.get("op") != "publish":
-                        continue
-                    topic = event.get("topic", "")
-                    if topic not in feedback_topics:
-                        continue
-                    try:
-                        feedback = normalize_feedback_message(topic, event.get("msg"), self.profile.topics)
-                    except (TypeError, ValueError, OverflowError):
-                        # 单条格式损坏的消息不能终止整条反馈连接。
-                        continue
-                    yield feedback
-        except Exception as exc:
-            yield {"data_type": "error", "message": f"rosbridge feedback failed: {exc}"}
+                    async for raw in ws:
+                        try:
+                            event = json.loads(raw)
+                        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+                            continue
+                        if not isinstance(event, dict) or event.get("op") != "publish":
+                            continue
+                        topic = event.get("topic", "")
+                        if topic not in feedback_topics:
+                            continue
+                        try:
+                            feedback = normalize_feedback_message(topic, event.get("msg"), self.profile.topics)
+                        except (TypeError, ValueError, OverflowError):
+                            # 单条格式损坏的消息不能终止整条反馈连接。
+                            continue
+                        yield feedback
+                    # async for 正常退出 = 对端关闭连接，落入下方重连。
+            except asyncio.CancelledError:
+                raise  # 批次结束 reader.cancel()：正常退出，不重连
+            except Exception as exc:
+                print(f"[rosbridge] 反馈连接异常：{exc}")
+            attempt += 1
+            delay = min(1.0 * attempt, 5.0)
+            print(f"[rosbridge] 反馈连接断开，{delay:.1f}s 后自动重连（第 {attempt} 次）")
+            await asyncio.sleep(delay)
 
 
 
