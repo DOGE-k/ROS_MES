@@ -16,6 +16,9 @@ dist/
 # 环境变量机密文件
 .env
 
+# 部署脚本日志
+deploy/logs/
+
 # 编辑器配置 (VS Code 等)
 .vscode/
 .idea/

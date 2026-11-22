@@ -24,6 +24,8 @@
 | 前端无 ROS 调试 | `VITE_DEBUG_NO_ROS=true` | 已废弃；改「个人中心 → 调试设置」由后端运行期配置控制 |
 | rosbridge | 需单独 launch | 已包含在 `ros_robot.launch`，端口 **9010** |
 | 后端 Python | 3.8 可用 | **必须 3.10+**（与 ROS 的 3.8 隔离） |
+| 部署方式 | 手动分步安装 | **`install_all.sh` 一键安装 + `check_deploy.sh` 自检** |
+| ZLG 驱动 | 手动获取 `.so` | **驱动包已内置 `deploy/drivers/`，安装脚本自动配置** |
 | ROS2 | 待移植 | `ros2_robot_control_backend/` 为迁移副本，**现场仍用 ROS1 目录** |
 
 ---
@@ -244,6 +246,34 @@ VITE_USE_MOCK=false
 
 ## 6. 安装
 
+### 6.0 一键安装（推荐）
+
+脚本会自动安装系统依赖、Python 3.10+、Node.js、ROS Noetic/rosbridge、ROS Python 依赖、编译工作空间、后端 venv、前端 npm、数据库、ZLG 驱动，并在最后自动运行检查脚本。
+
+```bash
+cd ~/robot_ws/src/ROS_MES
+
+# 接真机：完整安装
+bash deploy/install_all.sh
+
+# 只跑页面：不装 ROS/CAN
+bash deploy/install_all.sh --mock-only
+
+# 先预览，不修改系统
+bash deploy/install_all.sh --dry-run
+
+# 已自行装好 ROS，跳过 ROS apt 安装
+bash deploy/install_all.sh --skip-ros-install
+```
+
+说明：
+
+- **不要用 `sudo` 运行**；脚本内部会对 apt/udev 调用 sudo。
+- 已有数据库、`.env`、`rob_arm.env` 不会被覆盖，只补齐缺失项；修改前会生成 `.bak.时间戳` 备份。
+- 日志在 `deploy/logs/install_*.log`。
+- 只支持 Ubuntu 20.04 的完整安装；其他版本只能 `--mock-only`。
+- 安装完成后会自动运行 `deploy/check_deploy.sh`，也可以随时手动执行。
+
 ### 6.1 编译 ROS 工作空间
 
 ```bash
@@ -337,6 +367,27 @@ npm run dev -- --host 0.0.0.0
 ---
 
 ## 8. 部署后验证
+
+### 8.0 一键检查
+
+```bash
+cd ~/robot_ws/src/ROS_MES
+bash deploy/check_deploy.sh
+```
+
+只检查前后端：
+
+```bash
+bash deploy/check_deploy.sh --mock-only
+```
+
+把 WARN 也当作失败：
+
+```bash
+bash deploy/check_deploy.sh --strict
+```
+
+脚本只读，不会修改文件；输出 `PASS/WARN/FAIL`，存在 FAIL 时退出码为 1。检查范围包括系统版本、ROS、Python/Node 依赖、配置、前后端数据库一致性、CAN 库与设备、端口、服务、文件属主。
 
 ### 8.1 基础链路
 
@@ -474,6 +525,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 | `deploy/config/ros_requirements.txt` | ROS 节点 Python 依赖 |
 | `deploy/deploy_windows.ps1` | Windows 前后端一键部署（不含 ROS） |
 | `deploy/install_zlg_can.sh` | ZLG USBCAN-II 驱动安装脚本（选架构/装库/udev/校验） |
+| `deploy/install_all.sh` | 一键部署：系统依赖/ROS/后端/前端/驱动 |
+| `deploy/check_deploy.sh` | 部署只读检查：PASS/WARN/FAIL |
 | `deploy/drivers/usbcan_ii_libusb_251028/` | ZLG 官方预编译驱动包（x64/x86/aarch64） |
 | `deploy/DEPLOY_CHECKLIST_V1.1.md` | 新环境部署逐项检查清单 |
 | `deploy/BEGINNER_DEPLOY_GUIDE_V1.1.md` | 零基础部署手册（先跑页面，再接真机） |

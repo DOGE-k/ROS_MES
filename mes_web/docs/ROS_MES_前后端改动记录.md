@@ -21,7 +21,9 @@
 - 新增 [零基础部署手册](../../deploy/BEGINNER_DEPLOY_GUIDE_V1.1.md)：按“先路线 A 跑页面、再路线 B 接真机”组织，补齐 Ubuntu/ROS/Node/Python 安装、项目放置、逐步成功标志、停止条件和 Windows 演示路径；并在部署指南顶部与文件索引中互相链接。
 - 新增 [ZLG 驱动安装脚本](../../deploy/install_zlg_can.sh)：自动识别 x64/x86/aarch64、校验架构、安装 libusb 运行库、复制 `libusbcan.so`、写入 0471:1200 udev 规则并校验加载；支持 `--dry-run` 预览。同步修正文档中“需要手动获取/编译 libusbcan.so”的表述：该库是 ZLG 预编译库，驱动包 `Makefile` 只编译 test 示例。
 - 将 ZLG 官方驱动包 `usbcan_ii_libusb_251028` 收入 [deploy/drivers/](../../deploy/drivers/)（约 2.9MB，含 x64/x86/aarch64），安装脚本默认优先使用仓库内驱动包，clone 后可直接运行；部署指南、零基础手册和检查清单均已补充“驱动包已内置、无需额外下载”的说明，并注明公开仓库前需确认 ZLG 再分发授权。
-- 验证：文档与模板已按 2026-11-20 工作区源码逐项核对；未在新机器/Windows 实测，现场仍需验证 CAN、模块确认和批次预检。
+- 新增 [一键部署脚本](../../deploy/install_all.sh)：自动安装系统依赖、Python 3.10+、Node.js、ROS Noetic/rosbridge、ROS Python 依赖，编译 catkin 工作空间，创建后端 venv 与前端 npm 依赖，初始化数据库，补齐 `DB_PATH`/`ZLG_LIBUSB_PATH`/CAN 配置并调用驱动安装脚本；支持 `--mock-only`、`--skip-ros-install`、`--mirror`、`--dry-run`，修改配置前自动备份。
+- 新增 [部署检查脚本](../../deploy/check_deploy.sh)：只读检查系统版本、ROS/消息、Python/Node 依赖、后端与 ROS 配置、前后端数据库一致性、CAN 库与 udev/设备、端口与服务、文件属主；输出 PASS/WARN/FAIL，支持 `--mock-only` 和 `--strict`。
+- 验证：两个脚本通过 `bash -n`；`install_all.sh` 的完整与 `--mock-only` 预览均通过；`check_deploy.sh --mock-only` 已实际运行并正确输出 PASS/WARN/FAIL。未在干净新机器上执行完整安装。
 
 ---
 

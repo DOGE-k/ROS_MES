@@ -14,6 +14,8 @@
 
 本手册的顺序就是：**先做路线 A，成功后再做路线 B**。不要跳过 A 直接接真机。
 
+> **想最快跑起来？** 路线 A 在项目根目录执行 `bash deploy/install_all.sh --mock-only`；路线 B 执行 `bash deploy/install_all.sh`。脚本会自动装依赖、初始化配置，并在最后运行 `deploy/check_deploy.sh` 自检。下面的手动步骤用于理解过程或排错。
+
 > 如果电脑是 Ubuntu 22.04/24.04：ROS Noetic 不支持，路线 B 需要换成 Ubuntu 20.04。路线 A 不受影响。
 > 如果只有 Windows：路线 A 可以做（见第 7 节），路线 B 必须有一台 Ubuntu 20.04。
 
@@ -125,6 +127,8 @@ npm -v
 ## 5. 路线 A：先让页面跑起来（不需要 ROS）
 
 这一节全部在同一个用户下完成，不要用 `sudo` 跑 `pip` 或 `npm`。
+
+> 最快方式：`cd ~/robot_ws/src/ROS_MES && bash deploy/install_all.sh --mock-only`，完成后直接跳到 5.6 打开页面。下面的 5.1~5.5 是手动步骤，用于理解或排错。
 
 ### 5.1 安装后端依赖
 
@@ -239,6 +243,8 @@ http://127.0.0.1:5173
 ## 6. 路线 B：接真机
 
 前置条件：路线 A 已经成功。
+
+> 最快方式：`cd ~/robot_ws/src/ROS_MES && bash deploy/install_all.sh`，脚本会完成 6.1~6.9 的依赖安装、配置和编译，然后从 6.10 模块确认继续。下面的手动步骤用于理解或排错。
 
 ### 6.1 安装 ROS Noetic
 
