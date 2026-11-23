@@ -12,6 +12,17 @@
 ---
 
 
+## 2026-11-23（ROS 端日志定期清理，已完成）
+
+- 范围：仅新增 ROS 端日志清理工具与启动包装，不改节点业务逻辑、不碰前后端业务日志。
+- 新增 [clean_ros_logs.sh](../../robot_control_backend/scripts/clean_ros_logs.sh)：按文件 mtime 删除 N 天前的 ROS 日志（默认 30 天），覆盖 `robot_control_backend/ros_logs/`、`robot_control_backend/logs/` 与 `~/.ros/log/`；保护 `latest` 指针与 `roscore-*.pid`，正在运行的节点日志因 mtime 较新不会被误删；支持 `--days N`、`--dry-run`、`--quiet`。
+- 新增 [start_ros.sh](../../robot_control_backend/start_ros.sh)：ROS 启动包装，自动 source 环境与工作空间后先跑一次清理再 `roslaunch`，清理失败不阻断启动。
+- 部署指南 [README_DEPLOY.md](../../deploy/README_DEPLOY.md) 第 7 节推荐用 `start_ros.sh` 启动，第 12.1 节补充日志清理用法与 cron 每日定时配置示例；文件索引新增两个脚本。
+- 验证：两个脚本通过 `bash -n`；`clean_ros_logs.sh --dry-run` 已实际运行，正确识别项目内 10 月旧日志（默认 30 天阈值下不删，`--days 20` 下预览删除）与 `~/.ros/log/` 中过期日志；未实际执行删除。
+
+---
+
+
 ## 2026-11-20（部署指南升级 V1.1，已完成）
 
 - 范围：只更新部署文档与部署模板，不改业务代码。

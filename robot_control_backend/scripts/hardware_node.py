@@ -12,7 +12,7 @@ from datetime import datetime
 
 import rospy
 import can
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 
 from robot_control_backend.msg import (
     IntCmd,
@@ -178,6 +178,12 @@ class CANBusBridge:
             os.environ['ROS_TOPIC_LIMIT_EVENT'], LimitEvent, queue_size=30)
         self.pub_vacuum_loss = rospy.Publisher(
             os.environ['ROS_TOPIC_VACUUM_LOSS'], VacuumLoss, queue_size=30)
+        # 系统级 CAN 链路事件：不属于任何单根轴，独立话题，避免污染 axis_fault
+        self.pub_can_fault = rospy.Publisher(
+            os.environ.get('ROS_TOPIC_CAN_FAULT', '/hardware/can_fault'), String, queue_size=10)
+        # 链路状态：None=未知，'ok'=已连接，'failed'=连接失败/掉线
+        self._can_fault_state = None
+        self._can_fault_last_pub = 0.0
         # 会话式模块确认（领号段桥接）
         self.pub_uid_announce = rospy.Publisher(
             os.environ['ROS_TOPIC_UID_ANNOUNCE'], UidAnnounce, queue_size=30)
@@ -296,6 +302,29 @@ class CANBusBridge:
             except Exception:
                 pass
 
+    def _publish_can_fault(self, state, message, detail=''):
+        """发布系统级 CAN 链路事件（JSON 字符串）
+
+        只在状态跳变时立即发送；故障持续期间每 5s 重发一次，避免前端
+        WebSocket 恰好断线时漏收。恢复时发一次 ok，由前端自行消除提示。
+        """
+        now = time.time()
+        if state == self._can_fault_state and now - self._can_fault_last_pub < 5.0:
+            return
+        self._can_fault_state = state
+        self._can_fault_last_pub = now
+        payload = {
+            'state': state,
+            'message': message,
+            'detail': detail,
+            'channel': str(self.channel),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        try:
+            self.pub_can_fault.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+        except Exception as e:
+            rospy.logwarn("⚠️ CAN 链路事件发布失败：%s", e)
+
     def _read_can_loop(self):
         while self.running and not rospy.is_shutdown():
             if self.bus is None:
@@ -303,13 +332,18 @@ class CANBusBridge:
                     with self.bus_lock:
                         self.bus = self._connect_bus()
                     rospy.loginfo("✅ CAN 总线已连接：%s", self.channel)
+                    self._publish_can_fault('ok', 'CAN 连接已恢复')
                 except Exception as e:
                     rospy.logerr_throttle(5.0, "❌ CAN 连接失败（5s 后重试）：%s", e)
+                    self._publish_can_fault(
+                        'failed', 'CAN连接失败，请检查USB端口或更换一个端口进行重试', str(e))
                     rospy.sleep(1.0)
                     continue
             # 断线检测：USB 掉线/重新枚举后旧句柄不会抛异常，recv() 只会一直返回 None
             if not self._bus_alive():
                 rospy.logwarn("⚠️ CAN 设备已掉线（USB 句柄失效），关闭句柄等待重新枚举")
+                self._publish_can_fault(
+                    'failed', 'CAN设备已掉线，请检查USB线缆或更换一个端口进行重试')
                 self._drop_bus()
                 rospy.sleep(1.0)
                 continue

@@ -336,6 +336,15 @@ cd ROS_MES\deploy
 
 ### 终端 1：ROS
 
+推荐用启动包装脚本（自动加载环境 + 清理 30 天前日志 + launch）：
+
+```bash
+cd ~/robot_ws/src/ROS_MES/robot_control_backend
+bash start_ros.sh
+```
+
+等价的手动方式：
+
 ```bash
 source /opt/ros/noetic/setup.bash
 source ~/robot_ws/devel/setup.bash
@@ -343,6 +352,8 @@ roslaunch robot_control_backend ros_robot.launch
 ```
 
 该 launch 会启动全部节点、点云 Flask（5000）和 rosbridge（9010）。若 9010 未监听，先看该终端是否有 `rosbridge` 启动失败日志。
+
+> 日志清理机制见 [第 12 节](#12-升级与运维)。仅清理 ROS 端日志，不涉及前后端业务日志。
 
 ### 终端 2：后端
 
@@ -513,6 +524,37 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 - **日志**：roslaunch 终端输出各节点日志；后端 uvicorn 标准输出；前端浏览器控制台。
 - **备份**：至少备份 `ros_database.db`、`mes_web/ros_mes_hou/app/uploads/`（如有）和现场 `rob_arm.env`、后端 `.env`。
 
+### 12.1 ROS 日志清理（V1.1 新增）
+
+ROS 节点日志默认落盘到 `robot_control_backend/ros_logs/`（每次 launch 生成一个 UUID 子目录）和 `robot_control_backend/logs/rosbridge_websocket.log`；若未设置 `ROS_LOG_DIR`，还会写到 `~/.ros/log/`。这些日志**默认不会自动删除**，长期运行会持续堆积。
+
+项目提供独立清理脚本 `robot_control_backend/scripts/clean_ros_logs.sh`，按文件 mtime 删除 N 天前的日志（默认 30 天），仅作用于 ROS 端，不碰前后端业务日志。`latest` 指针与 `roscore-*.pid` 受保护，正在运行的节点日志因 mtime 较新不会被误删。
+
+```bash
+# 预览将删除哪些（不实际删除）
+bash robot_control_backend/scripts/clean_ros_logs.sh --dry-run
+
+# 清理 30 天前的日志（默认）
+bash robot_control_backend/scripts/clean_ros_logs.sh
+
+# 清理 7 天前的日志
+bash robot_control_backend/scripts/clean_ros_logs.sh --days 7
+```
+
+**自动清理有两种方式，二选一或同时用：**
+
+1. **启动时清理（推荐）**：用 `start_ros.sh` 启动 ROS，每次启动前自动跑一次清理（见第 7 节）。适合每天重启的场景。
+2. **cron 定时清理**：机器长期不重启时，注册每日定时任务，保证过期日志被回收。
+
+```bash
+# 编辑当前用户 crontab
+crontab -e
+# 加入：每天凌晨 3:17 清理 30 天前的 ROS 日志（静默，输出到系统日志）
+17 3 * * * /bin/bash /home/yang/robot_ws/src/ROS_MES/robot_control_backend/scripts/clean_ros_logs.sh --days 30 --quiet >> /var/log/ros_mes_clean.log 2>&1
+```
+
+> 路径按现场实际工作空间调整。`--quiet` 只输出汇总行，适合 cron。
+
 ---
 
 ## 13. 文件索引
@@ -528,6 +570,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 | `deploy/install_all.sh` | 一键部署：系统依赖/ROS/后端/前端/驱动 |
 | `deploy/check_deploy.sh` | 部署只读检查：PASS/WARN/FAIL |
 | `deploy/drivers/usbcan_ii_libusb_251028/` | ZLG 官方预编译驱动包（x64/x86/aarch64） |
+| `robot_control_backend/scripts/clean_ros_logs.sh` | ROS 日志清理：删除 N 天前日志（默认 30 天） |
+| `robot_control_backend/start_ros.sh` | ROS 启动包装：自动加载环境 + 清理日志 + launch |
 | `deploy/DEPLOY_CHECKLIST_V1.1.md` | 新环境部署逐项检查清单 |
 | `deploy/BEGINNER_DEPLOY_GUIDE_V1.1.md` | 零基础部署手册（先跑页面，再接真机） |
 | `robot_control_backend/launch/ros_robot.launch` | 真机全量启动入口 |
