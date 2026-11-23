@@ -1,4 +1,4 @@
-﻿# ROS_MES 前后端改动记录（交接日志）
+# ROS_MES 前后端改动记录（交接日志）
 
 > 参照 ROS 侧的记录方式：**边改边记录，一事一条**，状态标注、未定事项打 `???`、详情交叉引用到对应文档，便于随时交接。
 >
@@ -37,6 +37,17 @@
 - 测试隔离：检测到 `unittest`/`pytest` 在跑时默认不写文件，避免用例日志混入现场日志（需要时 `LOG_TO_FILE=1`）。`.gitignore` 增加 `mes_web/ros_mes_hou/logs/`。
 - 验证：后端 `python -m unittest discover -s tests` **289/289** 通过；实际启动 uvicorn 后确认启动横幅落盘、`GET /api/device/ -> 200` 记 INFO、轮询 401 记 INFO（联锁/登录态变化可见）、轮询 200 只在 `LOG_FILE_LEVEL=DEBUG` 时落盘（另起 8011 实例验证后已清理）；`X-Request-ID` 回显生效（自带 `test1234` 原样返回）。未跑前端构建/测试（未改前端），未连接 ROS/串口/真实设备，执行模式为 real 时也未下发任何运动指令。
 - `???` 前端 `rosApi.ts` 里仍保留旧单轴接口 `/control/finetuning` 的封装，若后续确认无页面调用，可连同该接口一并下线；下线前旧接口日志仍需保留。
+
+---
+
+## 2026-11-23（ROS 端日志定期清理，已完成）
+
+- 范围：仅新增 ROS 端日志清理工具与启动包装，不改节点业务逻辑、不碰前后端业务日志。
+- 新增 [clean_ros_logs.sh](../../robot_control_backend/scripts/clean_ros_logs.sh)：按文件 mtime 删除 N 天前的 ROS 日志（默认 30 天），覆盖 `robot_control_backend/ros_logs/`、`robot_control_backend/logs/` 与 `~/.ros/log/`；保护 `latest` 指针与 `roscore-*.pid`，正在运行的节点日志因 mtime 较新不会被误删；支持 `--days N`、`--dry-run`、`--quiet`。
+- 新增 [start_ros.sh](../../robot_control_backend/start_ros.sh)：ROS 启动包装，自动 source 环境与工作空间后先跑一次清理再 `roslaunch`，清理失败不阻断启动。
+- 部署指南 [README_DEPLOY.md](../../deploy/README_DEPLOY.md) 第 7 节推荐用 `start_ros.sh` 启动，第 12.1 节补充日志清理用法与 cron 每日定时配置示例；文件索引新增两个脚本。
+- 验证：两个脚本通过 `bash -n`；`clean_ros_logs.sh --dry-run` 已实际运行，正确识别项目内 10 月旧日志（默认 30 天阈值下不删，`--days 20` 下预览删除）与 `~/.ros/log/` 中过期日志；未实际执行删除。
+
 ---
 
 ## 2026-11-19（ROS2 独立消息模块及离线验证，已完成、未运行接入）
@@ -56,6 +67,26 @@
 - 状态：对照与隔离范围已记录；ROS2 新消息模块、运行接入、数据库设计/迁移、联调和切换均未实施。现有 ROS1、源代码、配置、数据库及用户原有未提交内容保持原样；未启动应用或连接设备。
 - `???` 等 ROS 方补齐：版本化 `.msg` 和新话题/入口、伸缩反馈/到位/回零单位、模块确认与状态查询契约、停止/解除完整格式、传感器下发双表达及压力均值规则、公共字段例外；新数据库由 ROS 方设计后再对接。
 - 验证：新增/更新章节的本地引用与锚点、表格列数、代码围栏及差异格式检查通过，变更范围为上述三份文档。不运行应用/前后端测试，不重复引用历史测试数量，不据文档规划宣称 ROS2 或真机已通过。
+
+---
+
+
+## 2026-11-20（部署指南升级 V1.1，已完成）
+
+- 范围：只更新部署文档与部署模板，不改业务代码。
+- [部署指南](../../deploy/README_DEPLOY.md) 重写为 V1.1：串口/CH340 → ZLG USBCAN-II CAN；模块 `module_id → SEG/ARM` 会话绑定；轴状态聚合节点；`/control/axis_zero` 校零；批次接口与五段值；13 路反馈；rosbridge 9010 已内置 launch；后端 Python 3.10+ 与 ROS 3.8 隔离；补充跨机网络、验证清单和故障表。
+- 模板同步：[rob_arm.env](../../deploy/config/rob_arm.env) 以现场配置为基准并改为 `DB_PATH`、`ZLG_LIBUSB_PATH` 占位；[frontend.env](../../deploy/config/frontend.env) 移除废弃的 `VITE_DEBUG_NO_ROS`；[ros_requirements.txt](../../deploy/config/ros_requirements.txt) 增加 `cryptography` 和 open3d 版本区分。
+- 修正 [deploy_windows.ps1](../../deploy/deploy_windows.ps1) 的项目根路径双重嵌套、Python 3.10+ 检查，以及“先建 venv 装依赖、再用 venv Python 建库”的顺序。
+- 新增 [零基础部署手册](../../deploy/BEGINNER_DEPLOY_GUIDE_V1.1.md)：按“先路线 A 跑页面、再路线 B 接真机”组织，补齐 Ubuntu/ROS/Node/Python 安装、项目放置、逐步成功标志、停止条件和 Windows 演示路径；并在部署指南顶部与文件索引中互相链接。
+- 新增 [ZLG 驱动安装脚本](../../deploy/install_zlg_can.sh)：自动识别 x64/x86/aarch64、校验架构、安装 libusb 运行库、复制 `libusbcan.so`、写入 0471:1200 udev 规则并校验加载；支持 `--dry-run` 预览。同步修正文档中“需要手动获取/编译 libusbcan.so”的表述：该库是 ZLG 预编译库，驱动包 `Makefile` 只编译 test 示例。
+- 将 ZLG 官方驱动包 `usbcan_ii_libusb_251028` 收入 [deploy/drivers/](../../deploy/drivers/)（约 2.9MB，含 x64/x86/aarch64），安装脚本默认优先使用仓库内驱动包，clone 后可直接运行；部署指南、零基础手册和检查清单均已补充“驱动包已内置、无需额外下载”的说明，并注明公开仓库前需确认 ZLG 再分发授权。
+- 新增 [一键部署脚本](../../deploy/install_all.sh)：自动安装系统依赖、Python 3.10+、Node.js、ROS Noetic/rosbridge、ROS Python 依赖，编译 catkin 工作空间，创建后端 venv 与前端 npm 依赖，初始化数据库，补齐 `DB_PATH`/`ZLG_LIBUSB_PATH`/CAN 配置并调用驱动安装脚本；支持 `--mock-only`、`--skip-ros-install`、`--mirror`、`--dry-run`，修改配置前自动备份。
+- 新增 [部署检查脚本](../../deploy/check_deploy.sh)：只读检查系统版本、ROS/消息、Python/Node 依赖、后端与 ROS 配置、前后端数据库一致性、CAN 库与 udev/设备、端口与服务、文件属主；输出 PASS/WARN/FAIL，支持 `--mock-only` 和 `--strict`。
+- 验证：两个脚本通过 `bash -n`；`install_all.sh` 的完整与 `--mock-only` 预览均通过；`check_deploy.sh --mock-only` 已实际运行并正确输出 PASS/WARN/FAIL。未在干净新机器上执行完整安装。
+- 修正 [一键部署脚本](../../deploy/install_all.sh) 在 Ubuntu 20.04 上安装 Python 失败的问题：deadsnakes PPA 已停止为 focal 构建包（索引为空），`apt install python3.11` 会报 `Unable to locate package` 并因 `set -e` 直接中断。改为源码编译 Python 3.11.9 + `make altinstall` 安装到 `/opt/python3.11`（不影响 ROS 依赖的系统 3.8，已安装则复用），并补充编译依赖、`apt-get update` 容错与安装后 venv 校验；部署文档中 deadsnakes 相关命令同步替换。
+- 加固 [一键部署脚本](../../deploy/install_all.sh) 的其余中断点：ROS 节点 pip 依赖（open3d 体积大）和 ZLG 驱动安装失败改为告警继续；后端 pip 与前端 npm 失败时自动改用清华/npmmirror 镜像重试；venv 缺 pip、`catkin_make` 失败给出可执行的排错提示。同时把 [backend.env](../../deploy/config/backend.env) 中相对的 `DATABASE_URL` 改为注释，交给后端按仓库根目录解析绝对路径，避免从其他目录启动时连到另一个数据库。
+- 调整逆解结果与限位的关系：`kinematics_node.solve_3dof()` 不再把摆动/伸缩结果 `clip` 到限位，直接返回理想解；`publish_cmd()` 取消绝对限位与单次伸缩增量裁剪，超限只告警，最终由三轴节点做安全校验并丢弃。微调继续作为机械误差补偿，不再被解算阶段的限位改写覆盖。
+- 验证：`kinematics_node.py` 通过 `py_compile`；用 `(30,0,30)` 等目标点实测，摆动解算值保持 45°，未被裁剪到 15°；伸缩结果使用目标点到臂座的真实距离。未在真机执行运动验证。
 
 ---
 

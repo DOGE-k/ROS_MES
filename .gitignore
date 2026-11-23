@@ -18,6 +18,8 @@ dist/
 
 # 后端运行日志（滚动文件，不入库）
 mes_web/ros_mes_hou/logs/
+# 部署脚本日志
+deploy/logs/
 
 # 编辑器配置 (VS Code 等)
 .vscode/

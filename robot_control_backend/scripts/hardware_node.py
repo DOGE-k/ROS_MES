@@ -12,7 +12,7 @@ from datetime import datetime
 
 import rospy
 import can
-from std_msgs.msg import Header
+from std_msgs.msg import Header, String
 
 from robot_control_backend.msg import (
     IntCmd,
@@ -90,6 +90,9 @@ class CANBusBridge:
     EVT_ARRIVE, EVT_STOP, EVT_AXIS_FAULT, EVT_HOME, EVT_LIMIT = 1, 2, 3, 4, 5
     EVT_CMD_ACK, EVT_VACUUM_LOSS, EVT_WDG_WARN, EVT_NODE_FAULT, EVT_BOOT = 6, 7, 8, 9, 10
 
+    # 单轴位置反馈发布上限（秒）：下位机原始上报实测可达 ~5.5kHz
+    FB_PUB_MIN_INTERVAL_S = 0.02
+
     def __init__(self):
         load_env_config()
         rospy.init_node("can_bridge")
@@ -136,8 +139,14 @@ class CANBusBridge:
         self.fb_archive_cache = {}
         # 轴号 -> (最近发布的角度, 发布时刻)：位置反馈发布节流。
         # 下位机位置反馈实测可达 ~5.5kHz，逐帧 publish 会占满 ROS 侧带宽并
-        # 拖慢接收线程，导致 CmdAck 被淹没；这里限制到每轴 50Hz。
+        # 拖慢接收线程，导致 CmdAck 被淹没；这里按轴限制到 50Hz。
         self.fb_pub_cache = {}
+
+        # ---------- 丢帧/异常计数（10s 周期日志，现场判断链路瓶颈用）----------
+        self.fb_throttle_drop = 0      # 被 50Hz 节流丢弃的原始反馈帧
+        self.parse_error_count = 0     # 解析异常/短帧导致的跳帧
+        self.send_fail_count = 0       # CAN 发送失败（含总线未连接）
+        self._rx_dropped_reported = 0  # 上次统计时 ZLG 接收溢出的累计值
 
         # ---------- 话题（发布；只读 rob_arm.env，无硬编码默认值）----------
         self.pub_rot_raw = rospy.Publisher(
@@ -169,6 +178,12 @@ class CANBusBridge:
             os.environ['ROS_TOPIC_LIMIT_EVENT'], LimitEvent, queue_size=30)
         self.pub_vacuum_loss = rospy.Publisher(
             os.environ['ROS_TOPIC_VACUUM_LOSS'], VacuumLoss, queue_size=30)
+        # 系统级 CAN 链路事件：不属于任何单根轴，独立话题，避免污染 axis_fault
+        self.pub_can_fault = rospy.Publisher(
+            os.environ.get('ROS_TOPIC_CAN_FAULT', '/hardware/can_fault'), String, queue_size=10)
+        # 链路状态：None=未知，'ok'=已连接，'failed'=连接失败/掉线
+        self._can_fault_state = None
+        self._can_fault_last_pub = 0.0
         # 会话式模块确认（领号段桥接）
         self.pub_uid_announce = rospy.Publisher(
             os.environ['ROS_TOPIC_UID_ANNOUNCE'], UidAnnounce, queue_size=30)
@@ -193,6 +208,9 @@ class CANBusBridge:
 
         # ---------- 相对增量分帧下发 ----------
         rospy.Timer(rospy.Duration(self.chunk_period), self._flush_tx_queues)
+
+        # ---------- 丢帧统计（10s 报一次，全零则静默）----------
+        rospy.Timer(rospy.Duration(10.0), self._report_drop_stats)
 
         # ---------- 数据库归档 ----------
         self._init_archive_db()
@@ -284,6 +302,29 @@ class CANBusBridge:
             except Exception:
                 pass
 
+    def _publish_can_fault(self, state, message, detail=''):
+        """发布系统级 CAN 链路事件（JSON 字符串）
+
+        只在状态跳变时立即发送；故障持续期间每 5s 重发一次，避免前端
+        WebSocket 恰好断线时漏收。恢复时发一次 ok，由前端自行消除提示。
+        """
+        now = time.time()
+        if state == self._can_fault_state and now - self._can_fault_last_pub < 5.0:
+            return
+        self._can_fault_state = state
+        self._can_fault_last_pub = now
+        payload = {
+            'state': state,
+            'message': message,
+            'detail': detail,
+            'channel': str(self.channel),
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        try:
+            self.pub_can_fault.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+        except Exception as e:
+            rospy.logwarn("⚠️ CAN 链路事件发布失败：%s", e)
+
     def _read_can_loop(self):
         while self.running and not rospy.is_shutdown():
             if self.bus is None:
@@ -291,13 +332,18 @@ class CANBusBridge:
                     with self.bus_lock:
                         self.bus = self._connect_bus()
                     rospy.loginfo("✅ CAN 总线已连接：%s", self.channel)
+                    self._publish_can_fault('ok', 'CAN 连接已恢复')
                 except Exception as e:
                     rospy.logerr_throttle(5.0, "❌ CAN 连接失败（5s 后重试）：%s", e)
+                    self._publish_can_fault(
+                        'failed', 'CAN连接失败，请检查USB端口或更换一个端口进行重试', str(e))
                     rospy.sleep(1.0)
                     continue
             # 断线检测：USB 掉线/重新枚举后旧句柄不会抛异常，recv() 只会一直返回 None
             if not self._bus_alive():
                 rospy.logwarn("⚠️ CAN 设备已掉线（USB 句柄失效），关闭句柄等待重新枚举")
+                self._publish_can_fault(
+                    'failed', 'CAN设备已掉线，请检查USB线缆或更换一个端口进行重试')
                 self._drop_bus()
                 rospy.sleep(1.0)
                 continue
@@ -306,9 +352,28 @@ class CANBusBridge:
                 if msg is not None and msg.is_extended_id:
                     self._parse_can_frame(msg)
             except Exception as e:
+                self.parse_error_count += 1
                 rospy.logerr_throttle(2.0, "❌ CAN 接收异常，准备重连：%s", e)
                 self._drop_bus()
                 rospy.sleep(0.5)
+
+    def _report_drop_stats(self, _event=None):
+        """周期上报丢帧/异常计数：所有计数为自上次报告以来的增量，全零时不打日志。"""
+        bus = self.bus
+        rx_total = int(getattr(bus, "rx_dropped", 0)) if bus is not None else 0
+        # 总线重连后计数归零，按"new bus"处理，避免出现负数增量
+        rx_delta = rx_total - self._rx_dropped_reported if rx_total >= self._rx_dropped_reported else rx_total
+        self._rx_dropped_reported = rx_total
+
+        fb_delta, self.fb_throttle_drop = self.fb_throttle_drop, 0
+        parse_delta, self.parse_error_count = self.parse_error_count, 0
+        send_delta, self.send_fail_count = self.send_fail_count, 0
+
+        if not (rx_delta or fb_delta or parse_delta or send_delta):
+            return
+        rospy.logwarn(
+            "📊 丢帧统计(10s)：ZLG接收溢出=%d帧 反馈节流丢弃=%d帧 解析异常=%d次 发送失败=%d次",
+            rx_delta, fb_delta, parse_delta, send_delta)
 
     # ======================================================================
     # 发送
@@ -316,6 +381,7 @@ class CANBusBridge:
     def _send_can_frame(self, can_id, data):
         bus = self.bus
         if bus is None:
+            self.send_fail_count += 1
             rospy.logwarn("⚠️ CAN 未连接，丢弃帧 0x%08X", can_id)
             return False
         frame = can.Message(arbitration_id=can_id, data=data, is_extended_id=True)
@@ -324,6 +390,7 @@ class CANBusBridge:
                 bus.send(frame, timeout=0.2)
             return True
         except Exception as e:
+            self.send_fail_count += 1
             rospy.logerr("❌ CAN 发送失败 0x%08X: %s", can_id, e)
             # 发送失败且设备已不在位（USB 掉线/重新枚举）→ 丢弃句柄交给读线程重连
             if not self._bus_alive():
@@ -812,10 +879,13 @@ class CANBusBridge:
     def _dispatch_axis_feedback(self, module_id, device_id, axis, angle):
         """按轴号分发到旋转/摆动/伸缩原始反馈话题（旋转/摆动 0.01°，伸缩 0.01mm）；
         module_id 为帧 SEG 位域。位置反馈只做上报，不参与下发节拍"""
-        # 发布节流：同角度且距上次发布 <20ms 时跳过（下位机原始上报可达 ~5.5kHz）
+        # 发布节流：每轴最多 50Hz（20ms 一帧），期间多余的原始帧直接丢弃。
+        # 不能只在"角度与上次相同"时跳帧：运动中角度每帧都在变，那样等于不限速，
+        # ~5.5kHz 会瞬间塞满 queue_size=50 的发布队列，把 CmdAck/到位事件挤到几万帧之后。
         now = rospy.Time.now().to_sec()
         prev = self.fb_pub_cache.get(device_id)
-        if prev is not None and prev[0] == angle and (now - prev[1]) < 0.02:
+        if prev is not None and (now - prev[1]) < self.FB_PUB_MIN_INTERVAL_S:
+            self.fb_throttle_drop += 1
             return
         self.fb_pub_cache[device_id] = (angle, now)
         fb = Feedback(header=self._header(), module_id=module_id,

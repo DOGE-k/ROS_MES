@@ -5,6 +5,8 @@
 > **后端已处理项**（同日提交，勿重复修改）：7.1 模块确认回执超时已调至 35s（`ROS_MODULE_CONFIRM_ACK_WAIT_S`）；模块确认业务接口使用 `module_id/device_id/unit_id(s)`，不向前端暴露 ROS 的 `seg/arm/position`；后端适配层通过显式 `ROS_MODULE_SEG_MAP` 将业务 `module_id` 映射为 ROS `seg`，再按 `Unit_ID÷32` 映射为 `arm=1~5`，发送 `position=[100, seg, arm]`；7.3 的反馈标签表三轴化已完成，源码种子定义包含 5 臂（Unit_ID 32/64/96/128/160），实际部署数据库以现有记录为准；7.4 的 `/hardware/cmd_ack` 已加入反馈流，**枚举已从源码提取**：仅超位拒绝一种（`ack_msg=1, result=3, detail=1上限/2下限`），无成功回执；7.8 已解决（旧 rospy 路径迁入 `app/ros/ros1/native.py`）。**前端已处理项**：`deviceEncoding.ts` 已改三轴编码。**新增**：急停解除接口 `POST /api/control/emergency_stop/release`（发布 `/control/softstop_release`，softstop_node 源码确认转发 `[0x04]`）。
 >
 > **图纸话题已定论**（2026-10-25 ROS 端确认"按接口的来"）：话题以本文档 `/frontend_pointcloud_topic`（无前缀）为准，ROS 端自行将其 `rob_arm.env` 的 `ROS_TOPIC_FRONTEND_POINTCLOUD` 改为无前缀；后端零改动。联调时验证一次"图纸下发 → 三视图"链路即可。
+>
+> **2026-11-20 源码对齐**：补充人工校零 `/control/axis_zero`、轴状态聚合节点、`/hardware/module_status` 在线轴过滤；反馈话题由 8 路增至 13 路；伸缩软限位按当前 `rob_arm.env` 为 **-20 ~ +20mm**（此前 0~30mm 与 -10~20mm 均已作废）。现网运行入口仍为 `robot_control_backend/`（ROS1 Noetic）；`ros2_robot_control_backend/` 是 rclpy 迁移副本，未作为现场入口。
 
 ---
 
@@ -26,9 +28,11 @@
 | 接口 | 方法 | payload | 触发的 ROS 话题 |
 |---|---|---|---|
 | `/api/control/finetuning` | POST | `{module_id, device_id, unit_id, parameter_name, position}` | 按 `parameter_name` 路由到 `/control/adjust_{rotation,swing,telescopic}_cmd` |
+| `/api/control/finetuning/batches` | POST | `{request_id, module_id, unit_id, adjustments, connection_revision}` | 登记批次后逐轴发布 `/control/adjust_*_cmd`；状态经批次查询接口返回 |
+| `/api/finetuning/config` | POST | 配置快照 + `calibrated`、`notes` | `calibrated=true` 时先发布 `/control/axis_zero`（IntCmd）；发布失败返回 503 且不落库 |
 | `/api/coordination/send` | POST | 图纸文件路径 | `/frontend_pointcloud_topic`（std_msgs/String，JSON `{"file_path":...}`）→ data_process_node |
 | `/api/module/` | POST | `{x, y, module_id?, device_id?, unit_ids}` | `/control/module_cmd`（IntCmd）→ module_confirme_node；业务层继续使用模块/设备/机械臂单元字段，后端逐个确认所选 `unit_ids` |
-| `/api/control/feedback/ws` | WebSocket | — | 后端订阅 8 路 ROS 反馈话题转发（含 V2.1 新增 `/hardware/cmd_ack`） |
+| `/api/control/feedback/ws` | WebSocket | — | 后端订阅 13 路 ROS 反馈话题转发（含 `/hardware/axis_status`、到位/停止/故障/限位） |
 | `/api/control/emergency_stop` | POST | — | `/control/softstop` → softstop_node 转发 `/arm/cmd_vel` [1] |
 | `/api/control/emergency_stop/release` | POST | — | `/control/softstop_release` → softstop_node 转发 `/arm/cmd_vel` [4]（V2.1 新增） |
 
@@ -47,6 +51,7 @@
 | `/control/adjust_swing_cmd` | SwingCmd | 同上 |
 | `/control/adjust_telescopic_cmd` | TelescopicCmd | 同上（增量 mm） |
 | `/control/module_cmd` | IntCmd | `{module_id, device_id:0, position:[100, seg, arm]}`，见 §6 握手协议；`seg/arm` 仅在 ROS 适配层生成 |
+| `/control/axis_zero` | IntCmd | `{module_id: 业务模块号, device_id: 0, position: [arm]}`；仅复位目标臂 ROS 软件基准/状态缓存，不发 CAN 运动 |
 | `/frontend_pointcloud_topic` | std_msgs/String | `{"file_path": "<图纸路径>"}` |
 
 发布流程：`advertise` → 等 0.1s → `publish`。仅**模块确认**会临时订阅回执话题等待结果。
@@ -63,12 +68,17 @@
 |---|---|---|---|
 | `/hardware/rotation_feedback` | RotationCmd | `rotation_axis_encoder` | **度**（feedback_node 已 ÷100） |
 | `/hardware/swing_feedback` | SwingCmd | `swing_axis_encoder` | 度 |
-| `/hardware/telescope_feedback` | TelescopicCmd | `telescope_axis_encoder` | **度（电机转角），不是 mm** |
+| `/hardware/telescope_feedback` | TelescopicCmd | `telescope_axis_encoder` | **mm**（feedback_node 已 ÷100） |
 | `/hardware/sensor_feedback` | SensorCmd | `pressure_sensor` | 压力瞬时值（臂级 device_id 21~25） |
 | `/hardware/pressure_avg` | SensorCmd | `pressure_average` | 5s 窗口均值（臂级 21~25） |
 | `/hardware/imu_angles` | 陀螺姿态 | `imu_pose`，附带 `swing_angle/rotation_angle/x/y/z` | 末端位姿（臂级 21~25） |
 | `/hardware/vacuum_loss` | VacuumLoss | `vacuum_loss_event` | 失压告警（臂级 21~25） |
 | `/hardware/cmd_ack` | CmdAck | `cmd_ack`（透传 `ack_msg/result/detail`） | 指令回执（V2.1）。**源码提取枚举**：仅超位拒绝一种——`ack_msg=1, result=3, detail=1上限/2下限`；无成功回执 |
+| `/hardware/axis_status` | AxisStatus | `axis_status` | 三轴状态字；`base_valid`、`axis_state`、`status_bits`。固件周期帧缺失时由 `axis_status_aggregator.py` 按 5Hz 推导发布 |
+| `/hardware/arrive_notification` | ArriveNotification | `arrive_notification` | 到位事件：`angle/pos_error/status_bits/flags`，`angle` 按 0.01°/0.01mm 换算 |
+| `/hardware/stop_notification` | StopNotification | `stop_notification` | 停止事件：`stop_reason`（1=到位 2=急停 3=指令停止 4=限位 5=故障 6=看门狗）、`output_level` |
+| `/hardware/axis_fault` | AxisFault | `axis_fault` | 轴故障：`fault_bits/local_action/detail/duration_ms` |
+| `/hardware/limit_event` | LimitEvent | `limit_event` | 限位事件，用于批次阻断与前端告警 |
 
 标准化后转发字段：`{time_id, topic, header, module_id, device_id, position, data_type, feedback_type, raw, ...}`。前端按 `device_id` 映射到臂/轴显示（FineTuningPage.vue）。
 
@@ -78,7 +88,7 @@
 
 | 范围 | 含义 |
 |---|---|
-| 0 | 系统级（急停/解除/模块停，`/arm/cmd_vel` position=[1]/[4]/[8]） |
+| 0 | 系统级（急停/解除/模块停，`/arm/cmd_vel` position=[1]/[4]/[8]）；人工校零时 `/control/axis_zero` 也使用 `device_id=0`，`position=[arm]` |
 | 1~15 | 轴级：`(臂号-1)*3 + 关节`；关节 1=旋转 / 2=摆动 / 3=伸缩 |
 | 21~25 | 臂级传感器（压力/IMU 共用，按话题区分），臂号 = device_id - 20 |
 
@@ -134,6 +144,10 @@ ROS 侧超时参数（rob_arm.env）：等宣告 `MODULE_CONFIRM_WAIT_ANNOUNCE_S
 
 历史说明：此前“在模块管理页多选机械臂，并以路由 `unit_ids` 限制微调页选项”的页面流程已被本节取代；HTTP 字段命名、后端批量能力和 ROS `[100, seg, arm]` 协议保持不变。
 
+### 6.4 在线轴识别（2026-11-20 源码）
+
+`control_node.py` 订阅 `/hardware/module_status`，把状态应答的 `exist_mask` bit0~2 解释为从 `axis_base` 起的三轴是否存在。图纸逆解分阶段等待到位时，只等待“本阶段增量非空且在线”的轴；尚无在线信息时回退为等待全部增量轴，避免旧固件不返回 `module_status` 时整条链路停住。某阶段没有在线轴则直接进入下一阶段。该校验只收缩等待集合，不改变已下发的增量。
+
 ---
 
 ## 7. 注意事项（按严重度）
@@ -157,8 +171,10 @@ ROS 侧超时参数（rob_arm.env）：等宣告 `MODULE_CONFIRM_WAIT_ANNOUNCE_S
 
 ### 🟡 7.5 伸缩轴单位（**已定论：话题边界两向均为 mm，MM_PER_REV 废弃**）
 
-**2026-10-25 晚 ROS 端定稿并已推送（3ed42f3《更新伸缩杆执行层逻辑》）**：电机3 为直线位移轴，下位机 CAN 字段单位 0.01mm——`telescopic_node` 接收 **mm 增量**（0~30mm 软限位、首帧反馈前拒绝增量，内部 ×100 透传 CAN）、`feedback_node` 回传 **mm 实测长度**（CAN 0.01mm ÷100），`TelescopicCmd.msg` 注释同步更新。
+**2026-10-25 晚 ROS 端定稿并已推送（3ed42f3《更新伸缩杆执行层逻辑》）**：电机3 为直线位移轴，下位机 CAN 字段单位 0.01mm——`telescopic_node` 接收 **mm 增量**（软限位读取 `TELESCOPIC_MIN_MM / TELESCOPIC_MAX_MM`，内部 ×100 透传 CAN）、`feedback_node` 回传 **mm 实测长度**（CAN 0.01mm ÷100），`TelescopicCmd.msg` 注释同步更新。
 即：**ROS 话题边界两向均为 mm，与前后端语义天然一致——后端零换算、前端零改动**（MM_PER_REV 参数废弃；此前曾按"话题 0.01mm"做的 ×100/position_mm 预实现已撤销）。伸缩显示直接用反馈 position（mm），伸缩下发直接传 mm 增量。
+
+> 2026-11-20 按 `rob_arm.env` 复核：伸缩软限位为 **-20 ~ +20mm**（2026-11-14 由 -10~20 调整）；超限日志为 `⚠️ Arm%d 伸缩超位...指令已丢弃`。旧的 0~30mm 描述作废。
 
 | 环节 | 单位 |
 |---|---|
@@ -169,7 +185,7 @@ ROS 侧超时参数（rob_arm.env）：等宣告 `MODULE_CONFIRM_WAIT_ANNOUNCE_S
 
 **前端无需换算**，输入框按 `(mm)`、反馈按 mm 直接展示。前提：固件需按 0.01mm 解析伸缩轴 MSG=1（下位机侧待确认，属外部依赖，不改 ROS/前端）。
 
-### � 7.6 反馈 module_id 是 SEG，不是业务模块号（**下行已动态寻址，上行仍为 SEG**）
+### 🟠 7.6 反馈 module_id 是 SEG，不是业务模块号（**下行已动态寻址，上行仍为 SEG**）
 
 hardware_node 上行反馈 `module_id = CAN SEG 位域`（0~14），与前端下发的业务 module_id 不同空间。当前前端按 device_id 匹配所以未暴露；任何按 module_id 关联的逻辑都会错。
 
@@ -206,3 +222,5 @@ rospy 直发 `/web_cmd` 的旧路径已迁移为 `app/ros/ros1/native.py`（ROS1
 | 构建与启动 | catkin_make + roslaunch（Noetic） | colcon + ros2 launch（待 ROS 端移植） |
 
 **对 ROS 端 ROS2 移植的要求**：话题名、消息字段、device_id 编码、模块确认握手语义保持与本文档一致（即与 ROS1 现网一致）；若必须调整，先改本文档并同步前后端，再动代码。移植出可跑分支后，后端切 `ROS_VERSION=2` 联调一次即可验证 `profile.py` 中的 ROS2 预设。
+
+> **2026-11-20 现状**：仓库中的 `ros2_robot_control_backend/` 是 rclpy 迁移副本（`hardware_node.py` 已用 rclpy 重写，但部分脚本与 launch 仍保留 ROS1 写法/旧模块引用），**未作为现网运行入口**。现场仍使用 `robot_control_backend/`（catkin + roslaunch，ROS1 Noetic）；后端 ROS2 预设已存在于 `profile.py`，切换前需先完成该目录的联调。

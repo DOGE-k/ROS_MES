@@ -247,9 +247,20 @@ def send_fine_tuning(
                 "mm" if record.parameter_name == "telescopic" else "°",
                 getattr(client, "execution_mode", "real"), db_record.id)
 
+    if dispatch_result.get("simulated"):
+        message = "微调发送模拟成功，未连接真实设备"
+    elif dispatch_result.get("confirmed") is True:
+        message = "微调指令已被控制节点确认接收"
+    elif dispatch_result.get("sent") is False:
+        message = f"微调指令未能发送：{dispatch_result.get('error') or '链路未连接'}"
+    elif dispatch_result.get("confirmation_status") == "unconfirmed":
+        message = "微调指令已发送但未收到控制节点回执，可能未送达，请核实后手动重试"
+    else:
+        message = "微调指令已写入 rosbridge 连接，尚无设备确认"
+
     return {
         "code": 200,
-        "message": "微调发送模拟成功，未连接真实设备" if dispatch_result.get("simulated") else "微调指令已写入 rosbridge 连接，尚无设备确认",
+        "message": message,
         "data": [
             {
                 "device_id": business_device_id,

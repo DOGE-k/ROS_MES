@@ -92,6 +92,7 @@ class ZLGBus:
         self.channel = int(channel)
         self.bitrate = int(bitrate)
         self._lib = ctypes.CDLL(LIB_PATH)
+        self._bind_private_symbols()
         self._rx_queue = deque()
         # ZLG libusbcan 的 VCI_* 调用非线程安全：ROS 节点里发送线程与接收线程
         # 并发调用会让 VCI_Transmit 返回 1 但帧实际未上总线（发送"假成功"）。
@@ -101,9 +102,65 @@ class ZLGBus:
         # 无界队列会让命令应答(CmdAck)排在数万帧之后，表现为"下发无应答"。
         # 超过上限时丢弃最旧帧，保证队列延迟有界（512 帧 ≈ 90ms）。
         self._rx_limit = 512
+        # 接收溢出丢帧计数：超过上限丢最旧帧时累加，供上层周期日志/排查使用
+        self.rx_dropped = 0
         self.dev_node = ""      # 打开时该适配器对应的 /dev/bus/usb/BBB/DDD
         self._closed = False
         self._open()
+
+    # 厂商库导出的内部符号：用于绕过 VCI_CloseDevice 内置的 VCI_ResetCAN
+    _SYM_FIND = "_ZN6CanDev10FindDeviceEj"
+    _SYM_CLOSE = "_ZN6CanDev5CloseEv"
+    _SYM_DEL = "_ZN6CanDev9DelDeviceEj"
+    _SYM_DTOR = "_ZN6CanDevD1Ev"
+    _SYM_FREE = "_ZdlPvm"
+    _CANDEV_SIZE = 0x388
+
+    def _bind_private_symbols(self):
+        """绑定厂商库内部 CanDev 接口，用于"只释放不复位"的关闭路径"""
+        try:
+            self._sym_find = getattr(self._lib, self._SYM_FIND)
+            self._sym_find.argtypes = [ctypes.c_uint]
+            self._sym_find.restype = ctypes.c_void_p
+            self._sym_close = getattr(self._lib, self._SYM_CLOSE)
+            self._sym_close.argtypes = [ctypes.c_void_p]
+            self._sym_close.restype = None
+            self._sym_del = getattr(self._lib, self._SYM_DEL)
+            self._sym_del.argtypes = [ctypes.c_uint]
+            self._sym_del.restype = None
+            self._sym_dtor = getattr(self._lib, self._SYM_DTOR)
+            self._sym_dtor.argtypes = [ctypes.c_void_p]
+            self._sym_dtor.restype = None
+            self._sym_free = getattr(self._lib, self._SYM_FREE)
+            self._sym_free.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            self._sym_free.restype = None
+            self._can_release_only = True
+        except AttributeError:
+            # 老版本库没有这些内部符号时退回厂商公开接口
+            self._can_release_only = False
+
+    def _release_device(self):
+        """释放接口并关闭 USB 句柄，全程不发送 VCI_ResetCAN
+
+        VCI_CloseDevice 内部会对通道 0/1 各发一次 VCI_ResetCAN：
+        在 VMware USB 透传下复位经常超时（内核报 err=-110），复位失败后
+        适配器停在半死状态，导致下一次 VCI_OpenDevice 直接失败。
+        这里复刻厂商库 CanDev::Close 的动作（release_interface + libusb_close，
+        并停止内部 USB 线程），再同步清理内部设备表，保证同一进程内可重新打开。
+        """
+        if not self._can_release_only:
+            self._lib.VCI_CloseDevice(DEV_TYPE, 0)
+            return
+        dev = self._sym_find(0)
+        if not dev:
+            return
+        try:
+            self._sym_close(dev)
+            self._sym_del(0)
+            self._sym_dtor(dev)
+            self._sym_free(dev, self._CANDEV_SIZE)
+        except Exception:
+            pass
 
     def _open(self):
         # 记录 open 时刻的设备节点，供断线检测比较（USB 重新枚举后节点路径会变）
@@ -127,7 +184,8 @@ class ZLGBus:
                 raise RuntimeError("ZLG VCI_StartCAN 失败")
         except Exception:
             try:
-                self._lib.VCI_CloseDevice(DEV_TYPE, 0)
+                # 失败路径同样只释放不复位，避免复位把端口继续带坏
+                self._release_device()
             except Exception:
                 pass
             raise
@@ -189,6 +247,7 @@ class ZLGBus:
                             ))
                     while len(self._rx_queue) > self._rx_limit:
                         self._rx_queue.popleft()
+                        self.rx_dropped += 1
             if got and self._rx_queue:
                 return self._rx_queue.popleft()
             time.sleep(0.01)
@@ -198,10 +257,8 @@ class ZLGBus:
         if self._closed:
             return
         self._closed = True
-        # 只关闭设备，不发 VCI_ResetCAN：对 USBCAN-II 复位请求会把固件留在半死状态，
-        # 导致下一次 OpenDevice 失败并引发 USB 超时（内核报 cannot reset err=-110）
+        # 不调用 VCI_CloseDevice：它内部会发两次 VCI_ResetCAN，复位会把
+        # USBCAN-II 固件留在半死状态并引发 USB 超时（内核报 cannot reset err=-110）。
+        # 这里只释放接口并关闭句柄（等价于厂商库 CanDev::Close），不触发任何复位。
         with self._io_lock:
-            try:
-                self._lib.VCI_CloseDevice(DEV_TYPE, 0)
-            except Exception:
-                pass
+            self._release_device()

@@ -225,20 +225,62 @@ class FakeSocket:
             raise StopAsyncIteration
 
 
+class AckingSocket:
+    """模拟 rosbridge 服务端：publish 微调后按需回 adjust_ack。
+
+    微调自 2026-11-20 起走常驻链路（_AdjustCommandLink）：必须先 advertise，
+    发 publish 后等 adjust_ack 回执才算 confirmed。旧 FakeSocket 不回应回执，
+    在常驻链路下永远等不到 ack，因此这条用例改用会回执的替身。
+    """
+
+    ACK_TOPIC = "/control/adjust_ack"
+
+    def __init__(self, auto_ack=True):
+        self.sent = []
+        self.published = []
+        self.auto_ack = auto_ack
+        self._queue = None
+
+    async def __aenter__(self):
+        self._queue = asyncio.Queue()
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def send(self, raw):
+        self.sent.append(json.loads(raw))
+        event = json.loads(raw)
+        if event.get("op") == "publish" and event.get("topic") != self.ACK_TOPIC:
+            self.published.append(event)
+            if self.auto_ack:
+                ack = {"op": "publish", "topic": self.ACK_TOPIC,
+                       "msg": {"request_id": event["msg"]["request_id"], "result": 0,
+                               "module_id": event["msg"]["module_id"],
+                               "device_id": event["msg"]["device_id"], "message": "ok"}}
+                asyncio.get_running_loop().call_later(
+                    0.02, lambda: self._queue.put_nowait(json.dumps(ack)))
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return await self._queue.get()
+
+
 class RosbridgeDeliverySafetyTest(unittest.TestCase):
     def test_plain_publish_does_not_claim_device_confirmation_in_either_ros_version(self):
         for profile in (ROS1_PROFILE, ROS2_PROFILE):
             with self.subTest(profile=profile.name):
-                socket = FakeSocket()
+                socket = AckingSocket(auto_ack=False)  # 设备不回执
                 with patch("app.ros.rosbridge.websockets") as websocket:
                     websocket.connect = Mock(return_value=socket)
                     client = RosbridgeClient(profile, url="ws://test-only")
                     result = client.dispatch("fine_tuning", build_fine_tuning_publish_payload("rotation", 2, 17, 1, profile))
-                self.assertEqual([item["op"] for item in socket.sent], ["advertise", "publish"])
-                self.assertEqual(socket.recv_count, 0)
-                self.assertTrue(result["sent"])
-                self.assertIsNone(result["confirmed"])
-                self.assertEqual(result["confirmation_status"], "not_requested")
+                    # 无回执 = 未确认，且绝不因为"写进 socket"就宣称设备已收到
+                    self.assertFalse(result["confirmed"])
+                    self.assertEqual(result["confirmation_status"], "unconfirmed")
+                    self.assertEqual(len(socket.published), 1, "无回执时不应自动重发运动指令")
 
     def test_drawing_publish_also_remains_unconfirmed(self):
         socket = FakeSocket()
@@ -258,7 +300,10 @@ class RosbridgeDeliverySafetyTest(unittest.TestCase):
         ])
 
         async def collect():
-            return [item async for item in RosbridgeClient(ROS1_PROFILE, url="ws://test-only").stream_feedback()]
+            # 生产语义是无限重连；测试替身永远返回同一个已耗尽的 socket，
+            # 因此用 max_reconnects 把流收敛成有限长度，否则用例会永久挂起。
+            client = RosbridgeClient(ROS1_PROFILE, url="ws://test-only")
+            return [item async for item in client.stream_feedback(max_reconnects=1)]
 
         with patch("app.ros.rosbridge.websockets") as websocket:
             websocket.connect = Mock(return_value=socket)

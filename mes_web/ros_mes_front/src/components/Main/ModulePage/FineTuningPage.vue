@@ -1262,6 +1262,22 @@ const applyFeedback = (feedback: any) => {
   }
 };
 
+// 反馈 WS 意外断开自动重连。
+// 关键：onclose 里先经 feedbackSocket===socket 守卫——只有"当前活跃连接意外断开"才重连；
+// 手动断开（连接设置变更/组件卸载/重新连接）会先把 feedbackSocket 置 null 或指向新连接，
+// 此时旧连接的 onclose 直接 return，不会误触发重连。手动断开点再配 clearFeedbackReconnect 取消挂起的重连。
+let feedbackReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let feedbackReconnectDelay = 1000;
+const clearFeedbackReconnect = () => {
+  if (feedbackReconnectTimer !== null) { clearTimeout(feedbackReconnectTimer); feedbackReconnectTimer = null; }
+};
+const scheduleFeedbackReconnect = () => {
+  if (noRosDebug) return;
+  clearFeedbackReconnect();
+  feedbackReconnectTimer = setTimeout(() => { feedbackReconnectTimer = null; connectFeedbackSocket(); }, feedbackReconnectDelay);
+  feedbackReconnectDelay = Math.min(feedbackReconnectDelay * 2, 5000);  // 1s→2s→4s→5s 封顶
+};
+
 const connectFeedbackSocket = () => {
   // 无 ROS 调试模式：不连接真实反馈 WebSocket，方便只调页面跳转和微调交互。
   if (noRosDebug) {
@@ -1280,7 +1296,7 @@ const connectFeedbackSocket = () => {
 
   const socket = new WebSocket(getFeedbackWsUrl());
   feedbackSocket = socket;
-  socket.onopen = () => { if (feedbackSocket === socket) feedbackConnected.value = true; };
+  socket.onopen = () => { if (feedbackSocket === socket) { feedbackConnected.value = true; feedbackReconnectDelay = 1000; } };
   socket.onmessage = (event) => {
     if (feedbackSocket !== socket) return;
     try {
@@ -1290,11 +1306,12 @@ const connectFeedbackSocket = () => {
     }
   };
   socket.onclose = () => {
-    if (feedbackSocket !== socket) return;
+    if (feedbackSocket !== socket) return;  // 被取代或手动关闭：不自动重连
     interruptPendingDrawingBaselines();
     feedbackConnected.value = false;
     feedbackClock.value = performance.now();
     feedbackSocket = null;
+    scheduleFeedbackReconnect();  // 当前活跃连接意外断开：自动重连，不再永久断流
   };
   socket.onerror = () => {
     if (feedbackSocket !== socket) return;
@@ -2245,6 +2262,7 @@ const connectionChanged = (event?: Event) => {
   feedbackSimulated.value = false;
   drawingSimulated.value = false;
   resetControlState(busy.value);
+  clearFeedbackReconnect();
   if (feedbackSocket) { feedbackSocket.close(); feedbackSocket = null; }
   if (!busy.value) batchState.value = null;
   ElMessage.warning('连接设置已变更，请重新配置并确认机械臂');
@@ -2351,6 +2369,7 @@ onBeforeUnmount(() => {
   if (batchTimer !== undefined) clearInterval(batchTimer);
   if (feedbackTimer !== undefined) clearInterval(feedbackTimer);
   if (stopHoldTimer !== undefined) clearInterval(stopHoldTimer);
+  clearFeedbackReconnect();
   if (feedbackSocket) {
     feedbackSocket.close();
     feedbackSocket = null;

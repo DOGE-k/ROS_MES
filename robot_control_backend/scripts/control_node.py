@@ -11,7 +11,8 @@ import time
 import threading
 from collections import defaultdict
 from std_msgs.msg import Header
-from robot_control_backend.msg import RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification
+from robot_control_backend.msg import (
+    RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification, ModuleStatus, AdjustAck)
 
 
 def load_env_config():
@@ -41,6 +42,9 @@ class ArmSequenceController:
         self.ARRIVE_TIMEOUT_S = 120.0              # 单阶段等待到位的兜底超时（2min），超时仅告警放行
         self.arrive_cond = threading.Condition()
         self.arrived = set()                       # {(module_id, axis)} 已到位轴
+        # 在线轴集合：由模块状态应答的电机存在掩码推导；为空时回退为等待该阶段全部轴
+        self.online_lock = threading.Lock()
+        self.online_axes = set()
 
         # ---------- 输出话题（发布给功能节点，强制从 .env 读取）----------
         self.pub_rot_seq = rospy.Publisher(
@@ -58,10 +62,19 @@ class ArmSequenceController:
             os.environ['ROS_TOPIC_SENSOR_CMD'],                    # 如 /control/sensor_cmd
             IntCmd, queue_size=10)
 
+        # 微调应用层回执话题（发布给后端，确认微调指令已送达控制节点）
+        self.pub_adjust_ack = rospy.Publisher(
+            os.environ.get('ROS_TOPIC_ADJUST_ACK', '/control/adjust_ack'),
+            AdjustAck, queue_size=50)
+
         # ---------- 第一套功能：逆解指令缓冲 ----------
         self.buffer_lock = threading.Lock()
         # 缓冲结构：module_id -> arm_idx -> joint_name -> 对应的消息
         self.cmd_buffer = defaultdict(lambda: defaultdict(dict))
+        # 每个模块缓冲的最后来帧时刻：用于超时清理，避免某帧丢失导致永久滞留
+        self.cmd_buffer_ts = {}
+        # 缓冲集齐超时（秒）：正常 15 帧同轮发出（CYCLE_INTERVAL=8s），留足排队/错开余量
+        self.CMD_BUFFER_TIMEOUT_S = 30.0
         self.ready_queue = []                                      # 已集齐的模块指令队列
         self.seq_thread = threading.Thread(target=self._sequence_worker)
         self.seq_thread.daemon = True
@@ -98,6 +111,11 @@ class ArmSequenceController:
             os.environ['ROS_TOPIC_ARRIVE_NOTIFICATION'],
             ArriveNotification, self.cb_arrive)
 
+        # ---------- 模块状态应答（在线轴识别，避免等待离线臂导致阶段空等）----------
+        rospy.Subscriber(
+            os.environ['ROS_TOPIC_MODULE_STATUS'],
+            ModuleStatus, self.cb_module_status)
+
         rospy.loginfo("🔧 控制节点启动（所有话题强制从 .env 读取）")
 
     # ---------- device_id 解析（V2：device_id 即 AXIS 寻址单元）----------
@@ -117,18 +135,47 @@ class ArmSequenceController:
 
     # ---------- V2 到位事件门控 ----------
     def cb_arrive(self, msg):
-        """记录到位事件（status_bits bit2=到位），唤醒正在等待的时序线程"""
-        if not (msg.status_bits & 0x04):
-            return
+        """记录到位事件，唤醒正在等待的时序线程。
+
+        到位判据：hardware_node 只在收到固件"到位通知帧"（GRP_EVENT / DIR_EVENT / mnum=0）
+        时才发布本话题，因此**收到 ArriveNotification 即代表该轴到位**——帧的类型本身就是到位语义。
+
+        不再用 status_bits bit2 二次过滤：那只是该帧顺带透传的轴状态字低 8 位，
+        固件不保证置位（与 flags bit0 恒 0 同类问题），拿它当到位条件会把到位事件全部吞掉，
+        导致每个时序阶段都白等 ARRIVE_TIMEOUT_S。这里收到即记录，仅打印帧内容供现场核对。
+        """
         with self.arrive_cond:
             self.arrived.add((int(msg.module_id), int(msg.device_id)))
             self.arrive_cond.notify_all()
+        rospy.loginfo(
+            f"[时序] ✅ 轴{int(msg.device_id)} 到位（模块{int(msg.module_id)}）："
+            f"angle={int(msg.angle)}(0.01) pos_err={int(msg.pos_error)}(0.01) "
+            f"status_bits=0x{int(msg.status_bits):02X} flags=0x{int(msg.flags):02X}")
+
+    def cb_module_status(self, msg):
+        """登记在线轴：exist_mask bit0~2 对应 axis_base 起的三轴（仅模块确认状态应答）"""
+        arm, axis_base = int(msg.arm), int(msg.axis_base)
+        if arm < 1 or axis_base < 1 or int(msg.seg) == 0xFF:
+            return
+        axes = {axis_base + bit for bit in range(3)
+                if int(msg.exist_mask) & (1 << bit)}
+        if not axes:
+            return
+        with self.online_lock:
+            self.online_axes |= axes
+        rospy.loginfo("[时序] 模块状态应答：SEG=%s 臂%d 在线轴 %s",
+                      msg.seg, arm, sorted(axes))
 
     def _axes_with_motion(self, arms, joint_name):
-        """返回该阶段需要等待到位的 V2 轴号集合（增量非空的臂）"""
+        """返回该阶段需要等待到位的 V2 轴号集合（增量非空且在线；无在线信息时保留全部）"""
         offset = {"rotate": 1, "swing": 2, "extend": 3}[joint_name]
-        return {arm_idx * 3 + offset for arm_idx in sorted(arms.keys())
+        axes = {arm_idx * 3 + offset for arm_idx in sorted(arms.keys())
                 if abs(arms[arm_idx][joint_name].position[0]) >= self.EMPTY_CMD_EPS}
+        with self.online_lock:
+            online = set(self.online_axes)
+        if not online:
+            return axes
+        return axes & online
 
     def _clear_arrivals(self, module_id, axes):
         """下发前清除旧到位标记，避免上一拍的到位事件被误判为本次到位"""
@@ -215,6 +262,7 @@ class ArmSequenceController:
         mid = msg.module_id
         with self.buffer_lock:
             self.cmd_buffer[mid][arm_idx][joint_name] = msg
+            self.cmd_buffer_ts[mid] = time.monotonic()
             if len(self.cmd_buffer[mid]) >= 5 and all(
                 len(self.cmd_buffer[mid].get(i, {})) == 3 for i in range(5)
             ):
@@ -224,11 +272,35 @@ class ArmSequenceController:
                 }
                 self.ready_queue.append(pkg)
                 del self.cmd_buffer[mid]
+                self.cmd_buffer_ts.pop(mid, None)
                 rospy.loginfo(f"✅ 模块{mid} 指令集齐，加入队列")
+
+    def _sweep_stale_buffers(self):
+        """清理超时未集齐的模块缓冲：某帧丢失时把"永久滞留"变成有界等待 + 可见告警"""
+        now = time.monotonic()
+        with self.buffer_lock:
+            stale = [mid for mid, ts in self.cmd_buffer_ts.items()
+                     if now - ts > self.CMD_BUFFER_TIMEOUT_S]
+            for mid in stale:
+                buf = self.cmd_buffer.get(mid, {})
+                received = sum(len(joints) for joints in buf.values())
+                missing = []
+                for arm_idx in range(5):
+                    joints = buf.get(arm_idx, {})
+                    for jn in ("rotate", "swing", "extend"):
+                        if jn not in joints:
+                            missing.append(f"Arm{arm_idx+1}.{jn}")
+                rospy.logwarn(
+                    f"[逆解] ⚠️ 模块{mid} 指令缓冲超过 {self.CMD_BUFFER_TIMEOUT_S:.0f}s 未集齐"
+                    f"（已收 {received}/15 帧），判定有帧丢失，丢弃残缺缓冲；"
+                    f"缺失：{', '.join(missing) if missing else '无'}")
+                self.cmd_buffer.pop(mid, None)
+                self.cmd_buffer_ts.pop(mid, None)
  
     def _sequence_worker(self):
         """顺序执行线程，不断从队列取出模块指令，按阶段发送"""
         while not rospy.is_shutdown():
+            self._sweep_stale_buffers()     # 每轮顺带清理超时未集齐的缓冲
             if self.ready_queue:
                 with self.buffer_lock:
                     if self.ready_queue:
@@ -265,6 +337,9 @@ class ArmSequenceController:
                 pub.publish(msg)
                 rospy.loginfo(f"[逆运算] 🚀 模块{mid} Arm{arm_idx+1} {label}增量 "
                               f"{format(msg.position[0], fmt)}{unit}")
+            if not expect_axes:
+                rospy.loginfo(f"[逆运算] ⏭️ 模块{mid} {label}阶段无在线轴需等待到位，直接下发下一阶段")
+                return
             self._wait_for_arrivals(mid, expect_axes, label)
 
         try:
@@ -291,12 +366,14 @@ class ArmSequenceController:
         self._handle_adjust(msg, "extend")
 
     def _handle_adjust(self, msg, joint_name):
-        """将前端微调指令立即转发到对应关节的功能节点，并启动7秒压力触发定时器"""
+        """将前端微调指令立即转发到对应关节的功能节点，并启动7秒压力触发定时器。
+        若指令带 request_id(>0)，无论接受/拒绝都回 /control/adjust_ack，供后端确认送达。"""
         try:
             device_id = msg.device_id
             arm_idx, _ = self._parse_device(device_id)
             if arm_idx < 0 or arm_idx > 4:
                 rospy.logerr(f"device_id {device_id} 非法")
+                self._send_adjust_ack(msg, 1, f"device_id {device_id} 非法")
                 return
 
             module_id = msg.module_id
@@ -311,12 +388,34 @@ class ArmSequenceController:
                 self.pub_tel_seq.publish(msg)
             else:
                 rospy.logerr(f"未知关节类型 {joint_name}")
+                self._send_adjust_ack(msg, 2, f"未知关节类型 {joint_name}")
                 return
 
             rospy.loginfo(f"[微调] 🎯 Arm{arm_idx+1} {joint_name} -> {msg.position[0]:.2f}")
+            self._send_adjust_ack(msg, 0, "已接收并转发到轴节点")
             self._schedule_pressure(module_id)
         except Exception as e:
             rospy.logerr(f"前端调节异常: {e}")
+            self._send_adjust_ack(msg, 2, str(e))
+
+    def _send_adjust_ack(self, msg, result, message=""):
+        """微调应用层回执：仅当指令带 request_id(>0) 时回 /control/adjust_ack。
+        图纸逆解等 request_id=0 的指令不回执，保持原行为。回执失败不影响主流程。"""
+        try:
+            request_id = int(getattr(msg, "request_id", 0) or 0)
+            if request_id <= 0:
+                return
+            ack = AdjustAck()
+            ack.header.stamp = rospy.Time.now()
+            ack.module_id = int(getattr(msg, "module_id", 0) or 0)
+            ack.device_id = int(getattr(msg, "device_id", 0) or 0)
+            ack.request_id = request_id
+            ack.result = int(result)
+            ack.message = message
+            self.pub_adjust_ack.publish(ack)
+            rospy.loginfo(f"[微调] 📨 adjust_ack request_id={request_id} result={result} {message}")
+        except Exception as e:
+            rospy.logerr(f"adjust_ack 发送失败: {e}")
 
 
 if __name__ == "__main__":

@@ -71,6 +71,7 @@ find_package(catkin REQUIRED COMPONENTS
  SegAssign.msg
  SegConfirm.msg
  ModuleStatus.msg
+ AdjustAck.msg
 )
 
 ## Generate services in the 'srv' folder

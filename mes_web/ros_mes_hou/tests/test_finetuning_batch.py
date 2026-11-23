@@ -713,7 +713,10 @@ class FineTuningBatchTest(unittest.IsolatedAsyncioTestCase):
                 return events()
         ready = asyncio.Event()
         with patch('app.ros.rosbridge.websockets.connect', return_value=Socket()):
-            data = [item async for item in RosbridgeClient(ROS1_PROFILE).stream_feedback(ready=ready)]
+            # Socket 只产出一条帧就结束；生产语义是无限重连，这里用 max_reconnects 收敛，
+            # 否则同一个已耗尽的 socket 会被反复重连，用例永久挂起。
+            data = [item async for item in RosbridgeClient(ROS1_PROFILE).stream_feedback(
+                ready=ready, max_reconnects=1)]
         topics = {item['topic'] for item in messages if item['op'] == 'subscribe'}
         self.assertTrue(ready.is_set())
         self.assertTrue({'/hardware/axis_status', '/hardware/arrive_notification', '/hardware/stop_notification', '/hardware/axis_fault', '/hardware/limit_event'} <= topics)

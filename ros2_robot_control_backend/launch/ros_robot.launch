@@ -1,0 +1,141 @@
+<launch>
+  <!-- ====================================================================
+       ROS MES V2 启动文件
+       - CAN ID 位域：PRI(3)|GRP(4)|SEG(4)|NODE(5)|AXIS(5)|DIR(2)|MSG(4)|RSV(2)
+       - 5 臂系统，每臂 3 轴（J1旋转/J2摆动/J3伸缩），轴号 1~15
+       - 下行只发相对增量（0.01°，int16），摆动角范围 -15~15°
+       - 臂级传感器 axis 21~25（压力/IMU）
+       ==================================================================== -->
+
+  <!-- 1. 模块确认节点：基于到位通知（Angle+PosError+Status 三重校验） -->
+  <node
+    name="module_confirme_node"
+    pkg="robot_control_backend"
+    type="module_confirme_node.py"
+    output="screen"
+  />
+
+  <!-- 2. 反馈节点：0.01°→° 单位转换 + 指令汇聚 -->
+  <node
+    name="feedback_node"
+    pkg="robot_control_backend"
+    type="feedback_node.py"
+    output="screen"
+  />
+
+  <!-- 2.1 轴状态聚合节点：固件不发状态字帧时，由指令/事件推导轴状态，
+       并按最后一次真实位置补发空闲位置；与 sim_axis_status_node.py 互斥 -->
+  <node
+    name="axis_status_aggregator"
+    pkg="robot_control_backend"
+    type="axis_status_aggregator.py"
+    output="screen"
+  />
+
+  <!-- 3. CAN 硬件桥接节点：V2 位域编码 + 位置打包拆分 + 事件分发 -->
+  <node
+    name="stm32_bridge"
+    pkg="robot_control_backend"
+    type="hardware_node.py"
+    output="screen"
+  />
+
+  <!-- 5. 点云处理节点：PCA摆正 + 统计滤波 + 智能全覆盖切块 -->
+  <node
+    name="pointcloud_processor_node"
+    pkg="robot_control_backend"
+    type="data_process_node.py"
+    output="screen"
+  />
+
+  <!-- 6. 点位选择器节点：融合点选择 -->
+  <node
+    name="arm_point_selector"
+    pkg="robot_control_backend"
+    type="calculation_node.py"
+    output="screen"
+  />
+
+  <!-- 7. 逆运动学节点：坐标解算为各轴指令 -->
+  <node
+    name="arm_kinematics"
+    pkg="robot_control_backend"
+    type="kinematics_node.py"
+    output="screen"
+  />
+
+  <!-- 8. 控制节点：逆解时序转发 + 前端微调转发 + 压力传感器触发 -->
+  <node
+    name="arm_sequence_controller"
+    pkg="robot_control_backend"
+    type="control_node.py"
+    output="screen"
+  />
+
+  <!-- 9. 三轴控制节点（V2：软件位置变量 + 超位检查 + 增量透传 0.01°） -->
+  <node
+    name="rotation_simple_node"
+    pkg="robot_control_backend"
+    type="rotation_node.py"
+    output="screen"
+  />
+  <node
+    name="swing_simple_node"
+    pkg="robot_control_backend"
+    type="swing_node.py"
+    output="screen"
+  />
+  <node
+    name="telescope_simple_node"
+    pkg="robot_control_backend"
+    type="telescopic_node.py"
+    output="screen"
+  />
+
+  <!-- 9. 压力传感器控制节点（V2：臂级寻址 + RateIdx） -->
+  <node
+    name="pressure_sensor_control_node"
+    pkg="robot_control_backend"
+    type="sensor_control_node.py"
+    output="screen"
+  />
+
+  <!-- 10. 急停节点（V2：全局急停 0x01 / 解除 0x04） -->
+  <node
+    name="softstop_node"
+    pkg="robot_control_backend"
+    type="softstop_node.py"
+    output="screen"
+  />
+
+  <!-- 11. IMU姿态节点（V2：臂级 IMU axis 21~25） -->
+  <node
+    name="imu_angle_publisher"
+    pkg="robot_control_backend"
+    type="tuo_luo_yi.py"
+    output="screen"
+  />
+
+  <!-- 12. 压力平均值计算节点（V2：收 sensor_raw、采 5s 窗口、发独立 pressure_avg 话题） -->
+  <node
+    name="pressure_average_calculator_node"
+    pkg="robot_control_backend"
+    type="imu_average_calculator_node.py"
+    output="screen"
+  />
+
+   <!-- 12. 启动 rosbridge (端口 9010) -->
+  <!-- 使用自定义wrapper修复pyOpenSSL兼容性问题 -->
+  <node name="rosbridge_websocket" pkg="robot_control_backend" type="rosbridge_wrapper.py" output="screen">
+    <param name="port" value="9010" />
+    <param name="address" value="0.0.0.0" />
+    <param name="authenticate" value="false" />
+  </node>
+  
+  <!-- rosapi node -->
+  <node name="rosapi" pkg="rosapi" type="rosapi_node" output="screen">
+    <param name="topics_glob" value="[*]" />
+    <param name="services_glob" value="[*]" />
+    <param name="params_glob" value="[*]" />
+  </node>
+</launch>

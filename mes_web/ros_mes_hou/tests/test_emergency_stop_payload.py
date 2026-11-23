@@ -34,7 +34,9 @@ class EmergencyStopPayloadTest(unittest.IsolatedAsyncioTestCase):
             success = await client.publish_softstop()
 
         self.assertTrue(success)
-        payload = json.loads(sent_messages[0])
+        self.assertEqual(json.loads(sent_messages[0])["op"], "advertise")
+        payload = json.loads(sent_messages[-1])
+        self.assertEqual(payload["op"], "publish")
         self.assertEqual(payload["topic"], "/control/softstop")
         self.assertEqual(payload["msg"]["module_id"], 0)
         self.assertEqual(payload["msg"]["device_id"], 0)
@@ -83,7 +85,8 @@ class EmergencyStopPayloadTest(unittest.IsolatedAsyncioTestCase):
             success = await client.publish_stop_release()
 
         self.assertTrue(success)
-        payload = json.loads(sent_messages[0])
+        payload = json.loads(sent_messages[-1])
+        self.assertEqual(payload["op"], "publish")
         self.assertEqual(payload["topic"], "/control/softstop_release")
         self.assertEqual(payload["msg"]["module_id"], 0)
         self.assertEqual(payload["msg"]["device_id"], 0)

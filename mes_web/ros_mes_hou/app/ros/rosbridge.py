@@ -11,7 +11,7 @@ import json
 import logging
 import threading
 import time
-from typing import Any, AsyncIterator, Dict
+from typing import Any, AsyncIterator, Dict, List
 
 try:
     import websockets
@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 # softstop_node 收到后转发 position=[0x01] 全局急停
 SYSTEM_MODULE_ID = 0
 SYSTEM_DEVICE_ID = 0
+
+# 急停类指令（急停/解除/局部停）不等待设备回执，必须靠传输层尽量保证送达：
+# advertise 后留时间让 rosbridge 建好 Publisher，publish 后留时间让帧交给 rospy，
+# 再优雅关闭连接。整条链路失败按次数重试，全部失败才返回 False。
+STOP_ADVERTISE_WAIT_S = 0.1
+STOP_PUBLISH_DRAIN_S = 0.1
+STOP_SEND_RETRIES = 3
 
 
 def _stamp(profile: RosProfile) -> Dict[str, int]:
@@ -224,6 +231,158 @@ def build_axis_zero_publish_payload(
     }
 
 
+class _AdjustCommandLink:
+    """微调指令常驻链路：独立线程跑常驻事件循环，维持一条 WS 长连接。
+
+    背景：微调走同步 dispatch，原先每次 asyncio.run() 新建事件循环、跑完即销毁，
+    常驻连接无法跨调用存活；且每次 advertise→sleep(0.1)→publish→立即关连接，
+    存在 rosbridge 订阅握手窗口——订阅者未就绪时 publish 的帧会被丢弃
+    （±70 旋转 / -10 伸缩偶发丢失的根因）。
+
+    本类在独立线程里跑一个常驻 asyncio 事件循环，维持一条 WS 长连接：
+      - 启动即 advertise 三个微调话题 + 订阅 adjust_ack 回执话题，之后只发 publish，
+        不再有每次的握手窗口；
+      - send() 通过 run_coroutine_threadsafe 提交到该循环复用长连接；
+      - 每条微调带 request_id，control_node 回 adjust_ack 才算确认送达；
+        超时/断链标记"未确认"，**不自动重发运动指令**（避免机械臂重复动作）。
+    """
+
+    def __init__(self, profile: RosProfile, url: str, timeout: float = 3.0):
+        self._profile = profile
+        self._url = url
+        self._timeout = timeout
+        self._cmd_topics = [
+            (m["topic"], m["message_type"]) for m in _fine_tuning_topic_map(profile).values()
+        ]
+        self._ack_topic = profile.topics["adjust_ack"]
+        self._ack_type = profile.message_type("AdjustAck")
+        self._loop = None
+        self._thread = None
+        self._ws = None
+        self._ready = None                # asyncio.Event（常驻循环内）：连接+订阅就绪
+        self._loop_up = threading.Event()  # 常驻事件循环已启动
+        self._pending = {}                # request_id -> asyncio.Future（仅常驻循环内访问）
+        self._req_lock = threading.Lock()
+        self._req_seq = 0
+        self._start_lock = threading.Lock()
+        self._started = False
+
+    def start(self) -> None:
+        with self._start_lock:
+            if self._started:
+                return
+            self._started = True
+            self._thread = threading.Thread(
+                target=self._thread_main, name="adjust-cmd-link", daemon=True)
+            self._thread.start()
+
+    def _thread_main(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._ready = asyncio.Event()
+        self._loop_up.set()
+        self._loop.create_task(self._connection_manager())
+        self._loop.run_forever()
+
+    def _next_request_id(self) -> int:
+        with self._req_lock:
+            self._req_seq += 1
+            # 秒级时间戳拼序号，跨进程重启也基本唯一，且在 uint64 范围内
+            return int(time.time()) * 100000 + (self._req_seq % 100000)
+
+    # ---------- 对外同步接口（dispatch 工作线程调用）----------
+    def send(self, payload: Dict[str, Any], timeout: float | None = None) -> Dict[str, Any]:
+        self.start()
+        if not self._loop_up.wait(5.0):
+            raise RosbridgeError("微调常驻链路启动超时")
+        timeout = timeout or self._timeout
+        request_id = self._next_request_id()
+        msg = dict(payload)
+        msg["message"] = {**payload["message"], "request_id": request_id}
+        coro = self._send_and_confirm(msg, request_id, timeout)
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout * 2 + 10.0)
+
+    # ---------- 以下仅在常驻事件循环内运行 ----------
+    async def _send_and_confirm(self, payload, request_id, timeout):
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout)
+        except asyncio.TimeoutError:
+            return {"sent": False, "confirmed": False, "request_id": request_id,
+                    "confirmation_status": "unconfirmed",
+                    "error": "微调常驻链路未连接到 rosbridge"}
+        fut = self._loop.create_future()
+        self._pending[request_id] = fut
+        try:
+            publish_json = json.dumps(
+                {"op": "publish", "topic": payload["topic"], "msg": payload["message"]},
+                ensure_ascii=False)
+            ws = self._ws
+            if ws is None:
+                # _ready 置位后连接仍可能被重连置空：显式判空，避免 NoneType.send
+                return {"sent": False, "confirmed": False, "request_id": request_id,
+                        "confirmation_status": "unconfirmed", "error": "常驻链路连接已断开，未发送"}
+            await ws.send(publish_json)
+            ack = await asyncio.wait_for(fut, timeout)
+            result = int(ack.get("result", 0))
+            return {
+                "sent": True, "confirmed": True, "request_id": request_id,
+                "ack": ack, "result": result,
+                "confirmation_status": "confirmed" if result == 0 else "rejected",
+            }
+        except asyncio.TimeoutError:
+            return {"sent": True, "confirmed": False, "request_id": request_id,
+                    "confirmation_status": "unconfirmed",
+                    "error": "未收到控制节点 adjust_ack 回执，指令可能未送达；不自动重发，请核实后手动重试"}
+        except Exception as exc:
+            return {"sent": False, "confirmed": False, "request_id": request_id,
+                    "confirmation_status": "unconfirmed", "error": str(exc)}
+        finally:
+            self._pending.pop(request_id, None)
+
+    async def _connection_manager(self):
+        while True:
+            try:
+                async with websockets.connect(self._url, close_timeout=1, open_timeout=3) as ws:
+                    self._ws = ws
+                    # 常驻 advertise 三个微调话题 + 订阅回执话题，只建一次
+                    for topic, mtype in self._cmd_topics:
+                        await ws.send(json.dumps({"op": "advertise", "topic": topic, "type": mtype}))
+                    await ws.send(json.dumps(
+                        {"op": "subscribe", "topic": self._ack_topic, "type": self._ack_type}))
+                    await asyncio.sleep(0.2)  # 等 rosbridge 建好 publisher/subscriber
+                    self._ready.set()
+                    async for raw in ws:
+                        self._on_message(raw)
+            except Exception as exc:
+                logger.error("[adjust-link] 连接异常：%s", exc)
+            finally:
+                self._ws = None
+                if self._ready is not None:
+                    self._ready.clear()
+                self._fail_all_pending("微调常驻链路断开，指令未确认")
+            await asyncio.sleep(1.0)
+
+    def _on_message(self, raw):
+        try:
+            event = json.loads(raw)
+        except Exception:
+            return
+        if event.get("op") != "publish" or event.get("topic") != self._ack_topic:
+            return
+        msg = event.get("msg") or {}
+        request_id = msg.get("request_id")
+        fut = self._pending.get(request_id)
+        if fut is not None and not fut.done():
+            fut.set_result(msg)
+
+    def _fail_all_pending(self, error):
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.set_exception(RuntimeError(error))
+        self._pending.clear()
+
+
 class RosbridgeClient:
     """rosbridge WebSocket 一次性客户端：每次下发新建连接，subscribe 后逐条收事件。"""
 
@@ -239,11 +398,31 @@ class RosbridgeClient:
         self.timeout = timeout
         # 模块确认回执等待上限：V2.1 会话式握手含 30s 等宣告窗口，必须远大于普通超时
         self.module_confirm_timeout = module_confirm_timeout or settings.MODULE_CONFIRM_ACK_WAIT_S
+        # 微调常驻链路：实例在构造时创建（不耗资源），后台线程与长连接在首次 send 时才 start
+        self._adjust_link = _AdjustCommandLink(profile, self.url)
 
     def dispatch(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if action not in {"fine_tuning", "drawing_path", "module_confirm", "axis_zero"}:
             raise RosbridgeError(f"unsupported rosbridge action: {action}")
+        if action == "fine_tuning":
+            # 微调走常驻链路：长连接 + 常驻 advertise + adjust_ack 回执确认送达
+            return self._dispatch_fine_tuning(payload)
         return asyncio.run(self.publish(action, payload))
+
+    def _dispatch_fine_tuning(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        result = self._adjust_link.send(payload)
+        return {
+            "sent": result.get("sent", False),
+            "mode": "rosbridge_persistent",
+            "url": self.url,
+            "action": "fine_tuning",
+            "payload": payload,
+            "confirmed": result.get("confirmed"),
+            "confirmation_status": result.get("confirmation_status"),
+            "request_id": result.get("request_id"),
+            "ack": result.get("ack"),
+            "error": result.get("error"),
+        }
 
     async def publish(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if websockets is None:
@@ -351,71 +530,91 @@ class RosbridgeClient:
             ):
                 return msg
 
+    async def _publish_stop_frames(self, frames: List[Dict[str, Any]], tag: str) -> bool:
+        """发送急停类系统指令（IntCmd）：advertise → 等待 → publish → 停留 → 优雅关闭。
+
+        返回 True 仅表示每帧都已写出并经过 rosbridge 的处理窗口，**不代表设备已执行**；
+        急停/解除/局部停三个话题在 ROS 端没有应用层回执，因此用重试兜底。
+        """
+        if websockets is None:
+            logger.error("[%s] websockets 库未安装，无法发送指令", tag)
+            return False
+
+        message_type = self.profile.message_type("IntCmd")
+        topics = list(dict.fromkeys(frame["topic"] for frame in frames))
+        last_error: Exception | None = None
+
+        for attempt in range(1, STOP_SEND_RETRIES + 1):
+            try:
+                async with websockets.connect(
+                    self.url, close_timeout=1, open_timeout=3
+                ) as ws:
+                    for topic in topics:
+                        await asyncio.wait_for(
+                            ws.send(json.dumps(
+                                {"op": "advertise", "topic": topic, "type": message_type},
+                                ensure_ascii=False,
+                            )),
+                            self.timeout,
+                        )
+                    # Publisher 建立需要时间，过早 publish 会被 rosbridge 当成未注册话题丢弃
+                    await asyncio.sleep(STOP_ADVERTISE_WAIT_S)
+                    for frame in frames:
+                        await asyncio.wait_for(
+                            ws.send(json.dumps(
+                                {"op": "publish", "topic": frame["topic"], "msg": frame["msg"]},
+                                ensure_ascii=False,
+                            )),
+                            self.timeout,
+                        )
+                    # 关闭前留出处理窗口：连接一关，未交给 rospy 的帧就会丢
+                    await asyncio.sleep(STOP_PUBLISH_DRAIN_S)
+                return True
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+            except Exception as exc:
+                last_error = exc
+            if attempt < STOP_SEND_RETRIES:
+                await asyncio.sleep(0.05 * attempt)
+
+        logger.error("[%s] 发送失败（已重试 %s 次）: %s", tag, STOP_SEND_RETRIES, last_error)
+        return False
+
     async def publish_softstop(self) -> bool:
         """全局急停：/control/softstop 的 typeless publish（与 ROS1 现网行为一致）。"""
-        if websockets is None:
-            logger.error("[紧急故障] websockets 库未安装，无法发送急停指令")
-            return False
-
         softstop_topic = self.profile.topics["softstop"]
-        emergency_msg = json.dumps(
-            {
-                "op": "publish",
-                "topic": softstop_topic,
-                "msg": {
-                    "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
-                    "module_id": SYSTEM_MODULE_ID,
-                    "device_id": SYSTEM_DEVICE_ID,
-                    "position": [0x01],
-                },
+        frames = [{
+            "topic": softstop_topic,
+            "msg": {
+                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
+                "module_id": SYSTEM_MODULE_ID,
+                "device_id": SYSTEM_DEVICE_ID,
+                "position": [0x01],
             },
-            ensure_ascii=False,
-        )
-
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                await asyncio.wait_for(ws.send(emergency_msg), timeout=2.0)
+        }]
+        if await self._publish_stop_frames(frames, "急停"):
             logger.warning("🔴 急停指令已发送: %s", softstop_topic)
             return True
-        except asyncio.TimeoutError:
-            logger.error("[紧急故障] 急停 WebSocket 发送超时")
-            return False
-        except Exception as exc:
-            logger.error("[紧急故障] 急停系统异常: %s", exc)
-            return False
+        logger.error("[紧急故障] 急停指令发送失败（已重试 %s 次）: %s", STOP_SEND_RETRIES, softstop_topic)
+        return False
 
     async def publish_stop_release(self) -> bool:
         """急停解除：/control/softstop_release（softstop_node 转发 /arm/cmd_vel [0x04]）。"""
-        if websockets is None:
-            logger.error("[紧急故障] websockets 库未安装，无法发送急停解除指令")
-            return False
-
         release_topic = self.profile.topics["softstop_release"]
-        release_msg = json.dumps(
-            {
-                "op": "publish",
-                "topic": release_topic,
-                "msg": {
-                    "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
-                    "module_id": SYSTEM_MODULE_ID,
-                    "device_id": SYSTEM_DEVICE_ID,
-                    "position": [0x01],
-                },
+        frames = [{
+            "topic": release_topic,
+            "msg": {
+                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
+                "module_id": SYSTEM_MODULE_ID,
+                "device_id": SYSTEM_DEVICE_ID,
+                "position": [0x01],
             },
-            ensure_ascii=False,
-        )
-
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                await asyncio.wait_for(ws.send(release_msg), timeout=2.0)
+        }]
+        if await self._publish_stop_frames(frames, "急停解除"):
             logger.warning("🟡 急停解除指令已发送: %s", release_topic)
             return True
-        except asyncio.TimeoutError:
-            logger.error("[紧急故障] 急停解除 WebSocket 发送超时")
-            return False
-        except Exception as exc:
-            logger.error("[紧急故障] 急停解除系统异常: %s", exc)
-            return False
+        logger.error("[紧急故障] 急停解除指令发送失败（已重试 %s 次）: %s", STOP_SEND_RETRIES, release_topic)
+        return False
 
     async def publish_local_stop(self, *, scope: str, module_id: int, device_id: int | None = None) -> bool:
         """局部停：直发 /arm/cmd_vel 系统级指令，经 softstop_node 之外的同一话题进入 hardware_node。
@@ -446,30 +645,20 @@ class RosbridgeClient:
             logger.warning("[局部停] 未知 scope 或缺 device_id：%r/%r", scope, device_id)
             return False
 
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                for payload in targets:
-                    message = json.dumps(
-                        {
-                            "op": "publish",
-                            "topic": topic,
-                            "msg": {
-                                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
-                                **payload,
-                            },
-                        },
-                        ensure_ascii=False,
-                    )
-                    await asyncio.wait_for(ws.send(message), timeout=2.0)
-                    logger.warning("🛑 局部停指令已发送: %s scope=%s device_id=%s position=%s",
-                                   topic, scope, payload["device_id"], payload["position"])
-            return True
-        except asyncio.TimeoutError:
-            logger.error("[局部停] WebSocket 发送超时")
+        frames = [{
+            "topic": topic,
+            "msg": {
+                "header": {"stamp": _zero_stamp(self.profile), "frame_id": ""},
+                **payload,
+            },
+        } for payload in targets]
+
+        if not await self._publish_stop_frames(frames, "局部停"):
             return False
-        except Exception as exc:
-            logger.error("[局部停] 发送异常: %s", exc)
-            return False
+        for payload in targets:
+            logger.warning("🛑 局部停指令已发送: %s scope=%s device_id=%s position=%s",
+                           topic, scope, payload["device_id"], payload["position"])
+        return True
 
     async def publish_web_cmd(self, command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """测试通道：向 /web_cmd 发布 JSON 指令（std_msgs/String）。
@@ -516,7 +705,17 @@ class RosbridgeClient:
 
         return {"topic": topic, "command": command, "payload": payload, "mode": "rosbridge"}
 
-    async def stream_feedback(self, *, ready: asyncio.Event | None = None) -> AsyncIterator[Dict[str, Any]]:
+    async def stream_feedback(
+        self,
+        *,
+        ready: asyncio.Event | None = None,
+        max_reconnects: int | None = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """持续读取反馈；连接断开后自动重连。
+
+        max_reconnects 默认为 None（无限重连，生产语义）；测试用它把流收敛成有限长度，
+        否则一个永远返回空 socket 的测试替身会让重连循环永不结束。
+        """
         if websockets is None:
             yield {"data_type": "error", "message": "missing websockets dependency"}
             return
@@ -531,31 +730,56 @@ class RosbridgeClient:
                         "feedback_can_fault")
         ]
 
-        try:
-            async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
-                for topic in feedback_topics:
-                    await ws.send(json.dumps({"op": "subscribe", "topic": topic}, ensure_ascii=False))
-                if ready is not None:
-                    ready.set()
+        # 自动重连：ROS/rosbridge 瞬时抖动不再让反馈流终止。
+        # 不 yield data_type=="error"——finetuning 批次的 consume 会把 error 当 Halt 杀掉在途批次；
+        # 这里静默重连，由批次自身的 preflight/arrive 超时做最终兜底，瞬时断开可恢复。
+        #
+        # 退避只在「真正收到过数据」后才清零：否则「连上就被对端关掉」会让 attempt 恒为 0，
+        # 延迟永远是 1s，变成对 rosbridge 的重连风暴。
+        attempt = 0
+        rounds = 0
+        while True:
+            received = False
+            try:
+                async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
+                    for topic in feedback_topics:
+                        await ws.send(json.dumps({"op": "subscribe", "topic": topic}, ensure_ascii=False))
+                    if ready is not None:
+                        ready.set()
 
-                async for raw in ws:
-                    try:
-                        event = json.loads(raw)
-                    except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
-                        continue
-                    if not isinstance(event, dict) or event.get("op") != "publish":
-                        continue
-                    topic = event.get("topic", "")
-                    if topic not in feedback_topics:
-                        continue
-                    try:
-                        feedback = normalize_feedback_message(topic, event.get("msg"), self.profile.topics)
-                    except (TypeError, ValueError, OverflowError):
-                        # 单条格式损坏的消息不能终止整条反馈连接。
-                        continue
-                    yield feedback
-        except Exception as exc:
-            yield {"data_type": "error", "message": f"rosbridge feedback failed: {exc}"}
+                    async for raw in ws:
+                        try:
+                            event = json.loads(raw)
+                        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+                            continue
+                        if not isinstance(event, dict) or event.get("op") != "publish":
+                            continue
+                        topic = event.get("topic", "")
+                        if topic not in feedback_topics:
+                            continue
+                        try:
+                            feedback = normalize_feedback_message(topic, event.get("msg"), self.profile.topics)
+                        except (TypeError, ValueError, OverflowError):
+                            # 单条格式损坏的消息不能终止整条反馈连接。
+                            continue
+                        received = True
+                        attempt = 0  # 证明连接可用，退避计数清零
+                        yield feedback
+                    # async for 正常退出 = 对端关闭连接，落入下方重连。
+            except asyncio.CancelledError:
+                raise  # 批次结束 reader.cancel()：正常退出，不重连
+            except Exception as exc:
+                logger.error("[rosbridge] 反馈连接异常：%s", exc)
+            rounds += 1
+            if not received:
+                # 这次连接一条数据都没读到：计入退避，避免「连上即断」变成重连风暴。
+                attempt += 1
+            if max_reconnects is not None and rounds > max_reconnects:
+                logger.warning("[rosbridge] 反馈连接已轮询 %s 次，达到上限，停止重连", rounds)
+                return
+            delay = min(1.0 * attempt, 5.0)
+            logger.warning("[rosbridge] 反馈连接断开，%.1fs 后自动重连（第 %s 次）", delay, attempt)
+            await asyncio.sleep(delay)
 
 
 

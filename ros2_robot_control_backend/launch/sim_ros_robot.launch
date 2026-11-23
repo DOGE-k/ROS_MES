@@ -1,0 +1,70 @@
+<launch>
+  <!-- ====================================================================
+       无硬件仿真启动文件（下位机 CAN 层由 sim_lower_machine.py 模拟）
+       与 ros_robot.launch 的区别：
+         - 不启动 hardware_node（需要 python-can + CAN 设备）
+         - 不启动点云/计算/逆解三节点（需真实点云文件，仿真联调不涉及）
+         - 用 sim_lower_machine.py 直接产生 /hardware/can/* 原始反馈与握手确认
+       运行目录要求：在仓库根目录（ROS_MES）执行，保证 DB_PATH=ros_database.db 可解析。
+       ==================================================================== -->
+
+  <!-- 1. 模块确认节点：会话式握手 -->
+  <node name="module_confirme_node" pkg="robot_control_backend"
+        type="module_confirme_node.py" output="screen" />
+
+  <!-- 2. 反馈节点：0.01°→° / 0.01mm→mm 换算 + 指令汇聚 -->
+  <node name="feedback_node" pkg="robot_control_backend"
+        type="feedback_node.py" output="screen" />
+
+  <!-- 3. 控制节点：微调转发 + 逆解时序 -->
+  <node name="arm_sequence_controller" pkg="robot_control_backend"
+        type="control_node.py" output="screen" />
+
+  <!-- 4. 三轴控制节点 -->
+  <node name="rotation_simple_node" pkg="robot_control_backend"
+        type="rotation_node.py" output="screen" />
+  <node name="swing_simple_node" pkg="robot_control_backend"
+        type="swing_node.py" output="screen" />
+  <node name="telescope_simple_node" pkg="robot_control_backend"
+        type="telescopic_node.py" output="screen" />
+
+  <!-- 5. 压力传感器控制 + 5s 平均值计算 -->
+  <node name="pressure_sensor_control_node" pkg="robot_control_backend"
+        type="sensor_control_node.py" output="screen" />
+  <node name="pressure_average_calculator_node" pkg="robot_control_backend"
+        type="imu_average_calculator_node.py" output="screen" />
+
+  <!-- 6. 急停节点 -->
+  <node name="softstop_node" pkg="robot_control_backend"
+        type="softstop_node.py" output="screen" />
+
+  <!-- 7. IMU 姿态/正运动学节点 -->
+  <node name="imu_angle_publisher" pkg="robot_control_backend"
+        type="tuo_luo_yi.py" output="screen" />
+
+  <!-- 8. 点云处理 + 融合选点 + 逆解（图纸/自动作业链路） -->
+  <node name="pointcloud_processor_node" pkg="robot_control_backend"
+        type="data_process_node.py" output="screen" />
+  <node name="arm_point_selector" pkg="robot_control_backend"
+        type="calculation_node.py" output="screen" />
+  <node name="arm_kinematics" pkg="robot_control_backend"
+        type="kinematics_node.py" output="screen" />
+
+  <!-- 9. 下位机模拟节点（替代 hardware_node） -->
+  <node name="sim_lower_machine" pkg="robot_control_backend"
+        type="sim_lower_machine.py" output="screen" />
+
+  <!-- 10. rosbridge 9010 -->
+  <node name="rosbridge_websocket" pkg="robot_control_backend"
+        type="rosbridge_wrapper.py" output="screen">
+    <param name="port" value="9010" />
+    <param name="address" value="0.0.0.0" />
+    <param name="authenticate" value="false" />
+  </node>
+
+  <node name="rosapi" pkg="rosapi" type="rosapi_node" output="screen">
+    <param name="topics_glob" value="[*]" />
+    <param name="services_glob" value="[*]" />
+    <param name="params_glob" value="[*]" />
+  </node>
+</launch>
