@@ -149,45 +149,115 @@ log "模式：$([ "$MOCK_ONLY" -eq 1 ] && echo '仅前后端' || echo '完整安
 # ---------------- 1. 系统基础依赖 ----------------
 log "安装系统基础依赖..."
 BASE_PKGS=(
-    curl gnupg2 lsb-release software-properties-common
+    curl wget gnupg2 lsb-release software-properties-common
     build-essential cmake unzip usbutils
+    zlib1g-dev libncurses5-dev libncursesw5-dev libreadline-dev libsqlite3-dev
+    libgdbm-dev libdb-dev libbz2-dev libexpat1-dev liblzma-dev uuid-dev tk-dev
     libusb-1.0-0 libgomp1 libgl1 libglib2.0-0
     python3-pip python3-venv python3-dev libffi-dev libssl-dev
 )
-run sudo apt-get update
+run sudo apt-get update || warn "apt-get update 有源更新失败，继续尝试安装；若安装失败请检查 /etc/apt/sources.list.d/。"
 run sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "${BASE_PKGS[@]}"
 
 # ---------------- 2. Python 3.10+ ----------------
+# 说明：Ubuntu 20.04 的系统 Python 3.8 被 ROS Noetic 依赖，不能替换。
+# deadsnakes PPA 已停止为 focal(20.04) 构建包（索引为空），因此改为源码安装到
+# /opt/python3.11，不改动系统 python3。
+PY_SRC_VERSION="3.11.9"
+PY_PREFIX="/opt/python3.11"
+PY_BIN="$PY_PREFIX/bin/python3.11"
+
+python_ok() {
+    local c="$1"
+    if ! command -v "$c" >/dev/null 2>&1 && [ ! -x "$c" ]; then
+        return 1
+    fi
+    "$c" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,10) else 1)' 2>/dev/null \
+        && "$c" -m venv --help >/dev/null 2>&1
+}
+
 find_python() {
     local c
     for c in python3.12 python3.11 python3.10; do
-        if command -v "$c" >/dev/null 2>&1 \
-            && "$c" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,10) else 1)' 2>/dev/null \
-            && "$c" -m venv --help >/dev/null 2>&1; then
-            printf '%s' "$c"
-            return 0
-        fi
+        if python_ok "$c"; then printf '%s' "$c"; return 0; fi
     done
-    if command -v python3 >/dev/null 2>&1 \
-        && python3 -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3,10) else 1)' 2>/dev/null \
-        && python3 -m venv --help >/dev/null 2>&1; then
-        printf 'python3'
+    if python_ok python3; then printf 'python3'; return 0; fi
+    return 1
+}
+
+install_python_from_source() {
+    local tar="Python-${PY_SRC_VERSION}.tgz"
+    local build_dir url ok=0
+    build_dir="$(mktemp -d /tmp/python-build.XXXXXX)"
+
+    log "下载 Python ${PY_SRC_VERSION} 源码（约 25MB）..."
+    for url in \
+        "https://mirrors.huaweicloud.com/python/${PY_SRC_VERSION}/${tar}" \
+        "https://mirrors.aliyun.com/python-release/source/${tar}" \
+        "https://www.python.org/ftp/python/${PY_SRC_VERSION}/${tar}"; do
+        if [ "$DRY_RUN" -eq 1 ]; then
+            printf '+ curl -fL --retry 3 -o %q %q\n' "$build_dir/$tar" "$url"
+            ok=1
+            break
+        fi
+        log "尝试镜像：$url"
+        if curl -fL --retry 3 --connect-timeout 15 -o "$build_dir/$tar" "$url"; then
+            ok=1
+            break
+        fi
+        warn "下载失败，换下一个镜像。"
+    done
+    if [ "$ok" -ne 1 ]; then
+        rm -rf "$build_dir"
+        die "Python 源码下载失败，请检查网络后重试。"
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '+ tar -xzf %q -C %q\n' "$build_dir/$tar" "$build_dir"
+        printf '+ cd %q && ./configure --prefix=%q --with-ensurepip=install\n' \
+            "$build_dir/Python-${PY_SRC_VERSION}" "$PY_PREFIX"
+        printf '+ make -j%s\n' "$(nproc)"
+        printf '+ sudo make altinstall\n'
+        rm -rf "$build_dir"
         return 0
     fi
-    return 1
+
+    log "解压并编译（前缀 ${PY_PREFIX}，约 3-8 分钟）..."
+    tar -xzf "$build_dir/$tar" -C "$build_dir" || { rm -rf "$build_dir"; die "Python 源码解压失败。"; }
+
+    if ! ( cd "$build_dir/Python-${PY_SRC_VERSION}" \
+            && ./configure --prefix="$PY_PREFIX" --with-ensurepip=install \
+            && make -j"$(nproc)" ); then
+        rm -rf "$build_dir"
+        die "Python 编译失败。请确认以下依赖已安装：build-essential zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev libsqlite3-dev libreadline-dev libncursesw5-dev uuid-dev"
+    fi
+
+    if ! ( cd "$build_dir/Python-${PY_SRC_VERSION}" && sudo make altinstall ); then
+        rm -rf "$build_dir"
+        die "Python 安装失败（sudo make altinstall）。"
+    fi
+    rm -rf "$build_dir"
+    log "Python 安装完成：$PY_BIN"
 }
 
 PYTHON_BIN="$(find_python || true)"
 if [ -z "$PYTHON_BIN" ]; then
-    if [ "${VERSION_ID:-}" = "20.04" ]; then
-        log "系统 Python 低于 3.10，安装 Python 3.11..."
-        run sudo add-apt-repository ppa:deadsnakes/ppa -y
-        run sudo apt-get update
-        run sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y python3.11 python3.11-venv python3.11-dev
-        PYTHON_BIN="python3.11"
-    else
+    if [ "${VERSION_ID:-}" != "20.04" ]; then
         die "找不到 Python 3.10+，请先安装 Python 3.10 或更高版本。"
     fi
+    if [ "$DRY_RUN" -eq 0 ] && python_ok "$PY_BIN"; then
+        log "复用已安装的 Python：$PY_BIN"
+        PYTHON_BIN="$PY_BIN"
+    else
+        log "系统 Python 仅为 3.8（ROS Noetic 依赖，不能替换）"
+        log "deadsnakes 已不再支持 Ubuntu 20.04，改用源码安装 Python ${PY_SRC_VERSION}"
+        install_python_from_source
+        PYTHON_BIN="$PY_BIN"
+    fi
+fi
+
+if [ "$DRY_RUN" -eq 0 ]; then
+    python_ok "$PYTHON_BIN" || die "Python 校验失败：$PYTHON_BIN 不是 3.10+ 或缺少 venv 模块。"
 fi
 log "后端 Python：$PYTHON_BIN"
 
@@ -215,15 +285,18 @@ if [ "$MOCK_ONLY" -eq 0 ]; then
         if [ ! -f /etc/apt/sources.list.d/ros-latest.list ]; then
             run_shell "echo 'deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros/ubuntu focal main' | sudo tee /etc/apt/sources.list.d/ros-latest.list >/dev/null"
         fi
-        run sudo apt-get update
+        run sudo apt-get update || warn "apt-get update 有源更新失败，继续尝试安装 ROS。"
         run sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
             ros-noetic-desktop-full ros-noetic-rosbridge-server ros-noetic-message-generation
     fi
 
     if [ -f /opt/ros/noetic/setup.bash ]; then
         log "安装 ROS 节点 Python 依赖..."
-        run python3 -m pip install --user --upgrade pip
-        run python3 -m pip install --user -r "$PROJECT_ROOT/deploy/config/ros_requirements.txt"
+        run python3 -m pip install --user --upgrade pip || warn "升级系统 pip 失败，继续使用现有 pip。"
+        if ! run python3 -m pip install --user -r "$PROJECT_ROOT/deploy/config/ros_requirements.txt"; then
+            warn "ROS 节点 Python 依赖安装失败（常见原因：open3d 体积大、网络超时）。"
+            warn "可稍后手动重试：python3 -m pip install --user -r $PROJECT_ROOT/deploy/config/ros_requirements.txt"
+        fi
 
         if ! dpkg -s ros-noetic-rosbridge-server >/dev/null 2>&1; then
             log "补齐 rosbridge_server..."
@@ -232,7 +305,8 @@ if [ "$MOCK_ONLY" -eq 0 ]; then
 
         if [ -d "$WORKSPACE_ROOT/src" ]; then
             log "编译 ROS 工作空间：$WORKSPACE_ROOT"
-            run bash -c "source /opt/ros/noetic/setup.bash && cd \"$WORKSPACE_ROOT\" && catkin_make"
+            run bash -c "source /opt/ros/noetic/setup.bash && cd \"$WORKSPACE_ROOT\" && catkin_make" \
+                || die "catkin_make 失败：请确认 /opt/ros/noetic 可用；若 build/ 缓存来自其他环境，可删除 $WORKSPACE_ROOT/build 和 $WORKSPACE_ROOT/devel 后重试。"
         else
             warn "未找到 catkin 工作空间结构，跳过 catkin_make。期望路径：~/robot_ws/src/ROS_MES"
         fi
@@ -242,7 +316,7 @@ if [ "$MOCK_ONLY" -eq 0 ]; then
             run_shell "printf '\nsource /opt/ros/noetic/setup.bash\n' >> '$HOME/.bashrc'"
         fi
         if [ -n "$WORKSPACE_ROOT" ] && [ -f "$WORKSPACE_ROOT/devel/setup.bash" ] \
-            && ! grep -q "$WORKSPACE_ROOT/devel/setup.bash" "$HOME/.bashrc" 2>/dev/null; then
+            && ! grep -qF "$WORKSPACE_ROOT/devel/setup.bash" "$HOME/.bashrc" 2>/dev/null; then
             log "写入 ~/.bashrc：工作空间环境"
             run_shell "printf '\nsource %s/devel/setup.bash\n' '$WORKSPACE_ROOT' >> '$HOME/.bashrc'"
         fi
@@ -297,13 +371,22 @@ if [ ! -d "$BACKEND_DIR/venv" ]; then
     run "$PYTHON_BIN" -m venv "$BACKEND_DIR/venv"
 fi
 
+if [ "$DRY_RUN" -eq 0 ] && ! "$BACKEND_DIR/venv/bin/python" -m pip --version >/dev/null 2>&1; then
+    die "后端 venv 缺少 pip：请删除 $BACKEND_DIR/venv 后重新运行本脚本。"
+fi
+
 log "安装后端 Python 依赖..."
-run "$BACKEND_DIR/venv/bin/python" -m pip install --upgrade pip
+run "$BACKEND_DIR/venv/bin/python" -m pip install --upgrade pip || warn "升级 venv 内 pip 失败，继续使用现有 pip。"
 PIP_ARGS=(-r "$BACKEND_DIR/requirements.txt")
 if [ "$USE_MIRROR" -eq 1 ]; then
     PIP_ARGS+=(-i https://pypi.tuna.tsinghua.edu.cn/simple)
 fi
-run "$BACKEND_DIR/venv/bin/pip" install "${PIP_ARGS[@]}"
+if ! run "$BACKEND_DIR/venv/bin/pip" install "${PIP_ARGS[@]}"; then
+    warn "后端依赖安装失败，改用清华镜像重试..."
+    run "$BACKEND_DIR/venv/bin/pip" install -r "$BACKEND_DIR/requirements.txt" \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
+        || die "后端依赖安装失败，请检查网络后重试：$BACKEND_DIR/venv/bin/pip install -r $BACKEND_DIR/requirements.txt"
+fi
 
 if [ ! -f "$PROJECT_ROOT/ros_database.db" ]; then
     log "初始化数据库..."
@@ -328,7 +411,11 @@ log "安装前端 npm 依赖..."
 if [ "$USE_MIRROR" -eq 1 ]; then
     run_shell "cd \"$FRONTEND_DIR\" && npm config set registry https://registry.npmmirror.com"
 fi
-run_shell "cd \"$FRONTEND_DIR\" && npm install --no-audit --no-fund"
+if ! run_shell "cd \"$FRONTEND_DIR\" && npm install --no-audit --no-fund"; then
+    warn "npm 默认源安装失败，改用 npmmirror 镜像重试..."
+    run_shell "cd \"$FRONTEND_DIR\" && npm install --no-audit --no-fund --registry https://registry.npmmirror.com" \
+        || die "前端依赖安装失败，请检查网络后手动执行：cd $FRONTEND_DIR && npm install"
+fi
 
 # ---------------- 7. ROS 配置与 ZLG 驱动 ----------------
 if [ "$MOCK_ONLY" -eq 0 ]; then
@@ -383,7 +470,8 @@ if [ "$MOCK_ONLY" -eq 0 ]; then
                 if [ "$DRY_RUN" -eq 1 ]; then
                     run bash "$SCRIPT_DIR/install_zlg_can.sh" --dry-run
                 else
-                    run sudo bash "$SCRIPT_DIR/install_zlg_can.sh"
+                    run sudo bash "$SCRIPT_DIR/install_zlg_can.sh" \
+                        || warn "ZLG 驱动安装未完成（设备未插或权限不足），不影响其余步骤；可稍后执行：sudo bash deploy/install_zlg_can.sh"
                 fi
             else
                 warn "缺少 deploy/install_zlg_can.sh，跳过驱动安装。"

@@ -90,21 +90,32 @@ mv ~/robot_ws/src/ROS_MES_tmp ~/robot_ws/src/ROS_MES
 
 ### 4.1 安装 Python 3.11
 
+> 注意：deadsnakes PPA 已经不再支持 Ubuntu 20.04，用 `add-apt-repository ppa:deadsnakes/ppa`
+> 会装不上 `python3.11`。下面用源码安装到 `/opt/python3.11`，不会动系统的 Python 3.8（ROS 依赖它）。
+
 ```bash
 sudo apt update
-sudo apt install -y software-properties-common curl
-sudo add-apt-repository ppa:deadsnakes/ppa -y
-sudo apt update
-sudo apt install -y python3.11 python3.11-venv python3-pip
+sudo apt install -y build-essential zlib1g-dev libssl-dev libffi-dev libbz2-dev \
+  liblzma-dev libsqlite3-dev libreadline-dev libncurses5-dev libncursesw5-dev \
+  libgdbm-dev libdb-dev uuid-dev curl
+
+curl -fL -o /tmp/Python-3.11.9.tgz https://mirrors.huaweicloud.com/python/3.11.9/Python-3.11.9.tgz
+tar -xzf /tmp/Python-3.11.9.tgz -C /tmp
+cd /tmp/Python-3.11.9
+./configure --prefix=/opt/python3.11 --with-ensurepip=install
+make -j"$(nproc)"
+sudo make altinstall
 ```
 
 检查：
 
 ```bash
-python3.11 --version
+/opt/python3.11/bin/python3.11 --version
 ```
 
 ✅ 成功标志：显示 `Python 3.11.x`。
+
+> 一键脚本 `install_all.sh` 会自动完成上面这些步骤；本机已装过 `/opt/python3.11` 时会直接复用，不会重复编译。
 
 ### 4.2 安装 Node.js 20
 
@@ -135,7 +146,7 @@ npm -v
 ```bash
 cd ~/robot_ws/src/ROS_MES/mes_web/ros_mes_hou
 cp ../../deploy/config/backend.env .env
-python3.11 -m venv venv
+/opt/python3.11/bin/python3.11 -m venv venv
 source venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt

@@ -109,15 +109,25 @@ python3 -m pip install --user -r ~/robot_ws/src/ROS_MES/deploy/config/ros_requir
 
 ### 4.2 后端 Python 3.10+
 
-Noetic 的系统 Python 3.8 **不能**跑当前 FastAPI 依赖。用 Conda 或 deadsnakes 单独建环境，不要替换系统 Python：
+Noetic 的系统 Python 3.8 **不能**跑当前 FastAPI 依赖。用 Conda 或源码单独建环境，不要替换系统 Python。
+
+> deadsnakes PPA 已不再为 Ubuntu 20.04（focal）构建包，其索引为空，`apt install python3.11` 会报 `Unable to locate package`。**不要再用 `add-apt-repository ppa:deadsnakes/ppa`。**
 
 ```bash
 # 方式 A：Conda
 conda create -n mes python=3.11 -y
 
-# 方式 B：deadsnakes
-sudo add-apt-repository ppa:deadsnakes/ppa -y
-sudo apt install -y python3.11 python3.11-venv
+# 方式 B：源码安装（install_all.sh 默认做法，装到 /opt/python3.11，不动系统 python3）
+sudo apt install -y build-essential zlib1g-dev libssl-dev libffi-dev libbz2-dev \
+  liblzma-dev libsqlite3-dev libreadline-dev libncurses5-dev libncursesw5-dev \
+  libgdbm-dev libdb-dev uuid-dev
+curl -fL -o /tmp/Python-3.11.9.tgz https://mirrors.huaweicloud.com/python/3.11.9/Python-3.11.9.tgz
+tar -xzf /tmp/Python-3.11.9.tgz -C /tmp
+cd /tmp/Python-3.11.9
+./configure --prefix=/opt/python3.11 --with-ensurepip=install
+make -j"$(nproc)"
+sudo make altinstall
+/opt/python3.11/bin/python3.11 --version
 ```
 
 ### 4.3 Node.js
@@ -295,7 +305,7 @@ source ~/robot_ws/devel/setup.bash
 cd ~/robot_ws/src/ROS_MES/mes_web/ros_mes_hou
 
 # 确认当前 python 是 3.10+（Conda 环境需先 conda activate mes）
-# deadsnakes 方案若 python 仍指向 3.8，改用：python3.11 -m venv venv
+# 源码安装方案若 python 仍指向 3.8，改用：/opt/python3.11/bin/python3.11 -m venv venv
 python --version
 python -m venv venv
 source venv/bin/activate
