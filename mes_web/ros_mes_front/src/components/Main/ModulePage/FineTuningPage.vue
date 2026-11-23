@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="fine-tuning-container mes-page">
     <!-- 顶部标题和返回按钮 -->
     <div class="mes-page-header">
@@ -44,6 +44,18 @@
         type="warning"
         :closable="false"
       />
+
+      <el-alert
+        v-if="canFault"
+        class="can-fault-alert"
+        type="error"
+        :closable="false"
+        show-icon
+        :title="canFault.text"
+      >
+        <p v-if="canFault.detail">{{ canFault.detail }}</p>
+        <p>这是 CAN 总线级故障，所有轴的反馈都可能中断。恢复后横幅自动消失，无需手动关闭。</p>
+      </el-alert>
 
       <el-alert
         v-if="hasLocalStop"
@@ -290,6 +302,15 @@
           </el-collapse-item>
         </el-collapse>
       </el-card>
+      <el-card v-if="deviceFaults.length" class="ack-card" shadow="never">
+        <template #header>设备告警事件 · 来自设备，不改变批次判定</template>
+        <el-alert :title="deviceFaults[0].text" :type="deviceFaults[0].type" :closable="false" show-icon />
+        <el-collapse>
+          <el-collapse-item v-for="event in deviceFaults" :key="event.id" :title="event.text" :name="event.id">
+            <pre class="ack-raw">{{ event.raw }}</pre>
+          </el-collapse-item>
+        </el-collapse>
+      </el-card>
     </div>
 
     <el-dialog
@@ -473,6 +494,20 @@ let ackSequence = 0;
 // 设备到位/停止事件：来自 ArriveNotification / StopNotification，仅作展示与实测值补全，不参与批次判定
 const deviceEvents = ref<Array<{ id: number; text: string; type: 'info' | 'warning'; raw: string }>>([]);
 let deviceSequence = 0;
+// 设备告警事件：axis_fault / limit_event / vacuum_loss_event，来自设备，仅展示，不参与批次判定
+const deviceFaults = ref<Array<{ id: number; text: string; type: 'warning' | 'error'; raw: string }>>([]);
+let deviceFaultSequence = 0;
+// CAN 总线故障横幅：state=ok 时自动消失，不是可关闭的提示
+const canFault = ref<{ text: string; detail: string; raw: string } | null>(null);
+// 故障事件去重：设备会持续重发同一事件，不去重会瞬间刷满列表
+const faultDedup = new Map<string, number>();
+const FAULT_DEDUP_MS = { axis: 2000, limit: 2000, vacuum: 5000, can: 5000 };
+const shouldRecordFault = (key: string, windowMs: number) => {
+  const now = Date.now();
+  if (now - (faultDedup.get(key) ?? 0) < windowMs) return false;
+  faultDedup.set(key, now);
+  return true;
+};
 const fieldStatus = (field: FeedbackField) => feedbackStatus(
   feedbackMarks[field], feedbackClock.value,
   field === 'pressure' ? timeouts.pressure : adjustmentKeys.includes(field as AxisParameterName) ? timeouts.axis : timeouts.imu,
@@ -768,6 +803,9 @@ const saveActiveProfile = (force = false) => {
 const resetControlState = (preserveBatch = false) => {
   ackEvents.value = [];
   deviceEvents.value = [];
+  deviceFaults.value = [];
+  // CAN 故障是总线级状态，切换机械臂/重配不应清除；由 state=ok 或重新连接决定
+  faultDedup.clear();
   if (!preserveBatch) {
     batchState.value = null;
     if (batchTimer !== undefined) clearInterval(batchTimer);
@@ -1027,6 +1065,119 @@ const applyStop = (feedback: any) => {
   deviceEvents.value = deviceEvents.value.slice(0, 20);
 };
 
+// fault_bits 位定义只采用仓库已有依据（批次判定与到位事件判据），其余位不猜含义。
+// bit3 限位 / bit4 急停 / bit5 故障 / bit7 故障
+const FAULT_BIT_LABELS: Record<number, string> = {
+  3: '限位',
+  4: '急停',
+  5: '故障',
+  7: '故障',
+};
+const describeFaultBits = (bits: number) => {
+  const known: string[] = [];
+  const unknown: string[] = [];
+  for (let bit = 0; bit < 32; bit += 1) {
+    if ((bits & (1 << bit)) === 0) continue;
+    const label = FAULT_BIT_LABELS[bit];
+    if (label && !known.includes(label)) known.push(label);
+    else if (!label) unknown.push('bit ' + bit);
+  }
+  const parts = [...known];
+  if (unknown.length) parts.push('未定义 ' + unknown.join('/'));
+  return parts.join('、') || '无已定义位';
+};
+const LIMIT_TYPE_LABELS: Record<number, string> = { 1: '上行', 2: '下行' };
+
+// CAN 总线级故障：全局横幅，state=ok 自动消失；重发只刷新内容不重复记录
+const applyCanFault = (feedback: any) => {
+  const state = typeof feedback.state === 'string' ? feedback.state.trim().toLowerCase() : '';
+  if (state === 'ok') {
+    canFault.value = null;
+    faultDedup.delete('can');
+    return;
+  }
+  // 字段缺失时按故障处理：宁可多提示，不能让 CAN 掉线静默
+  if (!shouldRecordFault('can', FAULT_DEDUP_MS.can) && canFault.value) {
+    canFault.value = { ...canFault.value, raw: JSON.stringify(feedback, null, 2) };
+    return;
+  }
+  const message = typeof feedback.message === 'string' && feedback.message.trim()
+    ? feedback.message.trim()
+    : 'CAN 连接失败，请检查 USB 端口或更换一个端口进行重试';
+  const detailParts = [
+    feedback.detail ? '明细：' + feedback.detail : null,
+    feedback.channel !== null && feedback.channel !== undefined ? '通道 ' + feedback.channel : null,
+    feedback.timestamp !== null && feedback.timestamp !== undefined ? '时间 ' + feedback.timestamp : null,
+  ].filter(Boolean);
+  canFault.value = {
+    text: '连接失败：' + message,
+    detail: detailParts.join(' · '),
+    raw: JSON.stringify(feedback, null, 2),
+  };
+  feedbackConnected.value = false;
+};
+
+// 轴故障 / 限位 / 失压：三类共用一个入卡函数，按事件类型分别去重
+const applyDeviceFault = (feedback: any) => {
+  const deviceId = finiteFeedbackNumber(feedback.device_id);
+  const kind = feedback.data_type;
+  let key = '';
+  let windowMs = FAULT_DEDUP_MS.axis;
+  let text = '';
+  let type: 'warning' | 'error' = 'warning';
+
+  if (kind === 'axis_fault') {
+    if (deviceId === null || !Number.isInteger(deviceId)) return;
+    const bits = finiteFeedbackNumber(feedback.fault_bits);
+    key = `fault:${deviceId}:${bits ?? 'none'}`;
+    windowMs = FAULT_DEDUP_MS.axis;
+    type = 'error';
+    const parts = [
+      '轴 ' + deviceId + ' 故障',
+      bits === null ? 'fault_bits 未知' : 'fault_bits 0x' + bits.toString(16).toUpperCase() +
+        '（' + describeFaultBits(bits) + '）',
+      feedback.local_action !== null && feedback.local_action !== undefined
+        ? '本地动作：' + feedback.local_action : null,
+      feedback.detail !== null && feedback.detail !== undefined ? '明细：' + feedback.detail : null,
+      feedback.duration_ms !== null && feedback.duration_ms !== undefined
+        ? '持续 ' + feedback.duration_ms + 'ms' : null,
+    ].filter(Boolean);
+    text = parts.join(' · ');
+  } else if (kind === 'limit_event') {
+    if (deviceId === null || !Number.isInteger(deviceId)) return;
+    const limitType = finiteFeedbackNumber(feedback.limit_type);
+    key = `limit:${deviceId}:${limitType ?? 'none'}`;
+    windowMs = FAULT_DEDUP_MS.limit;
+    // 机械限位比软限位严重；limit_type 枚举未在仓库定义，仅 1/2 按需求表标注
+    type = limitType === 2 ? 'error' : 'warning';
+    const label = limitType === null ? '' : (LIMIT_TYPE_LABELS[limitType] ?? '类型 ' + limitType);
+    text = '轴 ' + deviceId + ' 触发' + label + (limitType === 2 ? '机械限位' : '软限位') +
+      (feedback.output_level !== null && feedback.output_level !== undefined
+        ? ' · 输出 ' + feedback.output_level : '');
+  } else if (kind === 'vacuum_loss_event') {
+    if (deviceId === null || !Number.isInteger(deviceId)) return;
+    const armNumber = deviceId >= 21 && deviceId <= 25 ? deviceId - 20 : null;
+    key = `vacuum:${deviceId}`;
+    windowMs = FAULT_DEDUP_MS.vacuum;
+    type = 'warning';
+    text = '臂 ' + (armNumber ?? deviceId) + ' 吸盘失压：压力值 ' +
+      (feedback.pressure_raw ?? '未知') + ' / 阈值 ' + (feedback.loss_threshold ?? '未知');
+  } else {
+    return;
+  }
+
+  if (!shouldRecordFault(key, windowMs)) return;
+  deviceFaults.value.unshift({
+    id: ++deviceFaultSequence,
+    text,
+    type,
+    raw: JSON.stringify(feedback, null, 2),
+  });
+  deviceFaults.value = deviceFaults.value.slice(0, 20);
+  // 收到设备告警即证明反馈通道仍在工作
+  feedbackConnected.value = true;
+};
+
 const applyFeedback = (feedback: any) => {
   if (feedback?.data_type === 'config_changed') { connectionChanged(); return; }
   if (!feedback || feedback.data_type === "error") {
@@ -1039,6 +1190,17 @@ const applyFeedback = (feedback: any) => {
   }
   if (feedback.data_type === 'cmd_ack') {
     applyAck(feedback);
+    return;
+  }
+  // 告警类不依赖当前确认臂上下文：CAN 故障是全局的，轴故障/限位/失压要能看到别的臂。
+  // 必须放在 seg 与 unitId 过滤之前，否则 vacuum_loss_event（臂级编号）会被静默丢弃。
+  if (feedback.data_type === 'can_fault') {
+    applyCanFault(feedback);
+    return;
+  }
+  if (feedback.data_type === 'axis_fault' || feedback.data_type === 'limit_event' ||
+      feedback.data_type === 'vacuum_loss_event') {
+    applyDeviceFault(feedback);
     return;
   }
   // 仅这些已核对的遥测话题使用 CAN SEG；均值和回执不能套用本规则。
@@ -2200,6 +2362,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .batch-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
 .local-stop-alert { width: min(100%, 980px); }
+.can-fault-alert { width: min(100%, 980px); }
+.can-fault-alert :deep(.el-alert__content) { width: 100%; }
+.can-fault-alert p { margin: 4px 0 0; font-size: 13px; line-height: 1.6; }
 .local-stop-alert :deep(.el-alert__content) { width: 100%; }
 .local-stop-alert p { margin: 4px 0 10px; font-size: 13px; line-height: 1.6; }
 .local-stop-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 6px; }

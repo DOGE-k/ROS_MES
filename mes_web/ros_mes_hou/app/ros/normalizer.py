@@ -147,6 +147,10 @@ def normalize_feedback_message(
     elif topic == topics["feedback_vacuum_loss"] and arm is not None:
         data_type = "vacuum_loss_event"
         feedback_type = f"臂{arm}吸盘失压告警"
+    # CAN 总线级故障：std_msgs/String，data 内嵌 JSON；无 module_id 语义，不按臂归属
+    elif topic == topics["feedback_can_fault"]:
+        data_type, feedback_type = "can_fault", "CAN 连接故障"
+        module_id_space = "system"
     # 臂级 21~25：IMU 话题识别为陀螺仪，其余按压力传感器
     elif topic == topics["feedback_imu"] and arm is not None:
         data_type, feedback_type = IMU_FEEDBACK_LABEL[0], f"臂{arm}陀螺仪姿态"
@@ -209,5 +213,23 @@ def normalize_feedback_message(
                 **resolve_ack_module(msg.get("module_id")),
             }
         )
+
+    if data_type == "can_fault":
+        # std_msgs/String：真实内容在 data 里的 JSON 字符串。
+        # 解析失败/缺失一律保留 None，不猜字段；state 缺失时前端按 error 处理。
+        normalized["position"] = None
+        normalized["position_valid"] = False
+        normalized["valid_fields"] = []
+        payload = msg.get("data")
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                payload = {}
+        payload = payload if isinstance(payload, dict) else {}
+        for field in ("state", "message", "detail", "channel", "timestamp"):
+            normalized[field] = _raw_json_value(payload.get(field))
+            if normalized[field] is not None:
+                normalized["valid_fields"].append(field)
 
     return normalized

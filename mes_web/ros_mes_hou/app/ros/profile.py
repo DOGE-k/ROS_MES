@@ -41,6 +41,8 @@ TOPIC_DEFAULTS: Dict[str, str] = {
     "feedback_stop": "/hardware/stop_notification",
     "feedback_fault": "/hardware/axis_fault",
     "feedback_limit": "/hardware/limit_event",
+    # CAN 总线级故障（std_msgs/String，data 内嵌 JSON：state/message/detail/channel/timestamp）
+    "feedback_can_fault": "/hardware/can_fault",
     "drawing_path": "/frontend_pointcloud_topic",
     "module_cmd": "/control/module_cmd",
     "module_confirm_success": "/hardware/module_confirm_success",

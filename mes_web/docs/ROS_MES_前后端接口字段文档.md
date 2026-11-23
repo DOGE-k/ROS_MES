@@ -534,7 +534,8 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 | `imu_pose` | `swing_angle/rotation_angle/x/y/z`，每个分量独立更新 |
 | `cmd_ack` | 回执事件提示，见下文 |
 | `axis_status`、`arrive_notification` | 后端批次消费者核验运行/目标到位/空闲；前端通过批次查询显示执行状态，另将到位事件 `angle`（0.01°/0.01mm）换算后补全该轴实测值，并在「到位 / 停止事件」卡片显示原始字段。事件不替代位置帧，也不单独改变批次判定 |
-| `stop_notification`、`axis_fault`、`limit_event`、`vacuum_loss_event` | 后端批次消费者遇到所属臂异常时停止后续下发；`stop_reason=1` 的正常停止可与其他证据组合判定完成。前端通过批次结果显示，停止事件另在「到位 / 停止事件」卡片显示原因，独立告警页未扩展 |
+| `stop_notification`、`axis_fault`、`limit_event`、`vacuum_loss_event` | 后端批次消费者遇到所属臂异常时停止后续下发；`stop_reason=1` 的正常停止可与其他证据组合判定完成。前端通过批次结果显示，停止事件另在「到位 / 停止事件」卡片显示原因；`axis_fault`/`limit_event`/`vacuum_loss_event` 另在「设备告警事件」卡片显示原始字段，**不依赖当前确认臂**（其他臂的故障同样可见），带 2~5 秒去重窗口，不参与批次判定 |
+| `can_fault` | CAN 总线级故障，`std_msgs/String` 的 `data` 内嵌 JSON：`state`(`ok`/`error`)、`message`、`detail`、`channel`、`timestamp`。前端在页面顶部显示常驻横幅，`state=ok` 时自动消失；字段缺失按 `error` 处理，解析失败不猜字段。`module_id_space=system`，不属于 SEG 或业务号 |
 | `pressure_average` | 已转发，前端未展示；ROS 均值采样归属仍待核实 |
 | `error` | 连接异常信息；不能继续将旧数值显示为实时 |
 

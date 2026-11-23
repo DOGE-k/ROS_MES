@@ -11,6 +11,21 @@
 
 ---
 
+
+## 2026-11-23（设备告警事件前端可见化 + can_fault 通道接通，已完成）
+
+- 设计依据见[设备告警事件前端可见化设计](设备告警事件前端可见化设计.md)。
+- 核查结论：`axis_fault`/`limit_event`/`vacuum_loss_event` 后端早已归一化并订阅，前端无分支；`can_fault` 三端全缺（全仓 0 命中）。三类事件不是"没写分支所以忽略"，而是在 `applyFeedback` 的 `module_id_space !== 'seg'` 与 `module_id !== confirmedSeg` 过滤处被提前 return，`vacuum_loss_event` 走臂级编号（21~25）必然被丢弃。
+- 后端新增 `can_fault`（3 处）：[profile.py](../ros_mes_hou/app/ros/profile.py) 加 `feedback_can_fault` 话题（可用 `ROS_TOPIC_FEEDBACK_CAN_FAULT` 覆盖）；[rosbridge.py](../ros_mes_hou/app/ros/rosbridge.py) 加入 `feedback_topics` 订阅列表；[normalizer.py](../ros_mes_hou/app/ros/normalizer.py) 加独立分支——`std_msgs/String` 的 `data` 内嵌 JSON，与数值事件不同构，不能套 `event_fields`；解析 `state`/`message`/`detail`/`channel`/`timestamp`，解析失败或缺失保留 None 不猜字段，并显式清空 `position`/`position_valid` 防止异常帧污染实测值。`module_id_space=system`（不复用 `mixed`，避免与 `cmd_ack` 归属语义混淆）。
+- 前端调整过滤顺序（关键）：[FineTuningPage.vue](../ros_mes_front/src/components/Main/ModulePage/FineTuningPage.vue) 把告警判断提到 `cmd_ack` 同层、seg 与 unitId 过滤之前。副作用是**其他臂的故障也能看到**，这是有意为之——别的臂出故障操作员同样需要知道。
+- 前端新增：CAN 故障常驻横幅（`state=ok` 自动消失、5 秒内重发只刷新不追加）；「设备告警事件」卡片（`axis_fault` 按轴+故障位 2 秒去重、`limit_event` 按轴+限位类型 2 秒去重、`vacuum_loss_event` 按臂 5 秒去重）；`deviceEvents` 类型补 `error` 级。文案保留固件原始值。
+- `fault_bits` 位定义只用仓库已有依据（[批次判定](../ros_mes_hou/app/ros/finetuning_batch.py) bit3 限位/bit4 急停/bit5、bit7 故障；到位事件判据 bit5、bit7），未定义位显示 `bit N` 并保留十六进制原值，不自行发明含义。
+- 明确不做：不自动急停、不自动重发、不改变批次判定（判定仍在 `finetuning_batch.py` 独立实现）、不解除联锁、不给 `axis_fault` 加"已恢复"（协议无恢复事件）、不新增独立告警页。
+- 验证：后端 `python -m unittest discover -s tests` **295/295** 通过（新增 `CanFaultFeedbackTest` 6 条，覆盖正常 error/恢复 ok/坏 JSON/缺 data/游离 position/话题覆盖）；前端 `npm run build` 类型检查与构建通过，`npm run test:finetuning` **172/172** 通过；临时脚本验证四类事件在新顺序下均到达前端分支（`applyCanFault`/`applyDeviceFault`），验证后已删除。未连接 ROS/串口/真实设备，未下发运动指令，未做真机验证。
+- `???` `/hardware/can_fault` 的 JSON 字段名按需求表实现，`docs/后端与ROS接口对接状态清单.md` 中该话题 ROS 侧发布实现仍为"待确认"；`???` `fault_bits` 完整位定义、`local_action`/`detail` 取值含义、`limit_type` 枚举均未在仓库找到，按原始数值显示不翻译，需 ROS/固件侧确认。
+
+---
+
 ## 2026-11-23（后端日志规范化：请求关联 ID、滚动文件、轮询降噪，已完成）
 
 - 新增 [app/core/logging_setup.py](../ros_mes_hou/app/core/logging_setup.py)：唯一日志配置入口（`setup_logging()`）。root 同时挂控制台（stderr）与 `logs/backend.log`（RotatingFileHandler，UTF-8，10MB×5）。两种行样式：**请求行** `时:分:秒.毫秒  200 OK  GET  路径  耗时  rid=xxxxxxxx`（状态码固定在第 14 列起、定宽对齐，窄终端折行时 200/409/422/500 仍在行首可见）；**业务行** `日期 时间.毫秒 级别 [模块] req=<8位> 消息`。`uvicorn.*` 交给 root 统一格式，`uvicorn.access` 关到 WARNING（请求行改由中间件输出），websockets/sqlalchemy/asyncio 降到 WARNING。环境变量：`LOG_LEVEL`、`LOG_FILE_LEVEL`、`LOG_DIR`、`LOG_FILE_MAX_BYTES`、`LOG_FILE_BACKUP_COUNT`、`LOG_SLOW_REQUEST_MS`、`LOG_POLLING`（1=轮询也按 INFO 打出）、`LOG_COLOR`（auto/1/0，仅控制台上色，文件永不写 ANSI）、`LOG_TO_FILE`。

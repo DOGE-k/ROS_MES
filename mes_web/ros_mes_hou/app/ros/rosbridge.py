@@ -527,7 +527,8 @@ class RosbridgeClient:
                         "feedback_sensor", "feedback_imu",
                         "feedback_pressure_avg", "feedback_vacuum_loss",
                         "feedback_cmd_ack", "feedback_axis_status", "feedback_arrive",
-                        "feedback_stop", "feedback_fault", "feedback_limit")
+                        "feedback_stop", "feedback_fault", "feedback_limit",
+                        "feedback_can_fault")
         ]
 
         try:

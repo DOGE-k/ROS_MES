@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from app.ros.normalizer import normalize_feedback_message, resolve_ack_module
-from app.ros.profile import ROS1_PROFILE, ROS2_PROFILE
+from app.ros.profile import ROS1_PROFILE, ROS2_PROFILE, TOPIC_DEFAULTS
 from app.ros.rosbridge import RosbridgeClient, build_fine_tuning_publish_payload
 
 
@@ -121,6 +121,79 @@ class FeedbackSafetyTest(unittest.TestCase):
                 self.assertIsNone(feedback["business_module_id"])
         for module_id in (None, -1, "invalid", True, 1.5):
             self.assertEqual(resolve_ack_module(module_id, '{"17":0}')["module_resolution"], "unknown")
+
+
+class CanFaultFeedbackTest(unittest.TestCase):
+    """CAN 总线故障：std_msgs/String 套 JSON，与数值事件不同构，必须单独解析。"""
+
+    def test_can_fault_error_payload_is_parsed(self):
+        message = {"data": json.dumps({
+            "state": "error",
+            "message": "CAN 连接失败，请检查 USB 端口",
+            "detail": "device not found",
+            "channel": "can0",
+            "timestamp": 1732000000,
+        })}
+        feedback = normalize_feedback_message("/hardware/can_fault", message)
+        self.assertEqual(feedback["data_type"], "can_fault")
+        # 系统级事件不属于 CAN SEG 或业务号，不能混入 cmd_ack 的归属语义
+        self.assertEqual(feedback["module_id_space"], "system")
+        self.assertEqual(feedback["state"], "error")
+        self.assertEqual(feedback["message"], "CAN 连接失败，请检查 USB 端口")
+        self.assertEqual(feedback["detail"], "device not found")
+        self.assertEqual(feedback["channel"], "can0")
+        self.assertEqual(feedback["timestamp"], 1732000000)
+        self.assertEqual(feedback["valid_fields"],
+                         ["state", "message", "detail", "channel", "timestamp"])
+        # 字符串消息没有位置语义，不能被当成测量值
+        self.assertIsNone(feedback["position"])
+        self.assertFalse(feedback["position_valid"])
+        json.dumps(feedback, allow_nan=False)
+
+    def test_can_fault_recovery_state_is_recognisable(self):
+        feedback = normalize_feedback_message("/hardware/can_fault", {"data": '{"state": "ok"}'})
+        self.assertEqual(feedback["data_type"], "can_fault")
+        self.assertEqual(feedback["state"], "ok")
+        self.assertEqual(feedback["valid_fields"], ["state"])
+
+    def test_malformed_or_missing_can_fault_payload_does_not_guess(self):
+        for message in ({}, {"data": None}, {"data": "not json"}, {"data": "[]"},
+                        {"data": 123}, {"data": '{"state": "error"'}):
+            with self.subTest(message=message):
+                feedback = normalize_feedback_message("/hardware/can_fault", message)
+                self.assertEqual(feedback["data_type"], "can_fault")
+                self.assertEqual(feedback["valid_fields"], [])
+                self.assertIsNone(feedback["state"])
+                self.assertIsNone(feedback["message"])
+                self.assertFalse(feedback["position_valid"])
+                json.dumps(feedback, allow_nan=False)
+
+    def test_can_fault_accepts_already_decoded_payload(self):
+        # 若上游已把 data 解析成对象（而非 std_msgs/String 的字符串），同样可用，不重复解码
+        feedback = normalize_feedback_message(
+            "/hardware/can_fault", {"data": {"state": "error", "message": "CAN 掉线"}})
+        self.assertEqual(feedback["data_type"], "can_fault")
+        self.assertEqual(feedback["state"], "error")
+        self.assertEqual(feedback["message"], "CAN 掉线")
+        self.assertEqual(feedback["valid_fields"], ["state", "message"])
+
+    def test_can_fault_stray_position_is_not_a_measurement(self):
+        feedback = normalize_feedback_message(
+            "/hardware/can_fault", {"data": '{"state": "error"}', "position": 5, "device_id": 1})
+        self.assertIsNone(feedback["position"])
+        self.assertFalse(feedback["position_valid"])
+        self.assertEqual(feedback["valid_fields"], ["state"])
+
+    def test_can_fault_topic_override_is_honoured(self):
+        topics = dict(TOPIC_DEFAULTS)
+        topics["feedback_can_fault"] = "/custom/can_fault"
+        feedback = normalize_feedback_message(
+            "/custom/can_fault", {"data": '{"state": "error"}'}, topics=topics)
+        self.assertEqual(feedback["data_type"], "can_fault")
+        # 旧默认话题在覆盖后不再命中，避免两套话题同时被当成 CAN 故障
+        stale = normalize_feedback_message(
+            "/hardware/can_fault", {"data": '{"state": "error"}'}, topics=topics)
+        self.assertEqual(stale["data_type"], "unknown")
 
 
 class FakeSocket:
