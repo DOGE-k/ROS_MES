@@ -57,11 +57,11 @@ def update_config_from_env():
     Config.MAX_SWING_ANGLE    = float(os.environ['MAX_SWING_ANGLE'])
     Config.TELESCOPIC_MIN_MM  = float(os.environ['TELESCOPIC_MIN_MM'])
     Config.TELESCOPIC_MAX_MM  = float(os.environ['TELESCOPIC_MAX_MM'])
-    # 点云几何可达范围（cm，用于逆解 j3 的几何裁剪，非轴行程限位）
+    # 点云几何可达范围（cm，用于逆解 j3 的范围告警，不做裁剪）
     Config.ARM_MIN_EXTEND   = float(os.environ['ARM_MIN_EXTEND'])       # cm
     Config.ARM_MAX_EXTEND   = float(os.environ['ARM_MAX_EXTEND'])       # cm
     # 伸缩轴为直线位移轴，反馈/指令单位均为 mm（CAN 字段 0.01mm，由 feedback_node 换算）
-    # 单次伸缩增量限幅（mm），publish_cmd 增量限幅用；与 telescopic_node 共用同一配置键
+    # 单次伸缩增量告警阈值（mm），超过仅告警，不裁剪解算结果
     Config.TELESCOPIC_MAX_DELTA_MM = float(os.environ['TELESCOPIC_MAX_DELTA_MM'])
     Config.MAX_WORKERS      = int(os.environ['MAX_WORKERS'])
     Config.CYCLE_INTERVAL   = float(os.environ['CYCLE_INTERVAL'])       # 指令周期间隔
@@ -69,20 +69,28 @@ def update_config_from_env():
 
 # ===================== 运动学解算 =====================
 def solve_3dof(arm_base, target_p):
-    """3自由度逆运动学解算，返回关节目标角度/长度"""
+    """3自由度逆运动学解算，返回关节目标角度/长度。
+
+    限位只用于判定解算结果是否落在可执行范围内，不再对结果做 clip 回写。
+    轴节点负责最终的安全校验；微调用于补偿机械误差，而不是修改解算目标。
+    """
     dx, dy, dz = target_p - arm_base
     dxy = np.hypot(dx, dy)
     j1 = np.degrees(np.arctan2(dy, dx)) if dxy > 1e-3 else 0.0
     ideal_j2 = np.pi/2 if abs(dz) < 1e-6 else np.arctan2(dxy, dz)
-    j2_min = np.radians(Config.SWING_MIN_ANGLE)
-    j2_max = np.radians(Config.MAX_SWING_ANGLE)
-    limited_j2 = np.clip(ideal_j2, j2_min, j2_max)
-    if ideal_j2 < j2_min or ideal_j2 > j2_max:
-        rospy.logwarn(f"摆动角超限! 理想值: {np.degrees(ideal_j2):.2f}°, "
-                      f"已限制至 [{Config.SWING_MIN_ANGLE}, {Config.MAX_SWING_ANGLE}]°")
-    j3 = dxy if abs(dz) < 1e-6 else dz / np.cos(limited_j2)
-    j3 = np.clip(j3, Config.ARM_MIN_EXTEND, Config.ARM_MAX_EXTEND)
-    return round(j1, 2), round(np.degrees(limited_j2), 2), round(j3, 2)
+
+    j2_deg = np.degrees(ideal_j2)
+    if j2_deg < Config.SWING_MIN_ANGLE or j2_deg > Config.MAX_SWING_ANGLE:
+        rospy.logwarn("摆动解算值 %.2f° 超出限位 [%.1f, %.1f]°，按解算值下发，由轴节点校验",
+                      j2_deg, Config.SWING_MIN_ANGLE, Config.MAX_SWING_ANGLE)
+
+    # 目标点到臂座的距离；直接使用解算值，不再按限位裁剪
+    j3 = float(np.hypot(dxy, dz))
+    if j3 < Config.ARM_MIN_EXTEND or j3 > Config.ARM_MAX_EXTEND:
+        rospy.logwarn("伸缩解算值 %.2fcm 超出几何可达范围 [%.1f, %.1f]cm，按解算值下发",
+                      j3, Config.ARM_MIN_EXTEND, Config.ARM_MAX_EXTEND)
+
+    return round(j1, 2), round(j2_deg, 2), round(j3, 2)
 
 
 # ===================== ROS 节点B =====================
@@ -271,14 +279,11 @@ class KinematicsNode:
             target_j3_mm = target_j3_cm * 10.0
             delta_tel = target_j3_mm - cur_tel
 
-            # 增量限幅：单次增量上限 + 轴绝对限位（全部取自 rob_arm.env）
-            delta_rot = max(Config.ROTATION_MIN_ANGLE, min(delta_rot, Config.ROTATION_MAX_ANGLE))
-            delta_sw  = max(Config.SWING_MIN_ANGLE, min(delta_sw, Config.MAX_SWING_ANGLE))
-            delta_tel = max(-Config.TELESCOPIC_MAX_DELTA_MM,
-                            min(delta_tel, Config.TELESCOPIC_MAX_DELTA_MM))
-            # 伸缩轴按绝对行程再钳位，避免下发越界增量被轴节点整条丢弃
-            delta_tel = max(Config.TELESCOPIC_MIN_MM - cur_tel,
-                            min(delta_tel, Config.TELESCOPIC_MAX_MM - cur_tel))
+            # 解算结果就是最终目标：不做绝对限位/单次增量裁剪，
+            # 只提示超范围，由轴节点做最终安全校验。
+            if abs(delta_tel) > Config.TELESCOPIC_MAX_DELTA_MM:
+                rospy.logwarn("Arm%d 伸缩增量 %.2fmm 超过建议单次值 %.1fmm，按解算结果下发",
+                              arm_id, delta_tel, Config.TELESCOPIC_MAX_DELTA_MM)
 
         # V2 device_id 规则（device_id 即 AXIS 寻址单元，不再乘 100）：
         #   每臂 3 轴（J1旋转/J2摆动/J3伸缩），轴号=1~15
@@ -383,8 +388,6 @@ class KinematicsNode:
         base = np.array(item["base"])
         alpha = np.array(item["alpha"])
         j1, j2, j3 = solve_3dof(base, alpha)
-        if j2 < Config.SWING_MIN_ANGLE or j2 > Config.MAX_SWING_ANGLE:
-            rospy.logwarn(f"机械臂 {item.get('arm_id','?')} 摆动角极限 {j2}°")
         return {
             "alpha": alpha.tolist(),
             "beta": item["beta"],

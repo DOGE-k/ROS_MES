@@ -24,6 +24,8 @@
 - 新增 [一键部署脚本](../../deploy/install_all.sh)：自动安装系统依赖、Python 3.10+、Node.js、ROS Noetic/rosbridge、ROS Python 依赖，编译 catkin 工作空间，创建后端 venv 与前端 npm 依赖，初始化数据库，补齐 `DB_PATH`/`ZLG_LIBUSB_PATH`/CAN 配置并调用驱动安装脚本；支持 `--mock-only`、`--skip-ros-install`、`--mirror`、`--dry-run`，修改配置前自动备份。
 - 新增 [部署检查脚本](../../deploy/check_deploy.sh)：只读检查系统版本、ROS/消息、Python/Node 依赖、后端与 ROS 配置、前后端数据库一致性、CAN 库与 udev/设备、端口与服务、文件属主；输出 PASS/WARN/FAIL，支持 `--mock-only` 和 `--strict`。
 - 验证：两个脚本通过 `bash -n`；`install_all.sh` 的完整与 `--mock-only` 预览均通过；`check_deploy.sh --mock-only` 已实际运行并正确输出 PASS/WARN/FAIL。未在干净新机器上执行完整安装。
+- 调整逆解结果与限位的关系：`kinematics_node.solve_3dof()` 不再把摆动/伸缩结果 `clip` 到限位，直接返回理想解；`publish_cmd()` 取消绝对限位与单次伸缩增量裁剪，超限只告警，最终由三轴节点做安全校验并丢弃。微调继续作为机械误差补偿，不再被解算阶段的限位改写覆盖。
+- 验证：`kinematics_node.py` 通过 `py_compile`；用 `(30,0,30)` 等目标点实测，摆动解算值保持 45°，未被裁剪到 15°；伸缩结果使用目标点到臂座的真实距离。未在真机执行运动验证。
 
 ---
 
