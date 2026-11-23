@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Dict
 
 from app.ros.profile import RosProfile
+
+logger = logging.getLogger(__name__)
 
 
 class RosbridgeError(RuntimeError):
@@ -154,7 +157,7 @@ class RosDispatcher(ABC):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            print(f"底层 ROS 数据节点 ({script_path}) 已成功唤醒，正在监听数据...")
+            logger.info("底层 ROS 数据节点 (%s) 已成功唤醒，正在监听数据...", script_path)
 
             while True:
                 line = await process.stdout.readline()
@@ -164,8 +167,8 @@ class RosDispatcher(ABC):
                 if decoded_line:
                     yield decoded_line
         except asyncio.CancelledError:
-            print("停止底层 ROS 数据流采集...")
+            logger.info("停止底层 ROS 数据流采集...")
             process.terminate()
             raise
         except Exception as exc:
-            print(f"启动 ROS 节点失败: {exc}")
+            logger.error("启动 ROS 节点失败: %s", exc)

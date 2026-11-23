@@ -7,10 +7,13 @@
 rospy 不可用时静默禁用，不影响 HTTP 服务与其他功能。
 """
 import json
+import logging
 import threading
 from typing import Any, Dict, Optional
 
 from app.ros.base import RosDispatchError
+
+logger = logging.getLogger(__name__)
 
 try:
     import rospy
@@ -85,7 +88,7 @@ def ros_node():
     global pub, ros_ready
 
     if rospy is None or String is None:
-        print(f"❌ rospy 加载失败：{ROS_IMPORT_ERROR}")
+        logger.error("❌ rospy 加载失败：%s", ROS_IMPORT_ERROR)
         return
 
     rospy.init_node(

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from typing import Any, AsyncIterator, Dict
@@ -21,6 +22,8 @@ from app.core.config import settings
 from app.ros.base import RosDispatcher, RosbridgeError
 from app.ros.normalizer import normalize_feedback_message
 from app.ros.profile import RosProfile, get_active_profile
+
+logger = logging.getLogger(__name__)
 
 # V2.1：module_id / device_id 不做静态配置，全部取自前端微调请求（record.module_id / record.device_id）
 # device_id 即 AXIS 寻址单元（V2.1 三轴布局）：1~15=轴号（每臂 关节1=旋转/2=摆动/3=伸缩，
@@ -351,7 +354,7 @@ class RosbridgeClient:
     async def publish_softstop(self) -> bool:
         """全局急停：/control/softstop 的 typeless publish（与 ROS1 现网行为一致）。"""
         if websockets is None:
-            print("[紧急故障] websockets 库未安装，无法发送急停指令")
+            logger.error("[紧急故障] websockets 库未安装，无法发送急停指令")
             return False
 
         softstop_topic = self.profile.topics["softstop"]
@@ -372,19 +375,19 @@ class RosbridgeClient:
         try:
             async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
                 await asyncio.wait_for(ws.send(emergency_msg), timeout=2.0)
-            print(f"[急停] 指令已发送: {softstop_topic}")
+            logger.warning("🔴 急停指令已发送: %s", softstop_topic)
             return True
         except asyncio.TimeoutError:
-            print("[紧急故障] 急停 WebSocket 发送超时")
+            logger.error("[紧急故障] 急停 WebSocket 发送超时")
             return False
         except Exception as exc:
-            print(f"[紧急故障] 急停系统异常: {exc}")
+            logger.error("[紧急故障] 急停系统异常: %s", exc)
             return False
 
     async def publish_stop_release(self) -> bool:
         """急停解除：/control/softstop_release（softstop_node 转发 /arm/cmd_vel [0x04]）。"""
         if websockets is None:
-            print("[紧急故障] websockets 库未安装，无法发送急停解除指令")
+            logger.error("[紧急故障] websockets 库未安装，无法发送急停解除指令")
             return False
 
         release_topic = self.profile.topics["softstop_release"]
@@ -405,13 +408,13 @@ class RosbridgeClient:
         try:
             async with websockets.connect(self.url, close_timeout=1, open_timeout=3) as ws:
                 await asyncio.wait_for(ws.send(release_msg), timeout=2.0)
-            print(f"[急停解除] 指令已发送: {release_topic}")
+            logger.warning("🟡 急停解除指令已发送: %s", release_topic)
             return True
         except asyncio.TimeoutError:
-            print("[紧急故障] 急停解除 WebSocket 发送超时")
+            logger.error("[紧急故障] 急停解除 WebSocket 发送超时")
             return False
         except Exception as exc:
-            print(f"[紧急故障] 急停解除系统异常: {exc}")
+            logger.error("[紧急故障] 急停解除系统异常: %s", exc)
             return False
 
     async def publish_local_stop(self, *, scope: str, module_id: int, device_id: int | None = None) -> bool:
@@ -423,7 +426,7 @@ class RosbridgeClient:
         不经过 softstop_node，是因为它只订阅全局急停话题并固定转发 [0x01]，会把局部停升级成全停。
         """
         if websockets is None:
-            print("[局部停] websockets 库未安装，无法发送指令")
+            logger.error("[局部停] websockets 库未安装，无法发送指令")
             return False
 
         topic = self.profile.topics["arm_cmd"]
@@ -440,7 +443,7 @@ class RosbridgeClient:
             targets = [{"module_id": int(module_id), "device_id": axis, "position": [0x0C, 1]}
                        for axis in axes]
         else:
-            print(f"[局部停] 未知 scope 或缺 device_id：{scope!r}/{device_id!r}")
+            logger.warning("[局部停] 未知 scope 或缺 device_id：%r/%r", scope, device_id)
             return False
 
         try:
@@ -458,14 +461,14 @@ class RosbridgeClient:
                         ensure_ascii=False,
                     )
                     await asyncio.wait_for(ws.send(message), timeout=2.0)
-                    print(f"[局部停] 指令已发送: {topic} scope={scope} "
-                          f"device_id={payload['device_id']} position={payload['position']}")
+                    logger.warning("🛑 局部停指令已发送: %s scope=%s device_id=%s position=%s",
+                                   topic, scope, payload["device_id"], payload["position"])
             return True
         except asyncio.TimeoutError:
-            print("[局部停] WebSocket 发送超时")
+            logger.error("[局部停] WebSocket 发送超时")
             return False
         except Exception as exc:
-            print(f"[局部停] 发送异常: {exc}")
+            logger.error("[局部停] 发送异常: %s", exc)
             return False
 
     async def publish_web_cmd(self, command: str, payload: Dict[str, Any]) -> Dict[str, Any]:

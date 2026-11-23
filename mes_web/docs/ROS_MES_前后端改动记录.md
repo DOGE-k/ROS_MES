@@ -1,4 +1,4 @@
-# ROS_MES 前后端改动记录（交接日志）
+﻿# ROS_MES 前后端改动记录（交接日志）
 
 > 参照 ROS 侧的记录方式：**边改边记录，一事一条**，状态标注、未定事项打 `???`、详情交叉引用到对应文档，便于随时交接。
 >
@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-11-23（后端日志规范化：请求关联 ID、滚动文件、轮询降噪，已完成）
+
+- 新增 [app/core/logging_setup.py](../ros_mes_hou/app/core/logging_setup.py)：唯一日志配置入口（`setup_logging()`）。root 同时挂控制台（stderr）与 `logs/backend.log`（RotatingFileHandler，UTF-8，10MB×5）。两种行样式：**请求行** `时:分:秒.毫秒  200 OK  GET  路径  耗时  rid=xxxxxxxx`（状态码固定在第 14 列起、定宽对齐，窄终端折行时 200/409/422/500 仍在行首可见）；**业务行** `日期 时间.毫秒 级别 [模块] req=<8位> 消息`。`uvicorn.*` 交给 root 统一格式，`uvicorn.access` 关到 WARNING（请求行改由中间件输出），websockets/sqlalchemy/asyncio 降到 WARNING。环境变量：`LOG_LEVEL`、`LOG_FILE_LEVEL`、`LOG_DIR`、`LOG_FILE_MAX_BYTES`、`LOG_FILE_BACKUP_COUNT`、`LOG_SLOW_REQUEST_MS`、`LOG_POLLING`（1=轮询也按 INFO 打出）、`LOG_COLOR`（auto/1/0，仅控制台上色，文件永不写 ANSI）、`LOG_TO_FILE`。
+- 新增 [app/core/request_log.py](../ros_mes_hou/app/core/request_log.py)：纯 ASGI 请求日志中间件，按路由分级——轮询 GET（急停状态、局部停列表、批次 active、hardware/realtime、WS、静态）成功时降 DEBUG；写操作 INFO；4xx INFO（409 重复下发、422 参数不合法可直接看到）；慢请求（默认 >1000ms）WARNING；5xx/未处理异常 ERROR 带栈。响应回写 `X-Request-ID`，客户端带了就沿用。
+- 请求关联 ID 用 `contextvars` 传递，批次 `_execute`/反馈任务继承创建它的请求 ID，因此一次微调的「HTTP 请求 → 📋 登记 → 📤 发送 → 🎯 到位 → 📝 结论」可用同一个 `req=` 串起来。
+- 启动横幅：`app/main.py` 启动时打印 pid、ROS_VERSION、执行模式（mock/real）、连接 revision、数据库路径、日志目标，便于确认"当前跑的是哪套配置"，避免拿旧进程日志判断新代码。
+- 补日志点（此前一行都没有或只有 `print`）：旧单轴接口 `POST /api/control/finetuning`（明确标注"不经批次、无到位判定"）、急停触发/解除/人工解除、局部停及其清除、连接设置更新（打印字段变更与 revision 前后值）、WebSocket 连接与断开、会话登记失败、rosbridge 急停/局部停发送结果。
+- 全后端 20 处 `print(` 统一改为 logger（`app/ros/base.py`、`rosbridge.py`、`ros1/native.py`、`api/endpoints/module.py`、`ws_stream.py`），日志不再绕过级别、格式与落盘。
+- 测试隔离：检测到 `unittest`/`pytest` 在跑时默认不写文件，避免用例日志混入现场日志（需要时 `LOG_TO_FILE=1`）。`.gitignore` 增加 `mes_web/ros_mes_hou/logs/`。
+- 验证：后端 `python -m unittest discover -s tests` **289/289** 通过；实际启动 uvicorn 后确认启动横幅落盘、`GET /api/device/ -> 200` 记 INFO、轮询 401 记 INFO（联锁/登录态变化可见）、轮询 200 只在 `LOG_FILE_LEVEL=DEBUG` 时落盘（另起 8011 实例验证后已清理）；`X-Request-ID` 回显生效（自带 `test1234` 原样返回）。未跑前端构建/测试（未改前端），未连接 ROS/串口/真实设备，执行模式为 real 时也未下发任何运动指令。
+- `???` 前端 `rosApi.ts` 里仍保留旧单轴接口 `/control/finetuning` 的封装，若后续确认无页面调用，可连同该接口一并下线；下线前旧接口日志仍需保留。
+---
 
 ## 2026-11-19（ROS2 独立消息模块及离线验证，已完成、未运行接入）
 

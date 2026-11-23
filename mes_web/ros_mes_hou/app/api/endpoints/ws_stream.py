@@ -1,6 +1,7 @@
 # app/api/endpoints/ws_stream.py
 import asyncio
 import json
+import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, status
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
@@ -10,6 +11,7 @@ from app.core import security
 from app.db import models
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 @router.websocket("/ws/robot_status")
 async def robot_status_stream(websocket: WebSocket, token: str = Query(None), db: Session = Depends(get_db)):
@@ -46,7 +48,7 @@ async def robot_status_stream(websocket: WebSocket, token: str = Query(None), db
     
      # 接受前端的连接请求
     await websocket.accept()
-    print(f"用户 {username} 已通过 WebSocket 连接大屏！开始推送实时数据...")
+    logger.info("用户 %s 已通过 WebSocket 连接大屏，开始推送实时数据", username)
     
     # 3. 开始推送数据
     try:
@@ -54,4 +56,4 @@ async def robot_status_stream(websocket: WebSocket, token: str = Query(None), db
             await websocket.send_text(real_data_json_str)
             
     except WebSocketDisconnect:
-        print(f"用户 {username} 已断开连接。")
+        logger.info("用户 %s 已断开连接", username)

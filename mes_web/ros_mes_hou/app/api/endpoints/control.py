@@ -1,4 +1,5 @@
 # app/api/endpoints/control.py
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -20,6 +21,7 @@ from app.schemas.hardware import HardwareFeedback, EmergencyStopResponse, Manual
 from sqlalchemy.orm import Session
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/debug-settings")
@@ -29,8 +31,14 @@ def get_debug_settings(current_user: models.User = Depends(get_current_user)):
 
 @router.patch("/debug-settings")
 def update_debug_settings(record: SettingsChange, current_user: models.User = Depends(get_current_user)):
+    before = runtime_settings.snapshot()
     result = runtime_settings.update(record)
     get_ros_dispatcher().start_native_node()
+    # 连接配置切换是"日志里为什么突然变成 mock/real"的唯一解释，必须留痕
+    changed = {key: (before.get(key), result.get(key))
+               for key in result if key != "revision" and before.get(key) != result.get(key)}
+    logger.info("🔧 连接设置已更新 | 操作员=%s | revision %s→%s | 变更 %s",
+                current_user.Username, before.get("revision"), result.get("revision"), changed or "无字段变化")
     return {"code": 200, "message": "连接设置已应用，未自动下发任务", "data": result}
 
 
@@ -131,7 +139,9 @@ async def request_local_stop(
     else:
         message = f"{scope_label} 局部停指令发送失败，MES 已锁定该目标"
     updated = stop_holds.update_state(db, hold["id"], "sent" if sent else "unknown", message) or hold
-    print(f"操作员 {current_user.Username} 执行局部停：{scope_label}（{'模拟' if simulated else '真实'}）")
+    logger.warning("🛑 局部停 | 操作员=%s | %s | 结果=%s | 模式=%s | hold=%s",
+                   current_user.Username, scope_label, "已发送" if sent else "发送失败已锁定",
+                   "模拟" if simulated else "真实", updated.get("id"))
     return {"code": 200, "message": message, "data": {
         **updated, "simulated": simulated, "connection_revision": dispatcher.revision}}
 
@@ -163,7 +173,8 @@ def clear_local_stop_holds(
     client = getattr(dispatcher, "client", None)
     mode = getattr(client, "execution_mode", "real")
     cleared = stop_holds.clear_module(db, module_id, mode=mode)
-    print(f"操作员 {current_user.Username} 清除模块 {module_id} 的局部停记录 {cleared} 条")
+    logger.info("🧹 清除模块局部停记录 | 操作员=%s | 模块=%s | 清除 %s 条 | 模式=%s",
+                current_user.Username, module_id, cleared, mode)
     return {"code": 200, "message": "已清除 MES 局部停记录；未发送解除或运动指令", "data": {
         "module_id": module_id, "cleared": cleared, "connection_revision": dispatcher.revision}}
 
@@ -181,6 +192,8 @@ def clear_local_stop_hold(
     result = stop_holds.clear(db, hold_id, mode=mode)
     if result is None:
         raise HTTPException(404, "局部停记录不存在")
+    logger.info("🧹 清除单条局部停记录 | 操作员=%s | hold=%s | 模式=%s",
+                current_user.Username, hold_id, mode)
     return {"code": 200, "message": "已清除 MES 局部停记录；未发送解除或运动指令", "data": result}
 
 
@@ -226,6 +239,13 @@ def send_fine_tuning(
         dispatch_result = dispatcher.dispatch("fine_tuning", payload)
     except (RosDispatchError, RosbridgeError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # 旧单轴接口不经 BatchManager，之前一行日志都不打：真发了运动也查不到。
+    # 这里单独留一条，并标明"不经批次"，避免和批次的 📤 混淆。
+    logger.info("📤 旧单轴接口下发（不经批次，无到位判定） | 模块%s 轴%s %s %+.2f%s | 模式=%s | 记录 id=%s",
+                business_module_id, business_device_id, record.parameter_name, position,
+                "mm" if record.parameter_name == "telescopic" else "°",
+                getattr(client, "execution_mode", "real"), db_record.id)
 
     return {
         "code": 200,
@@ -318,7 +338,9 @@ async def manually_release_emergency_stop(
         state = batch_manager.clear_safety(record.expected_generation, dispatcher.emergency_mode)
         if state["simulated"]:
             dispatcher.emergency_client.robot.stop(False)
-    print(f"操作员 {current_user.Username} 人工确认并清除了 MES 急停记录。")
+    logger.warning("🟢 人工解除 MES 急停 | 操作员=%s | 模式=%s | 期望代次=%s | 当前代次=%s",
+                   current_user.Username, dispatcher.emergency_mode,
+                   record.expected_generation, state.get("generation"))
     return {"code": 200, "message": "已人工解除 MES 急停状态", "data": {
         **state, "connection_revision": dispatcher.revision}}
 
@@ -366,13 +388,14 @@ async def activate_emergency_stop(
     """
     点击按钮：触发机械臂急停！
     """
-    print(f"警告：操作员 {current_user.Username} 触发了紧急停止！")
     dispatcher = get_ros_dispatcher()
     mode = dispatcher.emergency_mode
     with runtime_settings.operation(dispatcher.revision):
         batch_manager.set_safety("stop_requested", mode)
         success = await dispatcher.trigger_emergency_stop()
         batch_manager.set_safety("stop_sent" if success else "stop_unknown", mode)
+    logger.warning("🔴 急停触发 | 操作员=%s | 模式=%s | 结果=%s",
+                   current_user.Username, mode, "已发送" if success else "发送失败")
 
     if success:
         return {
@@ -393,12 +416,13 @@ async def release_emergency_stop(
     急停解除：/control/softstop_release → softstop_node 转发 /arm/cmd_vel [0x04]
     （三轴版接口清单 §5：系统级指令 1=急停 / 4=解除 / 8=模块停）
     """
-    print(f"操作员 {current_user.Username} 执行急停解除。")
     dispatcher = get_ros_dispatcher()
     mode = dispatcher.emergency_mode
     with runtime_settings.operation(dispatcher.revision):
         success = await dispatcher.release_emergency_stop()
         batch_manager.set_safety(("clear" if mode == "mock" else "release_sent") if success else "stop_unknown", mode)
+    logger.warning("🟡 急停解除指令 | 操作员=%s | 模式=%s | 结果=%s",
+                   current_user.Username, mode, "已发送" if success else "发送失败")
 
     if success:
         return {

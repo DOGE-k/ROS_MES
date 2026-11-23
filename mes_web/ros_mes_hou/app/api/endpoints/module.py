@@ -1,5 +1,7 @@
 # app/api/endpoints/module.py
 
+import logging
+
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,7 @@ from app.ros.rosbridge import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def first_not_none(*values):
@@ -39,7 +42,7 @@ def _register_session(db, *, module_id, seg, device_id, x, y, unit_ids, dispatch
         )
         return {"session_id": record["id"], "session": record}
     except Exception as exc:  # SQLite 写锁等异常不应把已完成的握手判为失败
-        print(f"[会话] 登记失败，本次不可续接：{exc}")
+        logger.warning("[会话] 登记失败，本次不可续接：%s", exc)
         return {"session_id": None, "session_error": str(exc)}
 
 
