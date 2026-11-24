@@ -11,6 +11,17 @@
 
 ---
 
+## 2026-11-24（补 README 数据库说明，已完成）
+
+- 首次提交（`4bd9d1f` 前身 `d4d23f0`）只更新了 `mes_web/` 内的文档，根 `README.md` 漏改。本次补齐三处：
+  - 第 49 行原写“后端启动时会创建缺失的表”，未提结构对齐。改为说明 `create_all()` 建缺失表 + `ensure_schema()` 对齐已有表，并补“改字段只需改 `models.py`，重启即自动对齐”及指向 `AGENTS.md`「数据库结构变更」章节和 `check_schema_drift.py`。
+  - 第 25 行原写 `sqlite_create.py` 是“建表 + 种子数据”，与实际不符：它只建 18 张表，ORM 有 22 张，缺的 6 张（`Module`、`control_safety`、`control_sessions`、`control_stop_holds`、`fine_tuning_batches`、`ros_debug_settings`）由 `create_all` 补。改为“种子数据 + 部分建表，表结构以 `models.py` 为准”。
+  - 文档索引补 [数据库表结构](ROS_MES_数据库表结构.md) 一行。
+- 核查其他文档是否需要同步：`后端与ROS接口对接状态清单.md` 是 ROS 对接状态记录，不涉及表结构定义，无需改；`设备告警事件前端可见化设计.md`、`前后端命名规范.md` 与本次改动无关。全仓搜索确认无指向已删除的 `build_db_design*` / `数据库设计v1.2*` 的残留引用。
+- 验证：README 相对链接 13 个全部有效；`mes_web/docs/` 链接 189 个全部有效；`git diff --check` 无空白错误。
+
+---
+
 ## 2026-11-24（ensure_schema 改为从 models.py 自动推导，不再手维护建表 DDL，已完成）
 
 **背景**：`app/db/schema.py` 原先只处理 `fine_tuning` 一张表，且把 8 个新列和整表重建 DDL **手抄**成两个常量（`FINE_TUNING_ADDED_COLUMNS`、`_FINE_TUNING_REBUILD_DDL`）。这等于在 `models.py` 之外又维护一份结构描述，改字段时忘同步就永远补不上。本次改成全部从 ORM 现算。

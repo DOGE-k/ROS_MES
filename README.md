@@ -22,7 +22,7 @@
 | `ros2_robot_control_backend/` | ROS2（rclpy）迁移副本，未作为现网入口；部分脚本/launch 仍保留 ROS1 写法 | ROS2 · rclpy（迁移中） |
 | `docs/` | 双方共享的接口契约、ROS/CAN 资料、跨系统报告及整仓历史归档 | — |
 | `deploy/` | 部署配置与说明（V1.1 指南见 `deploy/README_DEPLOY.md`；Ubuntu 一键安装 `install_all.sh`、自检 `check_deploy.sh`） | — |
-| `sqlite_create.py` | 数据库初始化脚本（建表 + 种子数据，生成仓库根 `ros_database.db`） | Python · SQLite |
+| `sqlite_create.py` | 首次部署的数据库初始化脚本（种子数据 + 部分建表，生成仓库根 `ros_database.db`）；表结构以 `models.py` 为准，缺失的表由后端启动时补建 | Python · SQLite |
 
 > 后端内置 ROS1/ROS2 适配层：`backend.env` 中 `ROS_VERSION=1`（默认）或 `2` 切换，协议差异集中在 `mes_web/ros_mes_hou/app/ros/profile.py`。
 
@@ -46,7 +46,9 @@ cd ..\..
 .\mes_web\ros_mes_hou\venv\Scripts\python.exe .\sqlite_create.py
 ```
 
-后端启动时会创建缺失的表，初始数据由仓库根的 `sqlite_create.py` 插入（数据库固定生成在仓库根，与后端 `DATABASE_URL` 默认值一致）。
+后端启动时会创建缺失的表，并把已存在的表结构对齐到 `mes_web/ros_mes_hou/app/db/models.py`（见 `ensure_schema()`）；初始数据由仓库根的 `sqlite_create.py` 插入（数据库固定生成在仓库根，与后端 `DATABASE_URL` 默认值一致）。
+
+改字段只需改 `models.py`，重启后端即自动对齐，**不用同步修改建表脚本**。能自动处理的改动、必须人工的改动（改列名/改类型/删列等）见 [mes_web/AGENTS.md](mes_web/AGENTS.md) 的「数据库结构变更」章节；重启前可用 `python mes_web/ros_mes_hou/tools/check_schema_drift.py` 只读查看会动哪些表。
 
 **3. 日常启动后端**（终端一，端口 8000）
 
@@ -75,6 +77,7 @@ npm run dev
 | [mes_web/AGENTS.md](mes_web/AGENTS.md) | **前后端开发入口**：任务定位、维护范围、按需阅读与验证；规则只适用于前后端任务 |
 | [前端图纸到微调下发全流程说明](docs/前端图纸到微调下发全流程说明.md) | **推荐先读**：图纸下发 → 微调录入 → 预检 → 逐轴下发 → 完成判定的端到端流程、话题/参数与真机缺口 |
 | [前后端接口字段文档](mes_web/docs/ROS_MES_前后端接口字段文档.md) | REST、前后端 WebSocket、数据库、鉴权与页面流程 |
+| [数据库表结构](mes_web/docs/ROS_MES_数据库表结构.md) | 字段级表结构（由 `models.py` 自动生成，勿手工编辑）；改字段后重新生成 |
 | [前后端改动记录](mes_web/docs/ROS_MES_前后端改动记录.md) | 前后端更新和验证结果的唯一日志 |
 | [后端与 ROS 接口对接状态清单](mes_web/docs/后端与ROS接口对接状态清单.md) | 本侧接入/使用状态、证据、缺口；不替代共享协议 |
 | [前后端命名规范](mes_web/docs/ROS_MES_前后端命名规范.md) | 前后端新代码的兼容及命名约定 |
