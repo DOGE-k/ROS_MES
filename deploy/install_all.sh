@@ -15,8 +15,9 @@
 # 用法：
 #   bash deploy/install_all.sh              # 完整安装（接真机）
 #   bash deploy/install_all.sh --mock-only  # 只装后端/前端，不装 ROS
+#   bash deploy/install_all.sh --ros-base   # ROS 只装 ros-base（省约 1.4GB，低磁盘机器）
 #   bash deploy/install_all.sh --dry-run    # 只打印步骤，不修改系统
-#   bash deploy/install_all.sh --mirror     # pip/npm 使用国内镜像
+#   bash deploy/install_all.sh --mirror     # pip/npm/ROS apt 使用国内镜像
 #
 # 注意：
 #   - 不要用 sudo 运行本脚本；脚本内部会对需要的步骤调用 sudo。
@@ -34,6 +35,7 @@ TS="$(date +%Y%m%d_%H%M%S)"
 MOCK_ONLY=0
 SKIP_ROS_INSTALL=0
 USE_MIRROR=0
+USE_ROS_BASE=0
 DRY_RUN=0
 LOG_FILE=""
 
@@ -45,7 +47,9 @@ usage() {
 选项：
   --mock-only        只安装后端/前端，不装 ROS、不装 CAN 驱动
   --skip-ros-install 已自行装好 ROS，跳过 ROS apt 安装（仍会装 ROS Python 依赖和编译）
-  --mirror           pip/npm 使用国内镜像
+  --ros-base         ROS 只装 ros-noetic-ros-base（省约 1.4GB，适合磁盘紧张的机器，
+                     不含 Gazebo/桌面工具等；本项目仿真节点仍可正常运行）
+  --mirror           pip/npm/ROS apt 源使用国内镜像
   --dry-run          只打印将执行的命令，不修改系统
   -h, --help         显示帮助
 
@@ -60,6 +64,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --mock-only)        MOCK_ONLY=1 ;;
         --skip-ros-install) SKIP_ROS_INSTALL=1 ;;
+        --ros-base)          USE_ROS_BASE=1 ;;
         --mirror)            USE_MIRROR=1 ;;
         --dry-run)           DRY_RUN=1 ;;
         -h|--help)           usage; exit 0 ;;
@@ -88,6 +93,16 @@ run_shell() {
     else
         bash -c "$1"
     fi
+}
+
+# 2026-11-24 部署修复：Python 源码编译后的构建目录清理在受限环境（沙盒/特殊挂载的
+# /tmp）可能报 rm: Permission denied，set -e 下会直接中断整个安装。
+# 失败时降级 sudo rm，仍失败则忽略（残留 /tmp 构建目录不影响部署结果）。
+safe_cleanup() {
+    if [ "$DRY_RUN" -eq 1 ]; then
+        return 0
+    fi
+    rm -rf "$1" 2>/dev/null || sudo rm -rf "$1" 2>/dev/null || true
 }
 
 # ---------------- 0. 前置检查 ----------------
@@ -208,7 +223,7 @@ install_python_from_source() {
         warn "下载失败，换下一个镜像。"
     done
     if [ "$ok" -ne 1 ]; then
-        rm -rf "$build_dir"
+        safe_cleanup "$build_dir"
         die "Python 源码下载失败，请检查网络后重试。"
     fi
 
@@ -218,25 +233,25 @@ install_python_from_source() {
             "$build_dir/Python-${PY_SRC_VERSION}" "$PY_PREFIX"
         printf '+ make -j%s\n' "$(nproc)"
         printf '+ sudo make altinstall\n'
-        rm -rf "$build_dir"
+        safe_cleanup "$build_dir"
         return 0
     fi
 
     log "解压并编译（前缀 ${PY_PREFIX}，约 3-8 分钟）..."
-    tar -xzf "$build_dir/$tar" -C "$build_dir" || { rm -rf "$build_dir"; die "Python 源码解压失败。"; }
+    tar -xzf "$build_dir/$tar" -C "$build_dir" || { safe_cleanup "$build_dir"; die "Python 源码解压失败。"; }
 
     if ! ( cd "$build_dir/Python-${PY_SRC_VERSION}" \
             && ./configure --prefix="$PY_PREFIX" --with-ensurepip=install \
             && make -j"$(nproc)" ); then
-        rm -rf "$build_dir"
+        safe_cleanup "$build_dir"
         die "Python 编译失败。请确认以下依赖已安装：build-essential zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev libsqlite3-dev libreadline-dev libncursesw5-dev uuid-dev"
     fi
 
     if ! ( cd "$build_dir/Python-${PY_SRC_VERSION}" && sudo make altinstall ); then
-        rm -rf "$build_dir"
+        safe_cleanup "$build_dir"
         die "Python 安装失败（sudo make altinstall）。"
     fi
-    rm -rf "$build_dir"
+    safe_cleanup "$build_dir"
     log "Python 安装完成：$PY_BIN"
 }
 
@@ -278,16 +293,50 @@ fi
 # ---------------- 4. ROS Noetic ----------------
 if [ "$MOCK_ONLY" -eq 0 ]; then
     if [ ! -f /opt/ros/noetic/setup.bash ] && [ "$SKIP_ROS_INSTALL" -eq 0 ]; then
-        log "安装 ROS Noetic（desktop-full + rosbridge）..."
+        ROS_METAPKG="ros-noetic-desktop-full"
+        if [ "$USE_ROS_BASE" -eq 1 ]; then
+            ROS_METAPKG="ros-noetic-ros-base"
+            log "--ros-base：安装 ros-noetic-ros-base（省约 1.4GB，不含桌面/Gazebo 工具）"
+        else
+            log "安装 ROS Noetic（desktop-full + rosbridge）..."
+        fi
+
+        # 2026-11-24 部署修复：raw.githubusercontent.com 在国内网络常被重置，
+        # 密钥下载改为 3 源回退：清华镜像 → ROS 官方 HTTP → GitHub
         if [ ! -f /usr/share/keyrings/ros-archive-keyring.gpg ]; then
-            run_shell "sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg"
+            log "下载 ROS apt 密钥（3 源回退）..."
+            KEY_OK=0
+            for key_url in \
+                "https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros.key" \
+                "http://packages.ros.org/ros.key" \
+                "https://raw.githubusercontent.com/ros/rosdistro/master/ros.key"; do
+                if [ "$DRY_RUN" -eq 1 ]; then
+                    printf '+ sudo curl -fsSL %q -o /usr/share/keyrings/ros-archive-keyring.gpg\n' "$key_url"
+                    KEY_OK=1
+                    break
+                fi
+                log "尝试密钥源：$key_url"
+                if sudo curl -fsSL --connect-timeout 15 "$key_url" -o /usr/share/keyrings/ros-archive-keyring.gpg; then
+                    KEY_OK=1
+                    break
+                fi
+                warn "密钥下载失败，换下一个源。"
+            done
+            [ "$KEY_OK" -eq 1 ] || die "ROS 密钥下载失败（3 个源均不可达），请检查网络后重试。"
         fi
         if [ ! -f /etc/apt/sources.list.d/ros-latest.list ]; then
-            run_shell "echo 'deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros/ubuntu focal main' | sudo tee /etc/apt/sources.list.d/ros-latest.list >/dev/null"
+            # 2026-11-24 部署修复：--mirror 时 ROS apt 源改用清华镜像，避免 packages.ros.org 拖慢/超时
+            if [ "$USE_MIRROR" -eq 1 ]; then
+                ROS_APT_BASE_URL="https://mirrors.tuna.tsinghua.edu.cn/ros/ubuntu"
+                log "--mirror：ROS apt 源使用清华镜像"
+            else
+                ROS_APT_BASE_URL="http://packages.ros.org/ros/ubuntu"
+            fi
+            run_shell "echo 'deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] $ROS_APT_BASE_URL focal main' | sudo tee /etc/apt/sources.list.d/ros-latest.list >/dev/null"
         fi
         run sudo apt-get update || warn "apt-get update 有源更新失败，继续尝试安装 ROS。"
         run sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            ros-noetic-desktop-full ros-noetic-rosbridge-server ros-noetic-message-generation
+            "$ROS_METAPKG" ros-noetic-rosbridge-server ros-noetic-message-generation
     fi
 
     if [ -f /opt/ros/noetic/setup.bash ]; then

@@ -591,7 +591,19 @@ class BatchManager:
                             signed_axis_value(step["position"], step["parameter_name"]),
                             format_axis_value(start_position, unit), format_axis_value(expected, unit),
                             step.get("record_id"))
-                await client.publish("fine_tuning", payload)
+                # 2026-11-24 现场修复：原先丢弃 publish 返回值，指令没写出去也被掩盖，
+                # 最终只报"运动完成超时/待核实"。现在逐层检查发送结果。
+                send_result = await client.publish("fine_tuning", payload) or {}
+                if not send_result.get("sent", True):
+                    raise Halt("指令未送达 rosbridge：%s" % (
+                        send_result.get("error") or send_result.get("confirmation_status") or "未知原因"))
+                if send_result.get("confirmed") is False:
+                    # 设计取舍：confirmed=False 不自动重发（保持既有安全策略，避免机械臂重复动作），
+                    # 只记录明确错误并继续等待现场反馈；仅 sent=False（确实没写出去）才 Halt 中止。
+                    logger.error(
+                        "⚠️ 轴 %s 指令未获控制节点 adjust_ack 确认（request_id=%s）：%s；"
+                        "按既有策略不自动重发，继续等待现场反馈",
+                        axis, send_result.get("request_id"), send_result.get("error"))
                 deadline = time.monotonic() + self.motion_timeout
                 # 两条证据路径：优先"运行→到位→空闲"三件套；固件不发轴状态帧时退化为"到位+正常停止"设备事件。
                 ran_at, arrived, idle_after_run, stopped = None, False, False, False

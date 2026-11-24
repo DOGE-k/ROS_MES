@@ -368,7 +368,19 @@ class _AdjustCommandLink:
             event = json.loads(raw)
         except Exception:
             return
-        if event.get("op") != "publish" or event.get("topic") != self._ack_topic:
+        # 2026-11-24 现场修复：原先只处理 op=="publish"，rosbridge 返回的
+        # status/error 被直接忽略——advertise 被拒收时日志毫无线索。
+        # 现在按级别落日志（error 用 error 级别，其余 warning）。
+        op = event.get("op")
+        if op in ("status", "error"):
+            level = str(event.get("level") or "").lower()
+            detail = event.get("msg") or event.get("reason") or event
+            if op == "error" or level == "error":
+                logger.error("[adjust-link] rosbridge %s：%s", op, detail)
+            else:
+                logger.warning("[adjust-link] rosbridge %s：%s", op, detail)
+            return
+        if op != "publish" or event.get("topic") != self._ack_topic:
             return
         msg = event.get("msg") or {}
         request_id = msg.get("request_id")
@@ -427,6 +439,26 @@ class RosbridgeClient:
     async def publish(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if websockets is None:
             raise RosbridgeError("missing websockets dependency")
+
+        # 2026-11-24 现场修复：微调不能走本方法下方的一次性连接路径
+        # （advertise → sleep(0.1) → publish → 立即退出 async with）。
+        # 0.1 秒不够 TCPROS 握手，消息会被 ROS1 publisher 直接丢弃，ROS 端收不到；
+        # finetuning_batch 的批次调用点走的是这里，导致常驻链路修复从未生效。
+        # 改为复用 _AdjustCommandLink 常驻长连接并等待 adjust_ack 回执。
+        if action == "fine_tuning":
+            result = await asyncio.to_thread(self._adjust_link.send, payload)
+            return {
+                "sent": result.get("sent", False),
+                "mode": "rosbridge_persistent",
+                "url": self.url,
+                "action": action,
+                "payload": payload,
+                "confirmed": result.get("confirmed"),
+                "confirmation_status": result.get("confirmation_status"),
+                "request_id": result.get("request_id"),
+                "ack": result.get("ack"),
+                "error": result.get("error"),
+            }
 
         advertise_json = json.dumps(
             {

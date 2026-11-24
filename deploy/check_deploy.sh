@@ -39,6 +39,21 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# 2026-11-24 部署修复：
+# 1) 本脚本 set -u 运行，而 ROS 的 setup.bash 可能引用未定义变量，source 时报
+#    "unbound variable" 假错误；先 set +u 再 source，完成后恢复 set -u。
+# 2) 不主动 source ROS 时，下方模块检查会假报 rospy/numpy 全缺失（FAIL x7）。
+set +u
+if [ -f /opt/ros/noetic/setup.bash ]; then
+    # shellcheck disable=SC1091
+    source /opt/ros/noetic/setup.bash >/dev/null 2>&1 || true
+fi
+if [ -n "$WORKSPACE_ROOT" ] && [ -f "$WORKSPACE_ROOT/devel/setup.bash" ]; then
+    # shellcheck disable=SC1091
+    source "$WORKSPACE_ROOT/devel/setup.bash" >/dev/null 2>&1 || true
+fi
+set -u
+
 PASS=0
 WARN=0
 FAIL=0
@@ -222,11 +237,14 @@ if [ -x "$BACKEND_DIR/venv/bin/python" ]; then
 import sqlite3, sys
 try:
     con = sqlite3.connect(sys.argv[1])
+    # 2026-11-24 部署修复：本项目实际表名为 Users（大写 U），此前固定匹配小写
+    # users 导致自检误报 missing users table；改为大小写不敏感匹配。
     tables = [r[0] for r in con.execute("select name from sqlite_master where type='table'")]
-    if "users" not in tables:
+    users_table = next((t for t in tables if t.lower() == "users"), None)
+    if users_table is None:
         print("missing users table")
         raise SystemExit(1)
-    count = con.execute("select count(*) from users").fetchone()[0]
+    count = con.execute(f'select count(*) from "{users_table}"').fetchone()[0]
     print(f"users={count}")
 except Exception as exc:
     print(exc)

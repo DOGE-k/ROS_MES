@@ -220,8 +220,10 @@ catkin_install_python(PROGRAMS
   scripts/telescopic_node.py
   scripts/hardware_node.py
   scripts/zlg_bus.py
-  scripts/sim_lower_machine.py
-  scripts/sim_axis_status_node.py
+  # 2026-11-24 部署修复：sim 脚本已移到 simulation/ 目录，scripts/ 下不存在，
+  # 路径写错会导致 catkin_install_python() called with non-existing file 编译失败
+  simulation/sim_lower_machine.py
+  simulation/sim_axis_status_node.py
   scripts/rosbridge_wrapper.py
   scripts/softstop_node.py
   scripts/control_node.py
