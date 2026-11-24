@@ -27,3 +27,5 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.46.0
 websockets==15.0.1
+# 测试依赖：tests/test_adjust_command_link.py 使用 pytest 的 monkeypatch/fixture
+pytest==9.2.0

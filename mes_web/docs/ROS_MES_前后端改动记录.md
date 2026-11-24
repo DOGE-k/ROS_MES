@@ -12,6 +12,15 @@
 ---
 
 
+## 2026-11-24（补 pytest 测试依赖、清理数据库备份文件，已完成）
+
+- [requirements.txt](../ros_mes_hou/requirements.txt) 补 `pytest==9.2.0`。原因：`tests/test_adjust_command_link.py` 是 ROS 侧新增的 pytest 风格用例（用 `monkeypatch` fixture 与裸 `assert`），依赖不在原 requirements 里，新建虚拟环境后跑后端测试会直接报 `ModuleNotFoundError: No module named 'pytest'`。补入后 `pip install -r requirements.txt --dry-run` 可解析，`pip check` 无冲突。
+- 删除根目录 `ros_database.db.bak-20261114`（0.16 MB，2026-11-13 的旧库备份，未被 git 跟踪）。该文件名匹配不到 `.gitignore` 里的 `*.db` 规则，长期以未跟踪状态出现在 `git status` 中，易被误提交。
+- 验证：后端 `python -m unittest discover -s tests` **295/295** 通过；`python -m pytest tests/test_adjust_command_link.py` **2/2** 通过。未改前后端业务代码，未跑前端构建/测试；未连接 ROS/串口/真实设备。
+- `???` CI 若只用 `python -m unittest discover` 采集，pytest 风格用例会被当作导入失败计入 error（不是 pass），需要同时跑 `python -m pytest tests/`；当前 CI 配置未核实。
+
+---
+
 ## 2026-11-23（设备告警事件前端可见化 + can_fault 通道接通，已完成）
 
 - 设计依据见[设备告警事件前端可见化设计](设备告警事件前端可见化设计.md)。
