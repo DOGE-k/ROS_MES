@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -59,6 +58,22 @@ def update_config_from_env():
     Config.DELTA_ROT_LIMIT_DEG   = float(os.environ["DELTA_ROT_LIMIT_DEG"])
     Config.DELTA_SWING_LIMIT_DEG = float(os.environ["DELTA_SWING_LIMIT_DEG"])
     Config.DELTA_EXTEND_LIMIT_MM = float(os.environ["DELTA_EXTEND_LIMIT_MM"])
+
+
+def resolve_db_path():
+    """解析数据库路径（V2 改造新增）。
+
+    rob_arm.env 里的 DB_PATH 可以写绝对路径，也可以写相对仓库根目录的路径。
+    绝对路径的上级目录不存在时（换了电脑、原路径是别人的），自动回退到
+    仓库根目录下的 ros_database.db，避免节点一启动就连到不存在的目录。
+    """
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    db_path = os.environ.get('DB_PATH', 'ros_database.db')
+    if os.path.isabs(db_path):
+        if os.path.isdir(os.path.dirname(db_path)):
+            return db_path
+        return os.path.join(repo_root, 'ros_database.db')
+    return os.path.join(repo_root, db_path)
 
 
 def solve_3dof(arm_base, target_p):
@@ -141,7 +156,7 @@ class KinematicsNode(Node):
         self.current_state = {}
 
         # ---------- 数据库初始化 ----------
-        db_path = os.environ.get('DB_PATH', 'ros_database.db')
+        db_path = resolve_db_path()
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self._create_table()
 
@@ -172,21 +187,28 @@ class KinematicsNode(Node):
 
     @staticmethod
     def arm_to_unit(arm_id):
-        return {1: 32, 2: 64, 3: 96}.get(arm_id, 0)
+        # DB 里 Unit_ID 的编号规律：每臂 +32（臂1~5 = 32/64/96/128/160）
+        # 注意：这是数据库口径，和 CAN 轴号 AXIS（1~15）不是一回事
+        return 32 * arm_id if 1 <= arm_id <= 5 else 0
 
-    # --------硬件反馈回调（原始映射逻辑不变）--------
+    @staticmethod
+    def axis_to_arm(device_id):
+        """V2：device_id 即 CAN 轴号 AXIS，臂号 = (AXIS-1)//3 + 1（AXIS 1~15 → 臂 1~5）"""
+        return (int(device_id) - 1) // 3 + 1
+
+    # --------硬件反馈回调（V2：device_id 即轴号 AXIS）--------
     def rotation_feedback_cb(self, msg):
-        arm_id = (msg.device_id - 1) // 32
+        arm_id = self.axis_to_arm(msg.device_id)
         self._ensure_arm(arm_id)
         self.current_state[arm_id]["rotation"] = msg.position[0]
 
     def swing_feedback_cb(self, msg):
-        arm_id = (msg.device_id - 2) // 32
+        arm_id = self.axis_to_arm(msg.device_id)
         self._ensure_arm(arm_id)
         self.current_state[arm_id]["swing"] = msg.position[0]
 
     def telescopic_feedback_cb(self, msg):
-        arm_id = (msg.device_id - 3) // 32
+        arm_id = self.axis_to_arm(msg.device_id)
         self._ensure_arm(arm_id)
         self.current_state[arm_id]["telescopic"] = msg.position[0]
 
@@ -298,9 +320,11 @@ class KinematicsNode(Node):
         delta_sw   = np.clip(delta_sw,  -Config.DELTA_SWING_LIMIT_DEG, Config.DELTA_SWING_LIMIT_DEG)
         delta_tel  = np.clip(delta_tel, -Config.DELTA_EXTEND_LIMIT_MM, Config.DELTA_EXTEND_LIMIT_MM)
 
-        dev_rot = arm_id * 32 + 1
-        dev_sw  = arm_id * 32 + 2
-        dev_tel = arm_id * 32 + 3
+        # V2：device_id 直接等于 CAN 轴号 AXIS（每臂 3 轴，臂n 的 J1/J2/J3 = 3n-2 / 3n-1 / 3n）
+        # 臂1: 1/2/3  臂2: 4/5/6  臂3: 7/8/9  臂4: 10/11/12  臂5: 13/14/15
+        dev_rot = (arm_id - 1) * 3 + 1
+        dev_sw  = (arm_id - 1) * 3 + 2
+        dev_tel = (arm_id - 1) * 3 + 3
         stamp = Time.now().to_msg()
 
         rot_msg = RotationCmd()
@@ -333,10 +357,11 @@ class KinematicsNode(Node):
     def _save_arm_record(self, module_id, arm_id, alpha, delta_rot, delta_sw, delta_tel):
         unit = self.arm_to_unit(arm_id)
         coord_dict = {str(unit): alpha}
+        # V2：position 的 key 由旧的 device_id(臂×32+关节) 改为 CAN 轴号 AXIS（3n-2/3n-1/3n）
         position_dict = {
-            str(arm_id * 32 + 1): round(delta_rot, 2),
-            str(arm_id * 32 + 2): round(delta_sw, 2),
-            str(arm_id * 32 + 3): round(delta_tel, 1)
+            str((arm_id - 1) * 3 + 1): round(delta_rot, 2),
+            str((arm_id - 1) * 3 + 2): round(delta_sw, 2),
+            str((arm_id - 1) * 3 + 3): round(delta_tel, 1)
         }
         now = datetime.now()
         createtime = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}-{random.randint(0,9999):04d}"

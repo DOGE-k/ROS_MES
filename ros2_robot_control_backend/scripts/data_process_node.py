@@ -26,7 +26,38 @@ if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
 # ===================== 数据库配置 =====================
-DB_FILE = "ros_database.db"
+def resolve_db_path():
+    """解析数据库路径（V2 改造新增）。
+
+    rob_arm.env 里的 DB_PATH 可以写绝对路径，也可以写相对仓库根目录的路径；
+    绝对路径的上级目录不存在时（换了电脑），回退到仓库根目录的 ros_database.db。
+    这样三个节点（data_process / calculation / kinematics）连的是同一个库。
+    """
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    db_path = os.environ.get('DB_PATH', 'ros_database.db')
+    if os.path.isabs(db_path):
+        if os.path.isdir(os.path.dirname(db_path)):
+            return db_path
+        return os.path.join(repo_root, 'ros_database.db')
+    return os.path.join(repo_root, db_path)
+
+
+def resolve_calib_json_path():
+    """解析标定 json 路径（V2 改造新增）。
+
+    优先级：rob_arm.env 的 CALIB_JSON_PATH（绝对路径或相对仓库根目录）
+            > 旧默认路径 ~/ros2_ws/data/零件坐标绑定结果.json
+    文件缺失时由调用方决定是否降级，这里只负责算路径。
+    """
+    p = os.environ.get('CALIB_JSON_PATH')
+    if p:
+        if os.path.isabs(p):
+            return p
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        return os.path.join(repo_root, p)
+    return os.path.expanduser("~/ros2_ws/data/零件坐标绑定结果.json")
+
+
 DEFAULT_CREATER_ID = 1
 DEFAULT_DEL_FLAG = 0
 DEFAULT_NOTES = None
@@ -46,7 +77,8 @@ TOPIC_MODULE_ARM_TASK = None
 def init_database():
     """创建 point_data 表（如果不存在）"""
     try:
-        conn = sqlite3.connect(DB_FILE)
+        db_path = resolve_db_path()
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS point_data (
@@ -70,7 +102,8 @@ def save_modules_to_database(modules):
     if not modules:
         return
     try:
-        conn = sqlite3.connect(DB_FILE)
+        db_path = resolve_db_path()
+        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         success_count = 0
@@ -212,11 +245,21 @@ class DataProcessNode(Node):
         update_params_from_env()
         init_database()
 
-        # 加载标定json
-        json_path = os.path.expanduser("~/ros2_ws/data/零件坐标绑定结果.json")
-        with open(json_path, 'r', encoding='utf-8') as f:
-            self.calib_data = json.load(f)
-            self.get_logger().info("✅ 成功加载零件坐标绑定json")
+        # 加载标定json（V2 改造：路径可配，缺失只告警，不阻断启动）
+        json_path = resolve_calib_json_path()
+        self.calib_data = {}
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    self.calib_data = json.load(f)
+                self.get_logger().info(f"✅ 成功加载零件坐标绑定json：{json_path}")
+            except Exception as e:
+                self.get_logger().warn(f"⚠️ 标定json解析失败，按空配置继续：{json_path} ({e})")
+        else:
+            self.get_logger().warn(
+                f"⚠️ 未找到标定json，按空配置继续：{json_path}；"
+                f"如需指定路径，在 rob_arm.env 里配置 CALIB_JSON_PATH"
+            )
 
         # 图片任务要求：ROS消息回调组
         self.callback_group = ReentrantCallbackGroup()
@@ -239,7 +282,7 @@ class DataProcessNode(Node):
         self.flask_thread.start()
 
         self.get_logger().info("✅ data_process_node ROS2启动")
-        self.get_logger().info(f"🗄️ 共享数据库: {os.path.abspath(DB_FILE)}")
+        self.get_logger().info(f"🗄️ 共享数据库: {resolve_db_path()}")
         self.get_logger().info("🌐 Flask图片服务 5000端口已启动")
 
     def json_callback(self, msg: String):

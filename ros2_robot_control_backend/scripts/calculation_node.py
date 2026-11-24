@@ -71,6 +71,21 @@ def update_config_from_env():
     Config.ANGLE_WEIGHT           = float(os.environ.get('ANGLE_WEIGHT', 0.4))
     Config.DB_PATH                = os.environ.get('DB_PATH', 'ros_database.db')
 
+def resolve_db_path():
+    """解析数据库路径（V2 改造新增）。
+
+    rob_arm.env 里的 DB_PATH 可以写绝对路径，也可以写相对仓库根目录的路径；
+    绝对路径的上级目录不存在时（换了电脑），回退到仓库根目录的 ros_database.db。
+    """
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    db_path = os.environ.get('DB_PATH', 'ros_database.db')
+    if os.path.isabs(db_path):
+        if os.path.isdir(os.path.dirname(db_path)):
+            return db_path
+        return os.path.join(repo_root, 'ros_database.db')
+    return os.path.join(repo_root, db_path)
+
+
 # =============== 工具函数【ROS1原版逻辑完全复制，不作修改】 ===============
 @timeit
 def extract_surface_points(points, k=None, angle_thresh=None):
@@ -261,7 +276,7 @@ class PointSelectorNode(Node):
         self.stats_pub = self.create_publisher(String, self.topic_arm_fusion_stats, 1)
         self.timer_stats = self.create_timer(10.0, self.publish_stats, callback_group=self.callback_group)
 
-        self.conn = sqlite3.connect(Config.DB_PATH, check_same_thread=False)
+        self.conn = sqlite3.connect(resolve_db_path(), check_same_thread=False)
         self._create_table()
         self.get_logger().info("✅ calculation_node(αβ选点) ROS2启动；策略链：垂直→水平→曲面→默认")
 
@@ -285,8 +300,9 @@ class PointSelectorNode(Node):
 
     @staticmethod
     def arm_to_ids(arm_id):
-        mapping = {1: 32, 2: 64, 3: 96}
-        return mapping.get(arm_id, 0)
+        # DB 里 Unit_ID 的编号规律：每臂 +32（臂1~5 = 32/64/96/128/160）
+        # 注意：这是数据库口径，和 CAN 轴号 AXIS（1~15）不是一回事
+        return 32 * arm_id if 1 <= arm_id <= 5 else 0
 
     def task_callback(self, msg: String):
         """ROS消息回调：仅提交任务至计算池，立刻返回，不阻塞消息线程（图片要求）"""
