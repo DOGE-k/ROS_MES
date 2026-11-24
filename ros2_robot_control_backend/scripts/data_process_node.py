@@ -75,22 +75,29 @@ TOPIC_MODULE_ARM_TASK = None
 
 # ===================== 数据库初始化 =====================
 def init_database():
-    """创建 point_data 表（如果不存在）"""
+    """创建 Point_data 表（如果不存在）"""
     try:
         db_path = resolve_db_path()
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS point_data (
-            Createtime DATETIME NOT NULL PRIMARY KEY,
-            creater_id INT NOT NULL,
-            Module_id INT,
-            point TEXT NOT NULL,
-            arms_address TEXT NOT NULL,
-            del_flag BOOL DEFAULT false,
-            Notes TEXT
+        CREATE TABLE IF NOT EXISTS Point_data (
+            Point_data_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Create_time   DATETIME NOT NULL,
+            Creator_id    INTEGER NOT NULL,
+            Module_id     INTEGER,
+            Point         TEXT NOT NULL,
+            Arms_address  TEXT NOT NULL,
+            Del_flag      BOOL DEFAULT false,
+            Notes         TEXT
         )
         ''')
+        # V2 结构自检：库仍是旧结构时直接报错，避免运行期写入静默失败
+        cols = {row[1].lower() for row in cursor.execute("PRAGMA table_info(Point_data)")}
+        missing = {'point_data_id', 'create_time', 'creator_id', 'point', 'arms_address'} - cols
+        if missing:
+            raise RuntimeError(
+                f"数据库表 Point_data 仍是旧结构，缺少列 {sorted(missing)}；请先执行 V2 迁移")
         conn.commit()
         conn.close()
     except Exception as e:
@@ -98,7 +105,7 @@ def init_database():
 
 # ===================== 数据库存储 =====================
 def save_modules_to_database(modules):
-    """将切分出的模块点云与机械臂基座数据存入 point_data 表"""
+    """将切分出的模块点云与机械臂基座数据存入 Point_data 表"""
     if not modules:
         return
     try:
@@ -111,7 +118,8 @@ def save_modules_to_database(modules):
             point_json = json.dumps(module["points"])
             arms_json = json.dumps(module["arms"])
             cursor.execute('''
-            INSERT INTO point_data (Createtime, creater_id, Module_id, point, arms_address, del_flag, Notes)
+            INSERT INTO Point_data
+            (Create_time, Creator_id, Module_id, Point, Arms_address, Del_flag, Notes)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (current_time, DEFAULT_CREATER_ID, module["module_id"], point_json, arms_json, DEFAULT_DEL_FLAG, DEFAULT_NOTES))
             success_count += 1
