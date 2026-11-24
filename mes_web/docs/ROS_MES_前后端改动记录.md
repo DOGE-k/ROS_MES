@@ -11,6 +11,39 @@
 
 ---
 
+## 2026-11-24（ensure_schema 改为从 models.py 自动推导，不再手维护建表 DDL，已完成）
+
+**背景**：`app/db/schema.py` 原先只处理 `fine_tuning` 一张表，且把 8 个新列和整表重建 DDL **手抄**成两个常量（`FINE_TUNING_ADDED_COLUMNS`、`_FINE_TUNING_REBUILD_DDL`）。这等于在 `models.py` 之外又维护一份结构描述，改字段时忘同步就永远补不上。本次改成全部从 ORM 现算。
+
+- 重写 [schema.py](../ros_mes_hou/app/db/schema.py)：删除两个手抄常量，改为对比 `Base.metadata` 与实际库结构后按需补列或重建。**改完 `models.py` 直接重启即自动对齐**，不再需要手工改建表脚本。
+- 处理能力：缺失列（含 `NOT NULL` 带默认值、`UNIQUE` 等无法直接 `ADD COLUMN` 的情况，自动改走重建）、放宽 `NOT NULL`、收紧 `NOT NULL`、缺失索引。
+- 安全性（逐条有测试）：库中存在 ORM 未定义的列时**拒绝重建**并回滚，避免静默删数据；`NOT NULL` 列存在 NULL 行时跳过重建而非让 `INSERT` 失败；`allow_drop_columns=True` 才允许丢弃多出的列。
+- 事务：实测 `engine.begin()` 在 pysqlite 下**不会回滚 DDL**（默认隔离级别会隐式提交），改用原生连接 + 显式 `BEGIN`/`ROLLBACK`，失败时库保持原状。重建中途被 kill 的残骸由 `recover_interrupted_rebuild()` 在下次启动时收拾。
+- 新增 [check_schema_drift.py](../ros_mes_hou/tools/check_schema_drift.py)：只读对比，重启前可先看这次改动会动哪些表；`--quiet` 有差异时返回码 1，可接 CI。
+- 新增 [test_schema_auto_sync.py](../ros_mes_hou/tests/test_schema_auto_sync.py)：15 条用例覆盖幂等、重建、索引恢复、拒绝删列、NULL 保护、残骸恢复、dry_run。
+- 顺带修复：旧实现重建后**索引永久丢失**（`DROP TABLE` 带走索引且不补建），实测线上库 `fine_tuning` 等 8 张表的索引已丢失；新实现按 ORM 定义补回。
+- 顺带修复：`Base.metadata.sorted_tables` 因 `Drawings`/`DrawingsVersion` 循环外键持续刷 `SAWarning`，改用按表名排序的 `_all_tables()`。
+- 验证：库副本演练 `ensure_schema`，`workflows`/`works`/`work_flow_relations`/`calculation` 四表重建、`fine_tuning` 21 行、`Unit` 5 行、`sensors` 40 行**数据零丢失**，8 个索引补回，事后 `inspect_schema` 报告完全一致。后端全量 `python -m unittest discover -s tests` **313/313 通过**。
+- `???` 本次只改结构对齐逻辑，**未在线上库执行**（`ros_database.db` 仍是旧结构，下次启动后端时才会对齐）；对齐前建议先备份该库。当前 `check_schema_drift.py` 报告 4 张表待重建，均为放宽 `Createtime`/`isread` 的 `NOT NULL`，四表合计仅 3 行数据。
+
+---
+
+
+## 2026-11-24（数据库表结构文档：改为从 models.py 自动生成 + 防漂移测试，已完成）
+
+**背景**：数据库设计原先只有一份 xlsx（`数据库设计v1.1`），存在仓库根且未被 git 跟踪，字段级信息与 `models.py` 反复漂移；接手时无法从仓库内判断"有哪些表、各表有哪些字段"。本次把它落进 `mes_web/docs/` 并改为代码生成。
+
+- 新增 [数据库表结构](ROS_MES_数据库表结构.md)：由 `models.py` 生成的字段级清单，含 22 张 ORM 表的全部字段（类型 / 可空 / 主键 / 外键 / 默认值 / 说明），并按 `ROS_ARCHIVE` 标注 4 张 ROS 侧归档表（`sensor_log`、`can_event_log`、`calculation`、`point_data`）"后端不消费"。同时说明 `can_event_log` 无 ORM 定义、由 ROS 侧建表。
+- 新增 [dump_schema_md.py](../ros_mes_hou/tools/dump_schema_md.py)：从 `models.py` 生成上述文档。字段说明取 `Column` 赋值上方紧邻的 `#` 注释，因此改字段时改注释即可同步。用法 `python tools/dump_schema_md.py --write`。
+- 新增 [test_db_schema_doc_in_sync.py](../ros_mes_hou/tests/test_db_schema_doc_in_sync.py)：文档与 `models.py` 不一致即测试失败，并打印前 8 处差异行号，直接给出修复命令。**这条测试是"改代码时能分清有哪些表"的实际保障**。
+- 生成过程做了确定性处理：SQLAlchemy 的 `table.constraints`、`table.indexes`、`column.foreign_keys` 都是 set，迭代顺序不稳定，会让同一份代码生成不同文本。已对约束、索引、外键显式排序；连续 3 次生成 SHA256 一致。
+- 更新 [AGENTS.md](../AGENTS.md) 「按任务阅读」拆出独立的「数据库表结构（字段级）」一行；原"业务接口、字段、页面流程、数据库"行去掉数据库，避免两处都是入口。
+- 更新 [前后端接口字段文档](ROS_MES_前后端接口字段文档.md) §10：表数 20 → 22；开头指向自动生成文档并声明"字段级以表结构文档为准"；关键字段表补 `control_stop_holds`、`control_sessions` 两行（原先漏登），`sensor_log` 补 ROS 归档归属与 `sensor_id` 语义，新增 `can_event_log` 一行。
+- 验证：`python -m unittest tests.test_db_schema_doc_in_sync` **3/3 通过**；手动篡改文档一列可空性后测试按预期 FAILED 并定位到具体行，还原后恢复 OK。未改前后端业务代码，未跑全量测试与前端构建，未连接 ROS/串口/真实设备。
+- 删除仓库根目录 4 个未被 git 跟踪的数据库设计产物：`build_db_design_v12_annotated.py`、`数据库设计v1.2_ROS1修正版.xlsx`、`数据库设计v1.2_前后端新增标注.xlsx`、`数据库设计v1.2_前后端新增标注_final.xlsx`（合计约 96 KB）。理由：这些是手工维护的第二份表结构描述，与 `models.py` 无任何联动，留着必然再次漂移；字段级信息已由自动生成的表结构文档覆盖，彩色标注版仅是一次性评审用图，需要时可再生成。
+- 验证：删除后仓库根目录无 `数据库设计*` / `build_db_design*` 残留；上述 4 个文件删除前经 `git ls-files` 确认为未跟踪，删除不影响任何提交历史。
+
+---
 
 ## 2026-11-24（补 pytest 测试依赖、清理数据库备份文件，已完成）
 

@@ -14,7 +14,8 @@
 
 | 任务 | 先读 | 主要代码入口 |
 |---|---|---|
-| 业务接口、字段、页面流程、数据库 | [前后端接口字段文档](docs/ROS_MES_前后端接口字段文档.md) | `ros_mes_hou/app/api/`、`app/schemas/`、`app/db/`；`ros_mes_front/src/api/` |
+| 业务接口、字段、页面流程 | [前后端接口字段文档](docs/ROS_MES_前后端接口字段文档.md) | `ros_mes_hou/app/api/`、`app/schemas/`；`ros_mes_front/src/api/` |
+| **数据库表结构（字段级）** | [数据库表结构](docs/ROS_MES_数据库表结构.md)（由 `models.py` 自动生成，含全部 22 张 ORM 表 + ROS 归档表归属） | `ros_mes_hou/app/db/models.py`、`app/db/schema.py` |
 | 微调、反馈、回执、ROS 适配 | [后端与 ROS 接口对接状态清单](docs/后端与ROS接口对接状态清单.md)，再按需读[共享三轴契约](../docs/ROS_MES_前后端ROS接口清单_三轴版_V2.1.md) | 后端 `app/ros/`、`app/api/endpoints/control.py`、`module.py`；前端 `FineTuningPage.vue` |
 | 最近改动、遗留事项、验证边界 | [前后端改动记录](docs/ROS_MES_前后端改动记录.md)的近期条目和遗留清单 | 先以当前工作树和代码复核，旧日志不是当前功能清单 |
 | 新代码命名 | [前后端命名规范](docs/ROS_MES_前后端命名规范.md) | 沿用现有兼容接口，不借小任务批量重命名 |
@@ -29,6 +30,33 @@
 - 共享 ROS 消息、话题和编号契约引用根 `docs/`，不在本侧复制另一套协议。文档与代码不一致时记录差异，不能擅改共享协议来配合猜测。
 - 清楚区分：接口已定义、仓库源码已实现、现场部署版本已核实、后端已接入、前端已使用、模拟验证、真机验证。未知写“待确认”，源码或模拟消息不能证明固件或真机已支持。
 - 微调 HTTP 成功只表明发送路径完成；设备接受、实际运动、到位分别需要对应证据。没有回执不推断成功/失败，不自动重发增量运动指令。
+
+## 数据库结构变更
+
+改字段只需改 `ros_mes_hou/app/db/models.py`，**不用改任何建表脚本**。后端启动顺序为 `create_all()` → `ensure_schema()`：前者建缺失的表，后者把已存在的表对齐到 `models.py`。`sqlite_create.py` 不在启动路径上，`app/` 里没有任何代码 import 它。
+
+改完先看会动哪些表（只读，不改库）：
+
+```bash
+cd mes_web/ros_mes_hou && python tools/check_schema_drift.py
+```
+
+**能自动处理**（改 `models.py` 后重启即可）：加普通列；加 `NOT NULL` 带默认值的列；加 `UNIQUE` 列；加带 `CURRENT_TIMESTAMP` 默认值的列（以上三种 SQLite 不允许直接 `ADD COLUMN`，会自动改走整表重建）；放宽 `NOT NULL`；收紧 `NOT NULL`（数据无 NULL 时）；加索引；加整张新表。
+
+**不能自动处理，必须人工**：
+
+| 改动 | 现状 | 处理方式 |
+|---|---|---|
+| 改列名 | 旧列按“库中多出列”对待，数据不迁移 | 手写迁移或先加新列再搬数据 |
+| 改列类型 | 不比对不修改（SQLite 动态类型） | 通常无影响，语义变化需人工确认 |
+| 改默认值 | 不同步已有列 | 需要时人工 `ALTER` |
+| 删列 | 拒绝重建，库中保留 | 确认可丢弃后调 `ensure_schema(allow_drop_columns=True)` |
+| 改主键/外键 | 不校验；仅整表重建时按 ORM 重写 | 人工评估 |
+| 全新部署的种子数据 | `create_all` 不插数据 | 首次部署仍需跑 `../sqlite_create.py` |
+
+安全边界（有意为之，不要绕过）：库中存在 ORM 未定义的列时 `ensure_schema()` **报错回滚**，不静默删数据；`NOT NULL` 列已有 NULL 行时**跳过该表**并告警。重建在显式 `BEGIN`/`ROLLBACK` 中进行——pysqlite 默认隔离级别会隐式提交 DDL，`engine.begin()` 挡不住，改动这块代码时注意保持原生连接控制事务。
+
+新增 `NOT NULL` 且无默认值的列会让 `sqlite_create.py` 里不写该列的 `INSERT` 失败（全新部署时）；带默认值则不影响。给业务表加非空列时优先给默认值。
 
 ## 启动与验证
 

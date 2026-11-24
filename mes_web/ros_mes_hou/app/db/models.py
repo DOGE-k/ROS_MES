@@ -68,17 +68,23 @@ class FineTuningBatch(Base):
     __tablename__ = "fine_tuning_batches"
 
     id = Column(String(36), primary_key=True)
+    # 前端请求 ID，全局唯一；用于幂等重放，同一 request_id 不会重复下发
     request_id = Column(String(80), nullable=False, unique=True)
     # 未完成/待核实批次保留唯一目标锁；终结后置空，SQLite 允许多个 NULL。
     target_key = Column(String(80), nullable=True, unique=True)
     module_id = Column(Integer, nullable=False)
     unit_id = Column(Integer, nullable=False)
+    # 模块组号（CAN 帧 SEG 位域）
     seg = Column(Integer, nullable=False)
     creator_id = Column(Integer, nullable=False)
+    # 批次请求 JSON：本次三轴微调量
     request_json = Column(Text, nullable=False)
+    # 批次进度 JSON：含 steps[] 的逐轴结果，outcome 由各轴 fine_tuning 记录镜像而来
     progress_json = Column(Text, nullable=False)
+    # 批次状态：queued / checking / executing / completed / uncertain / blocked / closed
     status = Column(String(30), nullable=False)
     message = Column(Text, nullable=False)
+    # 是否已请求撤销；执行线程在轴间检查该标记
     cancel_requested = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -87,8 +93,11 @@ class FineTuningBatch(Base):
 class ControlSafety(Base):
     __tablename__ = "control_safety"
 
+    # 固定单行：1=真实、2=模拟，两种环境互不清除
     id = Column(Integer, primary_key=True)
+    # 全局急停状态：clear 正常 / latched 联锁
     state = Column(String(30), nullable=False, default="clear")
+    # 状态代次，每次变化递增，供前端判断状态新鲜度
     generation = Column(Integer, nullable=False, default=0)
 
 
@@ -102,23 +111,31 @@ class ControlStopHold(Base):
     __tablename__ = "control_stop_holds"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    # 执行模式：real 真机 / mock 模拟
     mode = Column(String(10), nullable=False, default="real")
+    # 停止范围：module 整模块 / axis 单轴
     scope = Column(String(10), nullable=False)
     module_id = Column(Integer, nullable=False, index=True)
+    # 轴号；scope=axis 时有值
     device_id = Column(Integer, nullable=True)
+    # 状态：requested 已请求 / held 锁定中 / cleared 已解除
     state = Column(String(30), nullable=False, default="requested")
     message = Column(Text, nullable=True)
     creator_id = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     cleared_at = Column(DateTime(timezone=True), nullable=True)
+    # 解除原因，便于追溯是谁因为什么恢复下发
     cleared_reason = Column(String(40), nullable=True)
 
 
 class RosDebugSettings(Base):
     __tablename__ = "ros_debug_settings"
 
+    # 固定单行，id=1
     id = Column(Integer, primary_key=True)
+    # 配置版本，每次保存递增，用于通知前端刷新
     revision = Column(Integer, nullable=False, default=0)
+    # 调试设置 JSON：真实/模拟连接、执行模式等
     config_json = Column(Text, nullable=False)
 
 
@@ -134,15 +151,22 @@ class ControlSession(Base):
     id = Column(String(36), primary_key=True)
     module_id = Column(Integer, nullable=False, index=True)
     device_id = Column(Integer, nullable=True)
+    # 模块地址高 4 位
     x = Column(Integer, nullable=True)
+    # 模块地址低 4 位
     y = Column(Integer, nullable=True)
+    # 模块组号（CAN 帧 SEG 位域）
     seg = Column(Integer, nullable=False)
+    # 本次绑定的机械臂 Unit_ID 列表 JSON
     unit_ids_json = Column(Text, nullable=False)
+    # 建立会话时的后端连接版本号；版本变化则旧会话不可续接
     connection_revision = Column(Integer, nullable=True)
     creator_id = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_active_at = Column(DateTime(timezone=True), server_default=func.now())
     invalidated_at = Column(DateTime(timezone=True), nullable=True)
+    # 失效原因：closed 操作员关闭 / superseded 被新握手顶替 /
+    # connection_changed 后端连接重建 / expired 超时 / missing 记录缺失
     invalid_reason = Column(String(60), nullable=True)
 
 

@@ -668,11 +668,15 @@ ROS 模拟时，串口/硬件检查和大屏底层工具不拉起 ROS/串口脚�
 
 ## 10. 数据库表字段（基准补充）
 
-SQLite（`ros_database.db`，项目根），当前模型 20 张表，模型在 `app/db/models.py`，历史建库种子脚本为仓库根的 `sqlite_create.py`。时间字段 `DateTime(timezone=True)` 默认 `now()`；业务表普遍带软删除 `del_flag` 与 `Notes`。
+SQLite（`ros_database.db`，项目根），当前模型 22 张表，模型在 `app/db/models.py`，历史建库种子脚本为仓库根的 `sqlite_create.py`。时间字段 `DateTime(timezone=True)` 默认 `now()`；业务表普遍带软删除 `del_flag` 与 `Notes`。
+
+**字段级完整清单见 [数据库表结构](ROS_MES_数据库表结构.md)**（由 `ros_mes_hou/tools/dump_schema_md.py` 从 `models.py` 自动生成，`tests/test_db_schema_doc_in_sync.py` 校验一致性）。本节只列关键字段与跨表约定，字段级的类型/可空/默认值/外键以自动生成的表结构文档为准。
 
 2026-11-06 新增 `fine_tuning_batches`、`control_safety` 及页面配置表 `ros_debug_settings`。后端启动时已有的 `create_all` 会仅创建缺失表，无需重建/清空现有库，**不要为本次升级运行根种子脚本**。
 
-2026-11-14：`create_all` 之后新增 `app/db/schema.py` 的 `ensure_schema()` 补列迁移。它检测到 `fine_tuning.new_value` 仍为 NOT NULL 时整表重建（DROP → CREATE → INSERT SELECT → DROP 旧表 → RENAME），否则只 `ALTER TABLE ADD COLUMN` 补缺失列；可重复执行，已有行按同名公共列保留。启动顺序为 `create_all` → `ensure_schema` → `runtime_settings.load()`。批次执行及恢复按单后端工作进程设计，当前不支持多 worker/多实例同时控制；重启后未完成批次转待核实并保留锁，不恢复动作。连接快照复用 JSON，不对已有业务表追加列。
+2026-11-14：`create_all` 之后新增 `app/db/schema.py` 的 `ensure_schema()` 结构对齐。启动顺序为 `create_all` → `ensure_schema` → `runtime_settings.load()`。批次执行及恢复按单后端工作进程设计，当前不支持多 worker/多实例同时控制；重启后未完成批次转待核实并保留锁，不恢复动作。连接快照复用 JSON，不对已有业务表追加列。
+
+2026-11-24：`ensure_schema()` 重写为**从 `models.py` 自动推导**，不再维护手抄的列清单与建表 DDL。它对比 ORM 定义与实际库结构，按需补列（含 `NOT NULL` 带默认值、`UNIQUE` 等无法直接 `ADD COLUMN` 的情况自动改走整表重建）、放宽/收紧 `NOT NULL`、补建缺失索引；已对齐时一条 SQL 都不执行。**改完 `models.py` 重启后端即自动生效，无需手工改建表脚本**。安全边界：库中存在 ORM 未定义的列时拒绝重建并回滚（避免静默删数据）；`NOT NULL` 列已有 NULL 行时跳过该表。重建在显式 `BEGIN`/`ROLLBACK` 中进行，失败不改变库。重启前可用 `python tools/check_schema_drift.py` 只读查看本次会影响哪些表。字段级结构见[数据库表结构](ROS_MES_数据库表结构.md)。
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
@@ -680,6 +684,8 @@ SQLite（`ros_database.db`，项目根），当前模型 20 张表，模型在 `
 | `fine_tuning` | id(PK), module_id+unit_id(联合FK→Unit), module_address?, module_descript?, parameter_name(rotation/swing/telescopic), old_value?(=初始值 start_position), requested_delta?(=微调量), new_value?(=应到 expected_position，非实测), observed_position?(=到位实测), observed_delta?, deviation?(=MES 自算偏差), position_error?(=固件自报误差), outcome?(moved/no_motion/unknown), outcome_by?→Users, outcome_at?, creater_id→Users, create_time, notes, del_flag | 微调记录，字段语义见 2.4.4 节 |
 | `fine_tuning_batches` | id(UUID PK), request_id(Unique), target_key(可空 Unique，真实 SEG:arm / 模拟 mock:SEG:arm), module_id, unit_id, seg, creator_id, request_json, progress_json, status, message, cancel_requested, created_at, updated_at | 幂等请求、逐轴进度与目标锁；完成/人工关闭后 target_key 置空 |
 | `control_safety` | id(PK，1=真实、2=模拟), state, generation | MES 急停/解除发送状态及联锁版本，不是设备状态表；两种环境互不清除 |
+| `control_stop_holds` | id(PK), mode(real/mock), scope(module/axis), module_id, device_id?, state(requested/held/cleared), message, creator_id, created_at, cleared_at?, cleared_reason? | 分级局部停（整模块停 / 单轴停）的记录与解除 |
+| `control_sessions` | id(UUID PK), module_id, device_id?, x?, y?, seg, unit_ids_json, connection_revision?, creator_id, created_at, last_active_at?, invalidated_at?, invalid_reason? | 模块握手会话，页面刷新后据此续接；`unit_ids_json` 记录本次绑定的机械臂 |
 | `ros_debug_settings` | id(PK，单例 1), revision, config_json | 当前服务连接模式和地址，逐项自动保存 |
 | `fine_tuning_config` | id(PK), module_id, unit_id, sensor_id(联合FK), config_json(整份JSON), creater_id, ... | 微调配置快照 |
 | `Drawings` | Drawing_ID(PK), Drawingname, Drawingdescripte, Drawingfile(路径), Creator_ID→Users, Createtime, Modifytime, NewVersion_ID→DrawingsVersion, del_flag | 图纸 |
@@ -691,7 +697,8 @@ SQLite（`ros_database.db`，项目根），当前模型 20 张表，模型在 `
 | `Module` | Module_ID(PK), Type_ID→Type, Moduledescript, ModuleAddress(=(x<<4)\|y), ... | 模块 |
 | `Unit` | id(PK 代理), Unit_ID(业务臂号 32/64/96/128/160), UnitDescript, Module_ID→Module；Unique(Module_ID,Unit_ID) | 机械臂 |
 | `sensors` | id(PK 代理), sensor_ID(业务号), sensordescript, IsRead, Module_ID+Unit_ID(联合FK→Unit), Unit_address；Unique(Module_ID,sensor_ID) | 传感器（每臂 8 类） |
-| `sensor_log` | Createtime+sensor_id(复合PK), creater_id, Work_ID, isread, data, ... | 传感器日志 |
+| `sensor_log` | Createtime+sensor_id(复合PK), creater_id, Work_ID, isread, data, ... | 传感器日志。**ROS 侧写、后端不消费**；`sensor_id` 存的是 AXIS 设备号（1~15 轴 / 21~25 臂级），不是 `sensors.id`；建库脚本声明的外键为遗留项，SQLite 未启用 FK 校验 |
+| `can_event_log` | Createtime+device_id+event_type(复合PK), module_id, creater_id, Work_ID, isread, data, Notes | CAN 事件归档。**ROS 侧写、后端不消费**，`models.py` 无 ORM 定义，由 `sqlite_create.py` 与 `hardware_node.py` 建表写入 |
 | `Tasks` | Task_ID(PK), Taskname, Taskdescripte, Workflow_ID?, Drawing_ID?, creater_id, TaskAssignment_id?(指派人), Status("0"~"3"), ... | 任务 |
 | `TasksTracing` | TasksTracing_ID(PK), Task_ID, operate_type, Workflow_ID, operater_ID, operate_time, Notes | 任务跟踪 |
 | `calculation` | Createtime(PK), creater_id, Work_ID, Module_ID?, Unit_ID?, device_ID?, isread, coord, position, ... | 计算解析日志 |

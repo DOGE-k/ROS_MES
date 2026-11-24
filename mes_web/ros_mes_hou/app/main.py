@@ -61,7 +61,8 @@ app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 @app.on_event("startup")
 def on_startup():
     models.Base.metadata.create_all(bind=engine)
-    # create_all 不会修改已存在表的列；fine_tuning 的新列与可空约束在此补齐
+    # create_all 只建缺失的表；已有表与 models.py 的差异（补列、改可空性）在此对齐。
+    # 改完 models.py 直接重启即可，无需手工维护建表脚本。
     ensure_schema(engine)
     runtime_settings.load()
     batch_manager.recover()
