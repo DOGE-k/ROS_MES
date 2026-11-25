@@ -29,8 +29,8 @@
 | 18 | `sensor_log` | 传感器日志表 | 8 | ROS 归档（后端不消费） |
 | 19 | `Tasks` | 任务表 | 12 | MES 前后端 |
 | 20 | `TasksTracing` | 任务跟踪表 | 7 | MES 前后端 |
-| 21 | `calculation` | 计算解析数据日志表 | 11 | ROS 归档（后端不消费） |
-| 22 | `point_data` | 点云图解析数据表 | 7 | ROS 归档（后端不消费） |
+| 21 | `Calculation` | 计算解析数据日志表 | 12 | ROS 归档（后端不消费） |
+| 22 | `Point_data` | 点云图解析数据表 | 8 | ROS 归档（后端不消费） |
 
 合计 **22** 张 ORM 表。另有 `can_event_log` 由 ROS 侧建表写入，`models.py` 无 ORM 定义，不在上表内。
 
@@ -432,42 +432,46 @@
 - 外键 `-`：`(operater_ID)` → `Users(User_ID)`
 - 索引 `ix_TasksTracing_TasksTracing_ID`：`(TasksTracing_ID)`
 
-## `calculation`　计算解析数据日志表
+## `Calculation`　计算解析数据日志表
 
 > **归属**：ROS 侧写入的计算解析日志，后端不消费。
 
 | 字段名 | 数据类型 | 允许为空 | 键 | 默认值 | 说明 |
 |---|---|---|---|---|---|
-| `Createtime` | DATETIME | 否 | 主键 | 当前时间 |  |
-| `creater_id` | INTEGER | 否 | 外键→`Users.User_ID` |  |  |
-| `Work_ID` | INTEGER | 否 | 外键→`works.Work_ID` |  |  |
-| `Module_ID` | INTEGER | 是 | 外键→`Module.Module_ID` |  |  |
-| `Unit_ID` | INTEGER | 是 |  |  |  |
-| `device_ID` | INTEGER | 是 |  |  |  |
-| `isread` | INTEGER | 是 |  |  |  |
-| `coord` | TEXT | 是 |  |  |  |
-| `position` | TEXT | 是 |  |  |  |
-| `del_flag` | BOOLEAN | 是 |  | FALSE |  |
+| `Calculation_id` | INTEGER | 否 | 主键 |  |  |
+| `Create_time` | DATETIME | 否 |  | 当前时间 |  |
+| `Creator_id` | INTEGER | 否 | 外键→`Users.User_ID` |  |  |
+| `Work_id` | INTEGER | 否 | 外键→`works.Work_ID` |  |  |
+| `Module_id` | INTEGER | 是 | 外键→`Module.Module_ID` |  |  |
+| `Unit_id` | INTEGER | 是 |  |  |  |
+| `Device_id` | INTEGER | 是 |  |  |  |
+| `Is_read` | INTEGER | 否 |  |  |  |
+| `Coordinates` | TEXT | 是 |  |  |  |
+| `Axis_result` | TEXT | 是 |  |  |  |
+| `Del_flag` | BOOLEAN | 是 |  | FALSE |  |
 | `Notes` | TEXT | 是 |  |  |  |
 
-- 外键 `-`：`(Module_ID)` → `Module(Module_ID)`
-- 外键 `-`：`(Work_ID)` → `works(Work_ID)`
-- 外键 `-`：`(creater_id)` → `Users(User_ID)`
+- 外键 `-`：`(Creator_id)` → `Users(User_ID)`
+- 外键 `-`：`(Module_id)` → `Module(Module_ID)`
+- 外键 `-`：`(Work_id)` → `works(Work_ID)`
+- 索引 `ix_Calculation_Calculation_id`：`(Calculation_id)`
 
-## `point_data`　点云图解析数据表
+## `Point_data`　点云图解析数据表
 
 > **归属**：ROS 侧写入的点云解析结果，后端不消费。
 
 | 字段名 | 数据类型 | 允许为空 | 键 | 默认值 | 说明 |
 |---|---|---|---|---|---|
-| `Createtime` | DATETIME | 否 | 主键 | 当前时间 |  |
-| `creater_id` | INTEGER | 否 | 外键→`Users.User_ID` |  |  |
-| `Module_ID` | INTEGER | 是 | 外键→`Module.Module_ID` |  |  |
-| `point` | TEXT | 否 |  |  |  |
-| `arms_address` | TEXT | 否 |  |  |  |
-| `del_flag` | BOOLEAN | 是 |  | FALSE |  |
+| `Point_data_id` | INTEGER | 否 | 主键 |  |  |
+| `Create_time` | DATETIME | 否 |  | 当前时间 |  |
+| `Creator_id` | INTEGER | 否 | 外键→`Users.User_ID` |  |  |
+| `Module_id` | INTEGER | 是 | 外键→`Module.Module_ID` |  |  |
+| `Point` | TEXT | 否 |  |  |  |
+| `Arms_address` | TEXT | 否 |  |  |  |
+| `Del_flag` | BOOLEAN | 是 |  | FALSE |  |
 | `Notes` | TEXT | 是 |  |  |  |
 
-- 外键 `-`：`(Module_ID)` → `Module(Module_ID)`
-- 外键 `-`：`(creater_id)` → `Users(User_ID)`
+- 外键 `-`：`(Creator_id)` → `Users(User_ID)`
+- 外键 `-`：`(Module_id)` → `Module(Module_ID)`
+- 索引 `ix_Point_data_Point_data_id`：`(Point_data_id)`
 

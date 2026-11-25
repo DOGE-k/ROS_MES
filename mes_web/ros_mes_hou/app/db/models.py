@@ -381,28 +381,38 @@ class TasksTracing(Base):
 
 
 class Calculation(Base):
-    __tablename__ = "calculation"
+    """V2.0：表名与列名按《数据库设计 V2.0（统一ID命名版）》，主键改为自增 Calculation_id，
+    Create_time 允许重复（ROS 侧同一秒内可写多条）。后端只保留 ORM 定义，不读写该表。
+    """
 
-    Createtime = Column(DateTime(timezone=True), server_default=func.now(), primary_key=True, nullable=False)
-    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
-    Work_ID = Column(Integer, ForeignKey("works.Work_ID"), nullable=False)
-    Module_ID = Column(Integer, ForeignKey("Module.Module_ID"), nullable=True)
-    Unit_ID = Column(Integer, nullable=True)
-    device_ID = Column(Integer, nullable=True)
-    isread = Column(Integer, nullable=True)
-    coord = Column(Text, nullable=True)
-    position = Column(Text, nullable=True)
-    del_flag = Column(Boolean, default=False)
+    __tablename__ = "Calculation"
+
+    Calculation_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    Create_time = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    Creator_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
+    Work_id = Column(Integer, ForeignKey("works.Work_ID"), nullable=False)
+    Module_id = Column(Integer, ForeignKey("Module.Module_ID"), nullable=True)
+    Unit_id = Column(Integer, nullable=True)
+    Device_id = Column(Integer, nullable=True)
+    Is_read = Column(Integer, nullable=False)
+    Coordinates = Column(Text, nullable=True)
+    Axis_result = Column(Text, nullable=True)
+    Del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)
 
 
 class PointData(Base):
-    __tablename__ = "point_data"
+    """V2.0：表名与列名按《数据库设计 V2.0（统一ID命名版）》，主键改为自增 Point_data_id。
+    后端只保留 ORM 定义，不读写该表。
+    """
 
-    Createtime = Column(DateTime(timezone=True), server_default=func.now(), primary_key=True, nullable=False)
-    creater_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
-    Module_ID = Column(Integer, ForeignKey("Module.Module_ID"), nullable=True)
-    point = Column(Text, nullable=False)
-    arms_address = Column(Text, nullable=False)
-    del_flag = Column(Boolean, default=False)
+    __tablename__ = "Point_data"
+
+    Point_data_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    Create_time = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    Creator_id = Column(Integer, ForeignKey("Users.User_ID"), nullable=False)
+    Module_id = Column(Integer, ForeignKey("Module.Module_ID"), nullable=True)
+    Point = Column(Text, nullable=False)
+    Arms_address = Column(Text, nullable=False)
+    Del_flag = Column(Boolean, default=False)
     Notes = Column(Text, nullable=True)

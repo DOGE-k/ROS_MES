@@ -41,8 +41,8 @@ TABLE_CN = {
     "Unit": "机械臂单元表",
     "sensors": "传感器表",
     "sensor_log": "传感器日志表",
-    "calculation": "计算解析数据日志表",
-    "point_data": "点云图解析数据表",
+    "Calculation": "计算解析数据日志表",
+    "Point_data": "点云图解析数据表",
     "fine_tuning": "微调记录表",
     "fine_tuning_config": "微调配置表",
     "fine_tuning_batches": "微调批次表",
@@ -59,8 +59,8 @@ ROS_ARCHIVE = {
                   "`sqlite_create.py` 里声明的外键为遗留项，SQLite 未启用 FK 校验。",
     "can_event_log": "ROS 侧写入的 CAN 事件归档表，后端不消费，`models.py` 中无 ORM 定义"
                      "（由 `sqlite_create.py` 与 `hardware_node.py` 建表写入）。",
-    "calculation": "ROS 侧写入的计算解析日志，后端不消费。",
-    "point_data": "ROS 侧写入的点云解析结果，后端不消费。",
+    "Calculation": "ROS 侧写入的计算解析日志，后端不消费。",
+    "Point_data": "ROS 侧写入的点云解析结果，后端不消费。",
 }
 
 # 表级说明。新增表时在这里补，缺省为空。

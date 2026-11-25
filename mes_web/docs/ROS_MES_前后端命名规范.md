@@ -63,7 +63,7 @@ ROS 话题规范的思路是"**前缀定方向、名称按数据、后缀定类�
 | 对象 | 规范 | 正例（现有代码） | 反例/注意 |
 |---|---|---|---|
 | SQLAlchemy 模型类 | PascalCase 单数 | `User`、`Task`、`Drawing`、`Module`、`Unit`、`Sensor` | 类名单数、表名允许历史遗留 |
-| 数据库表名（新表） | snake_case | `fine_tuning`、`work_flow_relations`、`point_data` | 旧表 `Users`/`Drawings`/`works`/`Type` 大小写单复数混乱，**保留不改**（见 5 节） |
+| 数据库表名（新表） | 先按《数据库设计 V2.0（统一ID命名版）》 | `fine_tuning`、`work_flow_relations`、`Point_data`、`Calculation` | 旧表 `Users`/`Drawings`/`works`/`Type` 大小写单复数混乱，**保留不改**（见 5 节）；2026-11 起 `calculation`/`point_data` 已按 V2.0 改为 `Calculation`/`Point_data`（首词首字母大写、后词小写），不再按 snake_case 推断 |
 | 列名（新表） | snake_case | `module_id`、`parameter_name`、`create_time` | 旧表 PascalCase 列（`User_ID`、`Drawingname`）保留不改 |
 | Pydantic 模型 | `<实体><Base\|Create\|Update\|Response>` | `DeviceCreate`、`UnitUpdate`、`FineTuningResponse`、`TokenData` | 实体名与模型类一致 |
 | CRUD 函数 | `<动词>_<实体>` 及 `<动词>_<实体>_by_<字段>` | `get_device_by_model_and_address`、`create_fine_tuning_record`、`update_unit`、`delete_device` | 动词固定：`get / create / update / delete / save / parse` |

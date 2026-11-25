@@ -701,8 +701,8 @@ SQLite（`ros_database.db`，项目根），当前模型 22 张表，模型在 `
 | `can_event_log` | Createtime+device_id+event_type(复合PK), module_id, creater_id, Work_ID, isread, data, Notes | CAN 事件归档。**ROS 侧写、后端不消费**，`models.py` 无 ORM 定义，由 `sqlite_create.py` 与 `hardware_node.py` 建表写入 |
 | `Tasks` | Task_ID(PK), Taskname, Taskdescripte, Workflow_ID?, Drawing_ID?, creater_id, TaskAssignment_id?(指派人), Status("0"~"3"), ... | 任务 |
 | `TasksTracing` | TasksTracing_ID(PK), Task_ID, operate_type, Workflow_ID, operater_ID, operate_time, Notes | 任务跟踪 |
-| `calculation` | Createtime(PK), creater_id, Work_ID, Module_ID?, Unit_ID?, device_ID?, isread, coord, position, ... | 计算解析日志 |
-| `point_data` | Createtime(PK), creater_id, Module_ID?, point, arms_address, ... | 点云解析数据 |
+| `Calculation` | Calculation_id(PK 自增), Create_time(允许重复), Creator_id, Work_id, Module_id?, Unit_id?, Device_id?, Is_read, Coordinates, Axis_result, Del_flag, Notes. **V2.0 结构，ROS 侧写、后端不消费**（V2 前为 `calculation` + `Createtime(PK)` + `coord`/`position`） | 计算解析日志 |
+| `Point_data` | Point_data_id(PK 自增), Create_time, Creator_id, Module_id?, Point, Arms_address, Del_flag, Notes. **V2.0 结构，ROS 侧写、后端不消费**（V2 前为 `point_data` + `Createtime(PK)` + `point`/`arms_address`） | 点云解析数据 |
 
 > 注意：`schemas/device.py`、`schemas/model.py` 的 `Device_*`/`Model_*` 是 **Module 表 / Type 表的对外别名**，库中无独立 Devices/Model 表。种子账号与初始密码见建库脚本（部署时自行设置，文档不复制凭据）；Module_ID=17、源码种子定义五臂 Unit_ID=32/64/96/128/160、每臂 8 传感器；现有部署数据库登记数量必须另行核查。
 

@@ -306,40 +306,40 @@ def create_database(db_path=DB_PATH):
         CREATE INDEX IF NOT EXISTS idx_event_device ON can_event_log(device_id, event_type);
     """)
 
-    # ----- 计算解析数据日志表 -----
+    # ----- 计算解析数据日志表（V2.0 统一命名，与 ROS 侧三节点建表语句保持一致）
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS calculation (
-            Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            creater_id INTEGER NOT NULL,
-            Work_ID INTEGER NOT NULL,
-            Module_ID INTEGER,
-            Unit_ID INTEGER,
-            device_ID INTEGER,        
-            isread INTEGER NOT NULL,
-            coord TEXT,
-            position TEXT,
-            del_flag BOOLEAN DEFAULT 0,
-            Notes TEXT,
-            PRIMARY KEY (Createtime),
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
-            FOREIGN KEY (Work_ID) REFERENCES works(Work_ID),
-            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID)
+        CREATE TABLE IF NOT EXISTS Calculation (
+            Calculation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Create_time    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            Creator_id     INTEGER NOT NULL,
+            Work_id        INTEGER NOT NULL,
+            Module_id      INTEGER,
+            Unit_id        INTEGER,
+            Device_id      INTEGER,
+            Is_read        INTEGER NOT NULL,
+            Coordinates    TEXT,
+            Axis_result    TEXT,
+            Del_flag       BOOLEAN DEFAULT 0,
+            Notes          TEXT,
+            FOREIGN KEY (Creator_id) REFERENCES Users(User_ID),
+            FOREIGN KEY (Work_id) REFERENCES works(Work_ID),
+            FOREIGN KEY (Module_id) REFERENCES Module(Module_ID)
         );
     """)
 
-    # ----- 点云图解析数据表 -----
+    # ----- 点云图解析数据表（V2.0 统一命名，与 ROS 侧三节点建表语句保持一致）
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS point_data (
-            Createtime DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            creater_id INTEGER NOT NULL,
-            Module_ID INTEGER,
-            point TEXT NOT NULL,
-            arms_address TEXT NOT NULL,
-            del_flag BOOLEAN DEFAULT 0,
-            Notes TEXT,
-            PRIMARY KEY (Createtime),
-            FOREIGN KEY (creater_id) REFERENCES Users(User_ID),
-            FOREIGN KEY (Module_ID) REFERENCES Module(Module_ID)
+        CREATE TABLE IF NOT EXISTS Point_data (
+            Point_data_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            Create_time   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            Creator_id    INTEGER NOT NULL,
+            Module_id     INTEGER,
+            Point         TEXT NOT NULL,
+            Arms_address  TEXT NOT NULL,
+            Del_flag      BOOLEAN DEFAULT 0,
+            Notes         TEXT,
+            FOREIGN KEY (Creator_id) REFERENCES Users(User_ID),
+            FOREIGN KEY (Module_id) REFERENCES Module(Module_ID)
         );
     """)
 
