@@ -42,22 +42,6 @@ def resolve_db_path():
     return os.path.join(repo_root, db_path)
 
 
-def resolve_calib_json_path():
-    """解析标定 json 路径（V2 改造新增）。
-
-    优先级：rob_arm.env 的 CALIB_JSON_PATH（绝对路径或相对仓库根目录）
-            > 旧默认路径 ~/ros2_ws/data/零件坐标绑定结果.json
-    文件缺失时由调用方决定是否降级，这里只负责算路径。
-    """
-    p = os.environ.get('CALIB_JSON_PATH')
-    if p:
-        if os.path.isabs(p):
-            return p
-        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        return os.path.join(repo_root, p)
-    return os.path.expanduser("~/ros2_ws/data/零件坐标绑定结果.json")
-
-
 DEFAULT_CREATER_ID = 1
 DEFAULT_DEL_FLAG = 0
 DEFAULT_NOTES = None
@@ -245,22 +229,6 @@ class DataProcessNode(Node):
         update_params_from_env()
         init_database()
 
-        # 加载标定json（V2 改造：路径可配，缺失只告警，不阻断启动）
-        json_path = resolve_calib_json_path()
-        self.calib_data = {}
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    self.calib_data = json.load(f)
-                self.get_logger().info(f"✅ 成功加载零件坐标绑定json：{json_path}")
-            except Exception as e:
-                self.get_logger().warn(f"⚠️ 标定json解析失败，按空配置继续：{json_path} ({e})")
-        else:
-            self.get_logger().warn(
-                f"⚠️ 未找到标定json，按空配置继续：{json_path}；"
-                f"如需指定路径，在 rob_arm.env 里配置 CALIB_JSON_PATH"
-            )
-
         # 图片任务要求：ROS消息回调组
         self.callback_group = ReentrantCallbackGroup()
         # 独立计算线程池，点云预处理CPU密集任务，不阻塞ROS消息
@@ -300,8 +268,15 @@ class DataProcessNode(Node):
         file_path = json_data.get("file_path")
         pcd = None
         if file_path:
+            # 从图纸文件读取点云；后端下发的是相对 scripts 目录的路径，
+            # 节点 cwd 不一定是 scripts 目录（ros2 launch 会切到 ~），这里显式按 scripts 目录解析
+            if not os.path.isabs(file_path):
+                file_path = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), file_path))
+            self.get_logger().info(f"📂 收到图纸路径: {file_path}")
             if not os.path.exists(file_path):
-                raise FileNotFoundError(f"图纸文件不存在 {file_path}")
+                self.get_logger().error(f"❌ 图纸文件不存在: {file_path}")
+                return None
             with open(file_path, 'r', encoding='utf-8') as f:
                 drawing_json = json.load(f)
             parts = drawing_json.get("虚拟部件列表", [])
@@ -313,7 +288,8 @@ class DataProcessNode(Node):
                     z = coord.get("全局Z(mm)", 0)
                     points_list.append([x, y, z])
             if not points_list:
-                raise RuntimeError("JSON文件中没有找到坐标数据")
+                self.get_logger().error("❌ JSON文件中没有找到坐标数据")
+                return None
             point_cloud = np.array(points_list, dtype=np.float64) / 10.0
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(point_cloud)
@@ -322,10 +298,12 @@ class DataProcessNode(Node):
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(point_cloud)
         else:
-            raise RuntimeError("缺少 points 或 file_path 字段")
+            self.get_logger().error("❌ 缺少 points 或 file_path 字段")
+            return None
 
         if len(pcd.points) == 0:
-            raise RuntimeError("点云为空")
+            self.get_logger().error("❌ 点云为空")
+            return None
 
         # 统计滤波去噪
         cl, ind = pcd.remove_statistical_outlier(nb_neighbors=50, std_ratio=2.0)
@@ -373,6 +351,9 @@ class DataProcessNode(Node):
     def _on_work_done(self, future):
         try:
             modules = future.result()
+            # 图纸不存在 / 无坐标等输入问题已在 _pointcloud_work 里记日志并返回 None
+            if modules is None:
+                return
             # 发布模块任务
             msg_out = String()
             msg_out.data = json.dumps(modules)
