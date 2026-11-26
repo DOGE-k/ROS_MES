@@ -9,6 +9,13 @@
 
 ---
 
+鱼香ROS一键安装脚本
+wget http://fishros.com/install -O fishros && . fishros
+
+
+
+
+
 ## 0. V1.1 相对 V1.0 的变更
 
 | 项目 | V1.0 | V1.1（当前源码） |
