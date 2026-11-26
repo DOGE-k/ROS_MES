@@ -117,7 +117,7 @@ done
 if [ -n "$WORKSPACE_ROOT" ] && [ -d "$WORKSPACE_ROOT/src" ]; then
     ok "ROS 工作空间：$WORKSPACE_ROOT"
 else
-    warn "未识别到 catkin 工作空间（期望 ~/robot_ws/src/ROS_MES）"
+    warn "未识别到 catkin 工作空间（要求项目位于 <工作空间>/src/<项目目录>）"
 fi
 
 AVAIL_KB="$(df -Pk "$PROJECT_ROOT" | awk 'NR==2 {print $4}')"
@@ -270,9 +270,9 @@ else
     bad "数据库文件不存在：$PROJECT_ROOT/ros_database.db"
 fi
 
-# 前后端数据库路径一致性
-if [ -f "$BACKEND_DIR/.env" ] && [ -x "$BACKEND_DIR/venv/bin/python" ]; then
-    BACKEND_DB="$("$BACKEND_DIR/venv/bin/python" - "$BACKEND_DIR" <<'PY' 2>/dev/null
+# 后端数据库必须对应当前项目根目录；存在 ROS 配置时再检查前后端一致性。
+if [ -f "$BACKEND_DIR/.env" ]; then
+    BACKEND_DB="$(python3 - "$BACKEND_DIR" <<'PY' 2>/dev/null
 import re, sys
 from pathlib import Path
 base = Path(sys.argv[1])
@@ -291,6 +291,17 @@ if not p.is_absolute():
 print(p.resolve())
 PY
 )"
+    EXPECTED_DB="$(realpath -m "$PROJECT_ROOT/ros_database.db")"
+    if [ -n "$BACKEND_DB" ]; then
+        if [ "$(realpath -m "$BACKEND_DB")" = "$EXPECTED_DB" ]; then
+            ok "后端数据库路径对应当前项目：$BACKEND_DB"
+        else
+            bad "后端数据库仍指向旧路径：backend=$BACKEND_DB expected=$EXPECTED_DB；请重新运行 install_all.sh"
+        fi
+    else
+        bad "无法解析后端 DATABASE_URL"
+    fi
+
     ROS_DB="$(get_env "$ROS_ENV" "DB_PATH")"
     if [ -n "$BACKEND_DB" ] && [ -n "$ROS_DB" ]; then
         if [ "$(realpath -m "$BACKEND_DB")" = "$(realpath -m "$ROS_DB")" ]; then

@@ -21,8 +21,8 @@
 #
 # 注意：
 #   - 不要用 sudo 运行本脚本；脚本内部会对需要的步骤调用 sudo。
-#   - 默认不覆盖已有数据库、.env、rob_arm.env，只补齐缺失项。
-#   - 不支持在项目目录之外随意挪动；建议路径为 ~/robot_ws/src/ROS_MES。
+#   - 数据库路径按当前项目位置同步，已有端口、密钥和硬件参数保持不变。
+#   - 自动识别 <工作空间>/src/<项目目录> 结构；工作空间重命名后重新运行即可。
 # ============================================================
 
 set -euo pipefail
@@ -30,6 +30,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORKSPACE_ROOT="$(cd "$PROJECT_ROOT/../.." 2>/dev/null && pwd || true)"
+TARGET_DB_PATH="$PROJECT_ROOT/ros_database.db"
+TARGET_DATABASE_URL="sqlite:///$TARGET_DB_PATH"
 TS="$(date +%Y%m%d_%H%M%S)"
 
 MOCK_ONLY=0
@@ -93,6 +95,63 @@ run_shell() {
     else
         bash -c "$1"
     fi
+}
+
+# 更新指定配置项，保留文件中的其他现场配置；同名旧配置一并替换，避免 dotenv 取到旧值。
+set_env_value() {
+    local file="$1" key="$2" value="$3"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '+ 配置 %s: %s=%s\n' "$file" "$key" "$value"
+        return 0
+    fi
+    python3 - "$file" "$key" "$value" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+key, value = sys.argv[2:4]
+text = path.read_text(encoding="utf-8") if path.exists() else ""
+pattern = re.compile(rf"^{re.escape(key)}=.*$", re.MULTILINE)
+entry = f"{key}={value}"
+if pattern.search(text):
+    text = pattern.sub(lambda _: entry, text)
+else:
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += entry + "\n"
+path.write_text(text, encoding="utf-8")
+PY
+}
+
+# 工作空间重命名后更新同一托管行，不再不断追加新旧 source 路径。
+sync_workspace_bashrc() {
+    local file="$HOME/.bashrc"
+    local setup="$WORKSPACE_ROOT/devel/setup.bash"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf '+ 更新 %s: source %s # ROS_MES_WORKSPACE\n' "$file" "$setup"
+        return 0
+    fi
+    python3 - "$file" "$setup" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+path = Path(sys.argv[1])
+marker = "# ROS_MES_WORKSPACE"
+entry = f"source {shlex.quote(sys.argv[2])} {marker}"
+lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+managed = [line for line in lines if line.rstrip().endswith(marker)]
+if managed == [entry]:
+    raise SystemExit(0)
+lines = [line for line in lines if not line.rstrip().endswith(marker)]
+while lines and not lines[-1].strip():
+    lines.pop()
+if lines:
+    lines.append("")
+lines.append(entry)
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
 }
 
 # 2026-11-24 部署修复：Python 源码编译后的构建目录清理在受限环境（沙盒/特殊挂载的
@@ -357,17 +416,16 @@ if [ "$MOCK_ONLY" -eq 0 ]; then
             run bash -c "source /opt/ros/noetic/setup.bash && cd \"$WORKSPACE_ROOT\" && catkin_make" \
                 || die "catkin_make 失败：请确认 /opt/ros/noetic 可用；若 build/ 缓存来自其他环境，可删除 $WORKSPACE_ROOT/build 和 $WORKSPACE_ROOT/devel 后重试。"
         else
-            warn "未找到 catkin 工作空间结构，跳过 catkin_make。期望路径：~/robot_ws/src/ROS_MES"
+            warn "未找到 catkin 工作空间结构，跳过 catkin_make。要求项目位于 <工作空间>/src/<项目目录>，当前识别为：$WORKSPACE_ROOT"
         fi
 
         if ! grep -q "/opt/ros/noetic/setup.bash" "$HOME/.bashrc" 2>/dev/null; then
             log "写入 ~/.bashrc：ROS 环境"
             run_shell "printf '\nsource /opt/ros/noetic/setup.bash\n' >> '$HOME/.bashrc'"
         fi
-        if [ -n "$WORKSPACE_ROOT" ] && [ -f "$WORKSPACE_ROOT/devel/setup.bash" ] \
-            && ! grep -qF "$WORKSPACE_ROOT/devel/setup.bash" "$HOME/.bashrc" 2>/dev/null; then
-            log "写入 ~/.bashrc：工作空间环境"
-            run_shell "printf '\nsource %s/devel/setup.bash\n' '$WORKSPACE_ROOT' >> '$HOME/.bashrc'"
+        if [ -n "$WORKSPACE_ROOT" ] && [ -f "$WORKSPACE_ROOT/devel/setup.bash" ]; then
+            log "同步 ~/.bashrc：工作空间环境（$WORKSPACE_ROOT）"
+            sync_workspace_bashrc
         fi
     else
         warn "未找到 /opt/ros/noetic/setup.bash，跳过 ROS 依赖与编译。"
@@ -386,7 +444,22 @@ if [ ! -f "$BACKEND_ENV" ]; then
     log "创建后端 .env..."
     run cp "$BACKEND_TEMPLATE" "$BACKEND_ENV"
 else
-    log "保留现有后端 .env"
+    log "保留现有后端 .env，路径相关配置按当前项目位置同步"
+fi
+
+BACKEND_BACKUP_DONE=0
+backup_backend_env() {
+    if [ "$BACKEND_BACKUP_DONE" -eq 0 ] && [ -f "$BACKEND_ENV" ]; then
+        run cp "$BACKEND_ENV" "$BACKEND_ENV.bak.$TS"
+        BACKEND_BACKUP_DONE=1
+    fi
+}
+
+CURRENT_DATABASE_URL="$(grep -E '^DATABASE_URL=' "$BACKEND_ENV" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+if [ "$CURRENT_DATABASE_URL" != "$TARGET_DATABASE_URL" ]; then
+    log "同步后端数据库配置：$TARGET_DATABASE_URL"
+    backup_backend_env
+    set_env_value "$BACKEND_ENV" "DATABASE_URL" "$TARGET_DATABASE_URL"
 fi
 
 # 只在仍是占位值时生成 SECRET_KEY
@@ -395,12 +468,8 @@ if [ -z "$SECRET_VAL" ] || [ "${#SECRET_VAL}" -lt 16 ] \
     || printf '%s' "$SECRET_VAL" | grep -qiE 'change|your-secret|todo|example'; then
     NEW_SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
     log "生成新的 SECRET_KEY..."
-    run cp "$BACKEND_ENV" "$BACKEND_ENV.bak.$TS"
-    if grep -q '^SECRET_KEY=' "$BACKEND_ENV" 2>/dev/null; then
-        run sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$NEW_SECRET|" "$BACKEND_ENV"
-    else
-        run_shell "printf '\nSECRET_KEY=%s\n' '$NEW_SECRET' >> '$BACKEND_ENV'"
-    fi
+    backup_backend_env
+    set_env_value "$BACKEND_ENV" "SECRET_KEY" "$NEW_SECRET"
 fi
 
 if [ -d "$BACKEND_DIR/venv" ] && [ ! -x "$BACKEND_DIR/venv/bin/python" ]; then
@@ -480,14 +549,10 @@ if [ "$MOCK_ONLY" -eq 0 ]; then
 
         log "补齐 ROS 配置（保留已有值）..."
         CURRENT_DB_PATH="$(grep -E '^DB_PATH=' "$ROS_ENV" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
-        TARGET_DB_PATH="$PROJECT_ROOT/ros_database.db"
         if [ "$CURRENT_DB_PATH" != "$TARGET_DB_PATH" ]; then
+            log "同步 ROS 数据库配置：$TARGET_DB_PATH"
             backup_ros_env
-            if grep -q '^DB_PATH=' "$ROS_ENV"; then
-                run sed -i "s|^DB_PATH=.*|DB_PATH=$TARGET_DB_PATH|" "$ROS_ENV"
-            else
-                run_shell "printf '\nDB_PATH=%s\n' '$TARGET_DB_PATH' >> '$ROS_ENV'"
-            fi
+            set_env_value "$ROS_ENV" "DB_PATH" "$TARGET_DB_PATH"
         fi
 
         CURRENT_ZLG="$(grep -E '^ZLG_LIBUSB_PATH=' "$ROS_ENV" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' || true)"

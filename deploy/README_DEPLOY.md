@@ -249,7 +249,7 @@ VITE_USE_MOCK=false
 ### 5.4 路径一致性
 
 - ROS 的 `DB_PATH` 必须与后端 `DATABASE_URL` 指向**同一个** `ros_database.db`。
-- 仓库目录换位置后，必须同步改 `DB_PATH`、`DATABASE_URL`（绝对路径时）并重新 `catkin_make`。
+- 仓库目录或工作空间名称变化后，重新运行 `deploy/install_all.sh` 会自动同步 `DB_PATH`、`DATABASE_URL` 和脚本托管的工作空间 `source` 配置，并重新执行 `catkin_make`。
 - `roslaunch` 会把 cwd 切到 `~/.ros`，所以 ROS 侧数据库路径必须写绝对路径。
 
 ---
@@ -279,7 +279,8 @@ bash deploy/install_all.sh --skip-ros-install
 说明：
 
 - **不要用 `sudo` 运行**；脚本内部会对 apt/udev 调用 sudo。
-- 已有数据库、`.env`、`rob_arm.env` 不会被覆盖，只补齐缺失项；修改前会生成 `.bak.时间戳` 备份。
+- **已有数据库不覆盖**；已有 `.env`、`rob_arm.env` 的端口、密钥和硬件参数保留，但 `DATABASE_URL`、`DB_PATH` 会按当前项目位置自动更新，`~/.bashrc` 中由本脚本管理的工作空间路径也会同步替换。修改配置前会生成 `.bak.时间戳` 备份。
+- 换电脑、移动项目或重命名工作空间后，在新位置重新运行本脚本即可，不要沿用旧的绝对路径配置。
 - 日志在 `deploy/logs/install_*.log`。
 - 只支持 Ubuntu 20.04 的完整安装；其他版本只能 `--mock-only`。
 - 安装完成后会自动运行 `deploy/check_deploy.sh`，也可以随时手动执行。

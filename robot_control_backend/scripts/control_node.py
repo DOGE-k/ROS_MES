@@ -14,7 +14,6 @@ from std_msgs.msg import Header
 from robot_control_backend.msg import (
     RotationCmd, SwingCmd, TelescopicCmd, IntCmd, ArriveNotification, ModuleStatus, AdjustAck)
 
-
 def load_env_config():
     """从 .env 文件加载所有配置到环境变量（文件必须存在）"""
     env_path = os.path.join(os.path.dirname(__file__), '../rob_arm.env')
