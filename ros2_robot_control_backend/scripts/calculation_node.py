@@ -18,7 +18,6 @@ import time
 import sqlite3
 import open3d as o3d
 import os
-import random
 from datetime import datetime
 from scipy.spatial import KDTree
 from std_msgs.msg import String
@@ -282,21 +281,29 @@ class PointSelectorNode(Node):
 
     def _create_table(self):
         self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS calculation (
-                Createtime DATETIME NOT NULL PRIMARY KEY,
-                creater_id INTEGER NOT NULL,
-                Work_ID    INTEGER NOT NULL,
-                Module_ID  INTEGER NOT NULL,
-                Unit_ID    INTEGER NOT NULL,
-                device_ID  INTEGER NOT NULL,
-                isread     INTEGER NOT NULL,
-                coord      TEXT NOT NULL,
-                position   TEXT NOT NULL,
-                del_flag   BOOL NOT NULL DEFAULT false,
-                Notes      TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS Calculation (
+                Calculation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Create_time    DATETIME NOT NULL,
+                Creator_id     INTEGER NOT NULL,
+                Work_id        INTEGER NOT NULL,
+                Module_id      INTEGER,
+                Unit_id        INTEGER,
+                Device_id      INTEGER,
+                Is_read        INTEGER NOT NULL,
+                Coordinates    TEXT,
+                Axis_result    TEXT,
+                Del_flag       BOOL DEFAULT false,
+                Notes          TEXT
             )
         """)
         self.conn.commit()
+
+        # V2 结构自检：库仍是旧结构时直接报错，避免运行期写入静默失败
+        cols = {row[1].lower() for row in self.conn.execute("PRAGMA table_info(Calculation)")}
+        missing = {'calculation_id', 'create_time', 'creator_id', 'coordinates', 'axis_result'} - cols
+        if missing:
+            raise RuntimeError(
+                f"数据库表 Calculation 仍是旧结构，缺少列 {sorted(missing)}；请先执行 V2 迁移")
 
     @staticmethod
     def arm_to_ids(arm_id):
@@ -351,15 +358,16 @@ class PointSelectorNode(Node):
             self.get_logger().error(f"计算任务完成回调异常 {str(e)}", exc_info=True)
 
     def _save_module_record(self, module_id, coord_dict, position_dict):
-        now = datetime.now()
-        createtime = now.strftime("%Y-%m-%d %H:%M:%S.") + f"{now.microsecond // 1000:03d}-{random.randint(0,9999):04d}"
+        # V2：主键改为自增 Calculation_id，Create_time 允许重复，取标准时间串
+        create_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             self.conn.execute("""
-                INSERT INTO calculation
-                (Createtime, creater_id, Work_ID, Module_ID, Unit_ID, device_ID, isread, coord, position, del_flag, Notes)
+                INSERT INTO Calculation
+                (Create_time, Creator_id, Work_id, Module_id, Unit_id, Device_id,
+                 Is_read, Coordinates, Axis_result, Del_flag, Notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                createtime,
+                create_time,
                 1,
                 1,
                 module_id,
