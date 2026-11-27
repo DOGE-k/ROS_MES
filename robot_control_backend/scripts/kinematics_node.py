@@ -71,24 +71,40 @@ def update_config_from_env():
 def solve_3dof(arm_base, target_p):
     """3自由度逆运动学解算，返回关节目标角度/长度。
 
-    限位只用于判定解算结果是否落在可执行范围内，不再对结果做 clip 回写。
-    轴节点负责最终的安全校验；微调用于补偿机械误差，而不是修改解算目标。
+    图纸下发：解算结果必须按 rob_arm.env 的三轴软限位裁剪后再下发。
+    轴节点（rotation/swing/telescopic）对超位指令是直接丢弃并回执 CmdAck，
+    解算端不裁剪会导致图纸指令全部被判超位、命令下发不出去。
+    微调不经过本节点，不受此裁剪影响。
     """
     dx, dy, dz = target_p - arm_base
     dxy = np.hypot(dx, dy)
+
+    # 旋转轴限位裁剪（°）
     j1 = np.degrees(np.arctan2(dy, dx)) if dxy > 1e-3 else 0.0
+    j1_clipped = float(np.clip(j1, Config.ROTATION_MIN_ANGLE, Config.ROTATION_MAX_ANGLE))
+    if not np.isclose(j1_clipped, j1):
+        rospy.logwarn("旋转解算值 %.2f° 超出限位 [%.1f, %.1f]°，已裁剪为 %.2f°",
+                      j1, Config.ROTATION_MIN_ANGLE, Config.ROTATION_MAX_ANGLE, j1_clipped)
+    j1 = j1_clipped
+
+    # 摆动轴限位裁剪（°）
     ideal_j2 = np.pi/2 if abs(dz) < 1e-6 else np.arctan2(dxy, dz)
-
     j2_deg = np.degrees(ideal_j2)
-    if j2_deg < Config.SWING_MIN_ANGLE or j2_deg > Config.MAX_SWING_ANGLE:
-        rospy.logwarn("摆动解算值 %.2f° 超出限位 [%.1f, %.1f]°，按解算值下发，由轴节点校验",
-                      j2_deg, Config.SWING_MIN_ANGLE, Config.MAX_SWING_ANGLE)
+    j2_clipped = float(np.clip(j2_deg, Config.SWING_MIN_ANGLE, Config.MAX_SWING_ANGLE))
+    if not np.isclose(j2_clipped, j2_deg):
+        rospy.logwarn("摆动解算值 %.2f° 超出限位 [%.1f, %.1f]°，已裁剪为 %.2f°",
+                      j2_deg, Config.SWING_MIN_ANGLE, Config.MAX_SWING_ANGLE, j2_clipped)
+    j2_deg = j2_clipped
 
-    # 目标点到臂座的距离；直接使用解算值，不再按限位裁剪
+    # 伸缩轴限位裁剪：轴节点限位单位是 mm，解算距离单位是 cm，需先换算
     j3 = float(np.hypot(dxy, dz))
-    if j3 < Config.ARM_MIN_EXTEND or j3 > Config.ARM_MAX_EXTEND:
-        rospy.logwarn("伸缩解算值 %.2fcm 超出几何可达范围 [%.1f, %.1f]cm，按解算值下发",
-                      j3, Config.ARM_MIN_EXTEND, Config.ARM_MAX_EXTEND)
+    j3_min_cm = Config.TELESCOPIC_MIN_MM / 10.0
+    j3_max_cm = Config.TELESCOPIC_MAX_MM / 10.0
+    j3_clipped = float(np.clip(j3, j3_min_cm, j3_max_cm))
+    if not np.isclose(j3_clipped, j3):
+        rospy.logwarn("伸缩解算值 %.2fcm 超出限位 [%.1f, %.1f]mm，已裁剪为 %.2fcm",
+                      j3, Config.TELESCOPIC_MIN_MM, Config.TELESCOPIC_MAX_MM, j3_clipped)
+    j3 = j3_clipped
 
     return round(j1, 2), round(j2_deg, 2), round(j3, 2)
 
@@ -279,10 +295,10 @@ class KinematicsNode:
             target_j3_mm = target_j3_cm * 10.0
             delta_tel = target_j3_mm - cur_tel
 
-            # 解算结果就是最终目标：不做绝对限位/单次增量裁剪，
-            # 只提示超范围，由轴节点做最终安全校验。
+            # 解算目标已在 solve_3dof 按三轴软限位裁剪，这里只按裁剪后的目标求增量，
+            # 不再额外裁剪增量，保证轴节点收到的是限位内的位置。
             if abs(delta_tel) > Config.TELESCOPIC_MAX_DELTA_MM:
-                rospy.logwarn("Arm%d 伸缩增量 %.2fmm 超过建议单次值 %.1fmm，按解算结果下发",
+                rospy.logwarn("Arm%d 伸缩增量 %.2fmm 超过建议单次值 %.1fmm，按已裁剪目标下发",
                               arm_id, delta_tel, Config.TELESCOPIC_MAX_DELTA_MM)
 
         # V2 device_id 规则（device_id 即 AXIS 寻址单元，不再乘 100）：
