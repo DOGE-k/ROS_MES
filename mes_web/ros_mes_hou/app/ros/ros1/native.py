@@ -88,7 +88,8 @@ def ros_node():
     global pub, ros_ready
 
     if rospy is None or String is None:
-        logger.error("❌ rospy 加载失败：%s", ROS_IMPORT_ERROR)
+        # rospy 原生节点是可选增强，主通道为 rosbridge；不可用时仅提示，不算故障。
+        logger.warning("未启用 rospy 原生节点（主通道 rosbridge）：%s", ROS_IMPORT_ERROR)
         return
 
     rospy.init_node(
