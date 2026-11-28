@@ -55,8 +55,13 @@ def update_config_from_env():
     Config.VOXEL_SIZE             = float(os.environ['VOXEL_SIZE'])
     Config.MAX_WORKERS            = int(os.environ['MAX_WORKERS'])
     Config.MAX_SWING_ANGLE        = float(os.environ['MAX_SWING_ANGLE'])
-    Config.ARM_MIN_EXTEND         = float(os.environ['ARM_MIN_EXTEND'])
-    Config.ARM_MAX_EXTEND         = float(os.environ['ARM_MAX_EXTEND'])
+    # 可达臂长区间由「臂端零位高度 + 伸缩软限位」推导，不再单独读 ARM_MIN/MAX_EXTEND：
+    # 旧参数 1~60cm 与 TELESCOPIC_*（±20mm）差 30 倍，12cm 的绝对臂长被当成合法伸缩量放行。
+    Config.ARM_TIP_HEIGHT_AT_ZERO = float(os.environ['ARM_TIP_HEIGHT_AT_ZERO'])
+    Config.TELESCOPIC_MIN_MM      = float(os.environ['TELESCOPIC_MIN_MM'])
+    Config.TELESCOPIC_MAX_MM      = float(os.environ['TELESCOPIC_MAX_MM'])
+    Config.ARM_MIN_EXTEND = Config.ARM_TIP_HEIGHT_AT_ZERO + Config.TELESCOPIC_MIN_MM / 10.0   # cm
+    Config.ARM_MAX_EXTEND = Config.ARM_TIP_HEIGHT_AT_ZERO + Config.TELESCOPIC_MAX_MM / 10.0   # cm
     Config.VERTICAL_CHECK_RADIUS  = float(os.environ['VERTICAL_CHECK_RADIUS'])
     Config.VERTICAL_FLAT_TOLERANCE = float(os.environ['VERTICAL_FLAT_TOLERANCE'])
     Config.SURFACE_EXTRACT_K      = int(os.environ['SURFACE_EXTRACT_K'])
@@ -64,7 +69,6 @@ def update_config_from_env():
     Config.NORMAL_RADIUS          = float(os.environ['NORMAL_RADIUS'])
     Config.HORIZONTAL_ANGLE_THRESH = float(os.environ['HORIZONTAL_ANGLE_THRESH'])
     Config.HORIZONTAL_Z_STD       = float(os.environ['HORIZONTAL_Z_STD'])
-    Config.DEFAULT_HEIGHT         = float(os.environ['DEFAULT_HEIGHT'])
     Config.MIN_POINTS_FOR_PCA     = int(os.environ['MIN_POINTS_FOR_PCA'])
     Config.POINT_SELECT_STRATEGY  = os.environ['POINT_SELECT_STRATEGY']
     Config.DISTANCE_WEIGHT        = float(os.environ['DISTANCE_WEIGHT'])
@@ -150,7 +154,7 @@ def is_horizontal_plane(points):
 # =============== 点选择与策略控制器 ===============
 class FusionPointSelector:
     def __init__(self):
-        self.stats = {"vertical": 0, "horizontal": 0, "surface": 0}
+        self.stats = {"vertical": 0, "horizontal": 0, "surface": 0, "unreachable": 0}
         self.tree_cache = {}
         self.strategy_used = ""
 
@@ -170,6 +174,20 @@ class FusionPointSelector:
         self.tree_cache[points_hash] = tree
         return tree
 
+    def is_reachable(self, arm_base, alpha):
+        """按真实可达域判定：臂长落在伸缩行程内，且摆动角不超软限位。
+
+        旧的判定只有 r ∈ [1, 60]cm，与伸缩轴 ±20mm 的实际行程差 30 倍，
+        会把 22° 的摆动目标选出来，下游再裁到 15°，臂实际够不到还照常下发。
+        """
+        d = np.asarray(alpha) - np.asarray(arm_base)
+        r = float(np.linalg.norm(d))
+        if r < 1e-6:
+            return False
+        dxy = float(np.linalg.norm(d[:2]))
+        phi = np.degrees(np.arcsin(np.clip(dxy / r, -1.0, 1.0)))
+        return (Config.ARM_MIN_EXTEND <= r <= Config.ARM_MAX_EXTEND) and (phi <= Config.MAX_SWING_ANGLE)
+
     def find_optimal_point(self, base, points):
         if len(points) == 0:
             return None
@@ -178,24 +196,25 @@ class FusionPointSelector:
         dxy = np.linalg.norm(local[:, :2], axis=1)
         r_safe = np.where(r < 1e-6, 1e-6, r)
         phi = np.arcsin(np.clip(dxy / r_safe, -1, 1))
-        valid_mask = (r >= Config.ARM_MIN_EXTEND) & (r <= Config.ARM_MAX_EXTEND)
+        # 硬约束：臂长在伸缩行程内 + 摆动角在软限位内（phi 只做惩罚会选出够不到的点）
+        valid_mask = (r >= Config.ARM_MIN_EXTEND) & (r <= Config.ARM_MAX_EXTEND) & \
+                     (phi <= np.radians(Config.MAX_SWING_ANGLE))
+        candidates = np.where(valid_mask)[0]
 
         if Config.POINT_SELECT_STRATEGY == "min_angle":
             self.strategy_used = "min_angle"
-            return points[np.argmin(phi)]
+            return points[candidates[np.argmin(phi[candidates])]] if len(candidates) else None
         elif Config.POINT_SELECT_STRATEGY == "min_distance":
             self.strategy_used = "min_distance"
-            return points[np.argmin(r)]
+            return points[candidates[np.argmin(r[candidates])]] if len(candidates) else None
         else:  # balanced
             self.strategy_used = "balanced"
+            if not len(candidates):
+                return None
             r_score = (r - np.min(r)) / (np.max(r) - np.min(r) + 1e-6)
             phi_score = phi / np.max(phi) if np.max(phi) > 0 else 0
             combined = Config.DISTANCE_WEIGHT * r_score + Config.ANGLE_WEIGHT * phi_score
-            if np.any(valid_mask):
-                best = np.where(valid_mask)[0][np.argmin(combined[valid_mask])]
-                return points[best]
-            else:
-                return points[np.argmin(combined)]
+            return points[candidates[np.argmin(combined[candidates])]]
 
     def process_arm(self, arm_base, points):
         points = self.downsample_points(points)
@@ -215,9 +234,8 @@ class FusionPointSelector:
         local_pts = points[mask]
         if len(local_pts) >= 5 and (np.max(local_pts[:, 2]) - np.min(local_pts[:, 2]) <= Config.VERTICAL_FLAT_TOLERANCE):
             target_z = np.median(local_pts[:, 2])
-            arm_extend = target_z - cz
-            if Config.ARM_MIN_EXTEND <= arm_extend <= Config.ARM_MAX_EXTEND:
-                alpha = np.array([cx, cy, target_z])
+            alpha = np.array([cx, cy, target_z])
+            if self.is_reachable(arm_base, alpha):
                 self.stats["vertical"] += 1
                 self.strategy_used = "vertical"
                 return alpha, np.array([0, 0, -1]), "vertical"
@@ -231,8 +249,8 @@ class FusionPointSelector:
             near_center = dist_sq < 4.0
             z_med = np.median(points[near_center, 2]) if np.sum(near_center) > 3 else center[2]
             alpha = np.array([center[0], center[1], z_med])
-            arm_extend = alpha[2] - arm_base[2]
-            if Config.ARM_MIN_EXTEND <= arm_extend <= Config.ARM_MAX_EXTEND:
+            # 只比高度会漏掉横向距离：平面质心可能在 30cm 外，摆动要 80°，臂根本摆不过去
+            if self.is_reachable(arm_base, alpha):
                 self.stats["horizontal"] += 1
                 self.strategy_used = "horizontal"
                 return alpha, np.array([0, 0, -1]), "horizontal"
@@ -242,14 +260,20 @@ class FusionPointSelector:
         surface_pts = extract_surface_points(points) if len(points) > 50 else points
         alpha = self.find_optimal_point(arm_base, surface_pts)
         if alpha is None:
-            alpha = points[np.argmin(np.linalg.norm(points - arm_base, axis=1))]
+            # 可达域内确实没有表面点：退回离基座最近的表面点，交给节点B判不可达，
+            # 不再硬选一个够不到的点当成功结果。
+            alpha = surface_pts[np.argmin(np.linalg.norm(surface_pts - arm_base, axis=1))]
+            self.stats["unreachable"] += 1
+            rospy.logwarn("⚠️ 基座 %s 的可达域内没有表面点，退回最近点 %s（节点B将判不可达）",
+                          np.round(arm_base, 2).tolist(), np.round(alpha, 2).tolist())
         beta = compute_point_normal(alpha, points)
         self.stats["surface"] += 1
         return alpha, beta, self.strategy_used
 
     def _create_default_result(self, arm_base):
         cx, cy, cz = arm_base
-        alpha = np.array([cx, cy, cz + Config.DEFAULT_HEIGHT])
+        # 默认托举点取臂端零位，等于「伸出去 0」，不再用独立的 DEFAULT_HEIGHT
+        alpha = np.array([cx, cy, cz + Config.ARM_TIP_HEIGHT_AT_ZERO])
         return alpha, np.array([0, 0, -1]), "default"
 
 
