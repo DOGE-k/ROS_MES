@@ -57,9 +57,10 @@ def update_config_from_env():
     Config.MAX_SWING_ANGLE    = float(os.environ['MAX_SWING_ANGLE'])
     Config.TELESCOPIC_MIN_MM  = float(os.environ['TELESCOPIC_MIN_MM'])
     Config.TELESCOPIC_MAX_MM  = float(os.environ['TELESCOPIC_MAX_MM'])
-    # 点云几何可达范围（cm，用于逆解 j3 的范围告警，不做裁剪）
-    Config.ARM_MIN_EXTEND   = float(os.environ['ARM_MIN_EXTEND'])       # cm
-    Config.ARM_MAX_EXTEND   = float(os.environ['ARM_MAX_EXTEND'])       # cm
+    # 伸缩轴零点：伸缩读数为 0 时，臂端接触面距基座的高度（cm，现场实测 12.5）
+    # 逆解得到的「基座→目标」距离必须减掉它，才是能下发的位移量，
+    # 因为伸缩行程（±20mm）是相对这个零位量的，不是从基座量起。
+    Config.ARM_TIP_HEIGHT_AT_ZERO = float(os.environ['ARM_TIP_HEIGHT_AT_ZERO'])
     # 伸缩轴为直线位移轴，反馈/指令单位均为 mm（CAN 字段 0.01mm，由 feedback_node 换算）
     # 单次伸缩增量告警阈值（mm），超过仅告警，不裁剪解算结果
     Config.TELESCOPIC_MAX_DELTA_MM = float(os.environ['TELESCOPIC_MAX_DELTA_MM'])
@@ -69,15 +70,22 @@ def update_config_from_env():
 
 # ===================== 运动学解算 =====================
 def solve_3dof(arm_base, target_p):
-    """3自由度逆运动学解算，返回关节目标角度/长度。
+    """3自由度逆运动学解算，返回 (j1_deg, j2_deg, j3_ext_cm, reachable, reason)。
 
     图纸下发：解算结果必须按 rob_arm.env 的三轴软限位裁剪后再下发。
     轴节点（rotation/swing/telescopic）对超位指令是直接丢弃并回执 CmdAck，
     解算端不裁剪会导致图纸指令全部被判超位、命令下发不出去。
     微调不经过本节点，不受此裁剪影响。
+
+    j3_ext_cm 是**相对臂端零位的伸出量**，不是基座到目标的绝对距离。
+    伸缩轴只有 ±20mm 行程，且这个行程是对着「伸缩读数为 0 时的臂端位置」量的，
+    必须减去 ARM_TIP_HEIGHT_AT_ZERO 才能当指令用。
+    reachable=False 表示即使裁到限位也够不到目标（摆动超软限位，或伸出量超行程），
+    调用方据此把三轴置 0 并上报，不再把「歪着伸过去但托空」当成功指令发出去。
     """
     dx, dy, dz = target_p - arm_base
     dxy = np.hypot(dx, dy)
+    r = float(np.hypot(dxy, dz))
 
     # 旋转轴限位裁剪（°）
     j1 = np.degrees(np.arctan2(dy, dx)) if dxy > 1e-3 else 0.0
@@ -91,22 +99,42 @@ def solve_3dof(arm_base, target_p):
     ideal_j2 = np.pi/2 if abs(dz) < 1e-6 else np.arctan2(dxy, dz)
     j2_deg = np.degrees(ideal_j2)
     j2_clipped = float(np.clip(j2_deg, Config.SWING_MIN_ANGLE, Config.MAX_SWING_ANGLE))
-    if not np.isclose(j2_clipped, j2_deg):
+    swing_ok = bool(np.isclose(j2_clipped, j2_deg))
+    if not swing_ok:
         rospy.logwarn("摆动解算值 %.2f° 超出限位 [%.1f, %.1f]°，已裁剪为 %.2f°",
                       j2_deg, Config.SWING_MIN_ANGLE, Config.MAX_SWING_ANGLE, j2_clipped)
     j2_deg = j2_clipped
 
-    # 伸缩轴限位裁剪：轴节点限位单位是 mm，解算距离单位是 cm，需先换算
-    j3 = float(np.hypot(dxy, dz))
+    # 伸缩轴：先用裁剪后的摆动角反算需要的臂长（保高度），再减掉零位得到伸出量。
+    # 摆动未被裁剪时 dz/cos(j2) 就等于三维距离 r，两种情形连续，不会跳变。
+    cos_j2 = float(np.cos(np.radians(j2_deg)))
+    reach_cm = r if abs(cos_j2) < 1e-6 else float(dz) / cos_j2
+
+    # 轴节点限位单位是 mm，伸出量单位是 cm，需先换算
+    j3_raw = reach_cm - Config.ARM_TIP_HEIGHT_AT_ZERO
     j3_min_cm = Config.TELESCOPIC_MIN_MM / 10.0
     j3_max_cm = Config.TELESCOPIC_MAX_MM / 10.0
-    j3_clipped = float(np.clip(j3, j3_min_cm, j3_max_cm))
-    if not np.isclose(j3_clipped, j3):
-        rospy.logwarn("伸缩解算值 %.2fcm 超出限位 [%.1f, %.1f]mm，已裁剪为 %.2fcm",
-                      j3, Config.TELESCOPIC_MIN_MM, Config.TELESCOPIC_MAX_MM, j3_clipped)
-    j3 = j3_clipped
+    j3 = float(np.clip(j3_raw, j3_min_cm, j3_max_cm))
+    ext_ok = bool(np.isclose(j3, j3_raw))
+    if not ext_ok:
+        rospy.logwarn("伸缩解算值 %.2fcm（基座→目标 %.2fcm − 零位 %.2fcm）"
+                      "超出限位 [%.1f, %.1f]mm，已裁剪为 %.2fcm",
+                      j3_raw, reach_cm, Config.ARM_TIP_HEIGHT_AT_ZERO,
+                      Config.TELESCOPIC_MIN_MM, Config.TELESCOPIC_MAX_MM, j3)
 
-    return round(j1, 2), round(j2_deg, 2), round(j3, 2)
+    if not swing_ok:
+        reason = (f"摆动 {np.degrees(ideal_j2):.2f}° 超出软限位 "
+                  f"[{Config.SWING_MIN_ANGLE:.1f}, {Config.MAX_SWING_ANGLE:.1f}]°")
+        reachable = False
+    elif not ext_ok:
+        reason = (f"伸缩需 {j3_raw * 10:.1f}mm 超出软限位 "
+                  f"[{Config.TELESCOPIC_MIN_MM:.0f}, {Config.TELESCOPIC_MAX_MM:.0f}]mm")
+        reachable = False
+    else:
+        reason = ""
+        reachable = True
+
+    return round(j1, 2), round(j2_deg, 2), round(j3, 3), reachable, reason
 
 
 # ===================== ROS 节点B =====================
@@ -222,7 +250,9 @@ class KinematicsNode:
                         "arm_id": arm_id,
                         "target_j1": arm_res["j1_rotate_deg"],
                         "target_j2": arm_res["j2_swing_deg"],
-                        "target_j3_cm": arm_res["j3_extend_cm"]
+                        "target_j3_cm": arm_res["j3_extend_cm"],
+                        "reachable": arm_res.get("reachable", True),
+                        "reason": arm_res.get("reason", ""),
                     }
                     with self.lock:
                         self._ensure_arm(arm_id)
@@ -284,6 +314,12 @@ class KinematicsNode:
         # V2 空指令：该臂本模块无需动作，三轴增量精确为 0（不读取反馈基准，避免缺反馈时取不到状态）
         if cmd.get("empty"):
             delta_rot = delta_sw = delta_tel = 0.0
+        elif not cmd.get("reachable", True):
+            # 目标不在可达域内：裁到限位也够不到，发出去只会「歪着伸过去但托空」，
+            # 且不会报错，比不动更隐蔽。这里三轴置 0 并上报原因。
+            delta_rot = delta_sw = delta_tel = 0.0
+            rospy.logerr("⛔ 模块%s 臂%d 目标不可达，三轴保持不动 | %s",
+                         mid, arm_id, cmd.get("reason", "未知"))
         else:
             cur_rot = self.current_state[arm_id]["rotation"]
             cur_sw  = self.current_state[arm_id]["swing"]
@@ -329,13 +365,18 @@ class KinematicsNode:
         tel_msg.header = Header(stamp=now); tel_msg.module_id = mid; tel_msg.device_id = dev_tel; tel_msg.position = [delta_tel]
         self.pub_telescopic.publish(tel_msg)
 
-        # 写入数据库（device_ID 固定为0）
+        # 写入数据库（device_ID 固定为0）；不可达时把原因写进 Notes 供后端/前端展示
         alpha = [target_j1, target_j2, target_j3_cm]
-        self._save_arm_record(mid, arm_id, alpha, delta_rot, delta_sw, delta_tel)
+        notes = "" if cmd.get("reachable", True) else f"不可达：{cmd.get('reason', '')}"
+        self._save_arm_record(mid, arm_id, alpha, delta_rot, delta_sw, delta_tel, notes)
 
-        rospy.loginfo(f"📤 模块{mid} 臂{arm_id} | 旋转增量:{delta_rot:+.2f}° 摆动增量:{delta_sw:+.2f}° 伸缩增量:{delta_tel:+.1f}mm")
+        if cmd.get("reachable", True):
+            rospy.loginfo(f"📤 模块{mid} 臂{arm_id} | 旋转增量:{delta_rot:+.2f}° 摆动增量:{delta_sw:+.2f}° 伸缩增量:{delta_tel:+.1f}mm")
+        else:
+            rospy.logwarn(f"📤 模块{mid} 臂{arm_id} | 不可达，三轴 0 增量（%s）",
+                          cmd.get("reason", "未知"))
 
-    def _save_arm_record(self, module_id, arm_id, alpha, delta_rot, delta_sw, delta_tel):
+    def _save_arm_record(self, module_id, arm_id, alpha, delta_rot, delta_sw, delta_tel, notes=""):
         """存储一条臂记录到数据库，device_ID 固定为 0，真正的电机ID在 position JSON 中"""
         unit = self.arm_to_unit(arm_id)
 
@@ -367,7 +408,7 @@ class KinematicsNode:
                 json.dumps(coord_dict),
                 json.dumps(position_dict),
                 False,
-                ""
+                notes
             ))
             self.conn.commit()
         except Exception as e:
@@ -403,13 +444,15 @@ class KinematicsNode:
         """单个机械臂的运动学解算"""
         base = np.array(item["base"])
         alpha = np.array(item["alpha"])
-        j1, j2, j3 = solve_3dof(base, alpha)
+        j1, j2, j3, reachable, reason = solve_3dof(base, alpha)
         return {
             "alpha": alpha.tolist(),
             "beta": item["beta"],
             "j1_rotate_deg": j1,
             "j2_swing_deg": j2,
-            "j3_extend_cm": j3
+            "j3_extend_cm": j3,
+            "reachable": reachable,
+            "reason": reason,
         }
 
 

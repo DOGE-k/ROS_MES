@@ -36,8 +36,8 @@ MODULE_ORIGIN_Y = None
 MODULE_ORIGIN_Z = None
 MODULE_SIZE_X = None
 MODULE_SIZE_Y = None
-ARM_MIN_HEIGHT = None
-ARM_SAFE_GAP = None
+ARM_TIP_HEIGHT_AT_ZERO = None
+WORKPIECE_CLEARANCE = None
 TOPIC_FRONTEND_INPUT = None
 TOPIC_MODULE_ARM_TASK = None
 
@@ -118,7 +118,7 @@ def update_params_from_env():
     """强制从环境变量读取参数，缺失将抛出 KeyError"""
     global MODULE_ORIGIN_X, MODULE_ORIGIN_Y, MODULE_ORIGIN_Z
     global MODULE_SIZE_X, MODULE_SIZE_Y
-    global ARM_MIN_HEIGHT, ARM_SAFE_GAP
+    global ARM_TIP_HEIGHT_AT_ZERO, WORKPIECE_CLEARANCE
     global TOPIC_FRONTEND_INPUT, TOPIC_MODULE_ARM_TASK
     global DB_FILE
 
@@ -127,8 +127,8 @@ def update_params_from_env():
     MODULE_ORIGIN_Z = float(os.environ['MODULE_ORIGIN_Z'])
     MODULE_SIZE_X = int(os.environ['MODULE_SIZE_X'])
     MODULE_SIZE_Y = int(os.environ['MODULE_SIZE_Y'])
-    ARM_MIN_HEIGHT = float(os.environ['ARM_MIN_HEIGHT'])
-    ARM_SAFE_GAP = float(os.environ['ARM_SAFE_GAP'])
+    ARM_TIP_HEIGHT_AT_ZERO = float(os.environ['ARM_TIP_HEIGHT_AT_ZERO'])
+    WORKPIECE_CLEARANCE = float(os.environ['WORKPIECE_CLEARANCE'])
 
     TOPIC_FRONTEND_INPUT = os.environ['ROS_TOPIC_FRONTEND_POINTCLOUD']
     TOPIC_MODULE_ARM_TASK = os.environ['ROS_TOPIC_MODULE_ARM_TASK']
@@ -184,10 +184,13 @@ def move_to_origin(points):
     else:
         points[:,1] += (MODULE_ORIGIN_Y - min_y)
 
-    target_z = MODULE_ORIGIN_Z + ARM_MIN_HEIGHT + ARM_SAFE_GAP
+    # 最低点落在「臂端零位 + 抬升量」：WORKPIECE_CLEARANCE=0 时工件直接坐在杆端上，
+    # 逆解只需算出相对 12.5cm 的伸出量，全部落在 ±20mm 行程内。
+    target_z = MODULE_ORIGIN_Z + ARM_TIP_HEIGHT_AT_ZERO + WORKPIECE_CLEARANCE
     dz = target_z - min_z
     points[:,2] += dz
-    rospy.loginfo(f"📍 点云已移动：最低 Z {min_z:.2f} → {target_z:.1f} cm")
+    rospy.loginfo(f"📍 点云已移动：最低 Z {min_z:.2f} → {target_z:.2f} cm"
+                  f"（臂端零位 {ARM_TIP_HEIGHT_AT_ZERO:.2f} + 抬升 {WORKPIECE_CLEARANCE:.2f}）")
     return points
 
 
